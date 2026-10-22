@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Environments
+.venv/
+venv/
+.env
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Simulation / mission outputs
+results/
+results_*/
+search_*/
+*.npz
+*.png
+
+# Training artifacts
+runs/
+checkpoints/
+logs/
+wandb/
+*.pt
+*.pth
