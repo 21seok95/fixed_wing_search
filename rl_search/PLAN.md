@@ -19,7 +19,7 @@ todos:
     status: completed
   - id: step2-env
     content: "2단계: mission.py(이탈 입자 처리 포함)와 KinematicPlant 분리, SearchEnv reset/step, 기존 run_mission과 결과 일치 확인"
-    status: pending
+    status: completed
   - id: step3-lawnmower
     content: "3단계: 이동 후 건너뛰기 왕복 lawnmower와 같은 100 km 기준 비교 스크립트"
     status: pending
@@ -160,6 +160,8 @@ python mission_viewer.py rl_search/data/export/<scenario>/search_greedy
   - 로그는 기존 `mission.npz` 형식(`t_s`, `poses`, `plan`, `weights`, `gain`, `pos_cum`, `fallback`, `searched_km2`)에 `escaped`를 더해 저장한다. [`mission_viewer.py`](mission_viewer.py)에서 바로 볼 수 있다.
 - **`planners.py`:** 기존 straight, greedy, tree를 fork하고, env에서 turn을 받아 가는 형태로 감싼다. 플래너는 계속 belief를 직접 보고 계획한다.
 - 완료 기준: 내보낸 시나리오에서 `use_exits=False`, `KinematicPlant` + greedy의 POS 곡선이 1단계의 기존 `uav_search.py` 결과와 같다(같은 cfg, 수치 오차 수준). `use_exits=True`일 때 질량 보존식이 매 스텝 성립한다.
+- 결과 (`scripts/check_env.py`): greedy와 tree 모두 기존 결과와 POS, 자세, 탐색 면적이 완전히 같다(차이 0). 질량 보존 오차는 1e-9 미만이다. 환경만 돌리면 약 710 스텝/s(맥, 코어 하나)이고, greedy 한 판은 약 6 s, tree 한 판은 약 46 s다.
+- 발견: greedy는 초기 조건에 매우 민감하다. s1000001에서 시작 heading을 0.01° 바꾸면 최종 POS가 0.36에서 0.002로 바뀐다. 3단계 비교는 시나리오 하나가 아니라 평가 세트 전체의 평균과 분산으로 봐야 한다.
 
 ## 3단계: lawnmower 베이스라인
 

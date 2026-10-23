@@ -53,3 +53,27 @@ Check one scenario with the existing planner (prints the exact `uav_search.py` c
 ```bash
 .venv/bin/python -m rl_search.scripts.export_scenario rl_search/data/scenarios/eval/s1000001
 ```
+
+## Step 2: environment
+
+The mission layer (`mission.py`: belief with map exits, `NadirSensor`, detection, coverage) is
+separate from the vehicle layer (`plants.py`: `reset(pose)`, `step(turn) -> pose`, `max_turn`).
+`env.SearchEnv` ties them together with `reset(seed, options)` / `step(action)`; the action's
+first element is the heading change (rad) for one 2 s step, the reward is the probability found
+in that step. `truncated` = flight budget used, `terminated` = UAV left the map. With exits on,
+1 = POS + remaining + escaped at every step.
+
+```python
+env = SearchEnv(load_terrain(path))
+obs, info = env.reset()                       # fresh generated scenario
+obs, reward, terminated, truncated, info = env.step([turn])
+env.reset(options=dict(scenario=load_scenario(eval_dir)))   # evaluation scenario
+```
+
+Check against the original `uav_search.py` (exits off must match exactly; exits on must
+conserve mass) and save both missions for the viewer:
+
+```bash
+.venv/bin/python -m rl_search.scripts.check_env rl_search/data/scenarios/eval/s1000001 --planner greedy
+python mission_viewer.py rl_search/data/export/s1000001/search_env_greedy --compare ref_greedy
+```

@@ -14,8 +14,8 @@ from pathlib import Path
 import json
 import numpy as np
 
-from rl_search.scenario import ScenarioConfig, load_scenario
-from rl_search.terrain import load_terrain
+from rl_search.scenario import Scenario, ScenarioConfig, load_scenario
+from rl_search.terrain import Terrain, load_terrain
 from uav_search import footprint_probs
 
 MAX_TURN_DEG = 23.5   # fixed-wing limit at 35 deg bank, 33.3 m/s, 2 s step
@@ -33,6 +33,22 @@ def best_poa(track, exit_step, save_dt_s, t_s, heading_deg, h_m, n_centres=2000,
     return float(p.sum(axis=1).max()/len(pts))
 
 
+def export_dir(scenario_dir: Path) -> Path:
+    return Path("rl_search/data/export")/scenario_dir.name
+
+
+def export(scen: Scenario, terr: Terrain, out: Path) -> Path:
+    """Write ``out/simulation_data.npz``; planner runs saved in ``out/search_<name>`` open in mission_viewer."""
+    out.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out/"simulation_data.npz", terrain=terr.z, axis=terr.axis,
+                        track=np.asarray(scen.track, float), lkp=scen.lkp, forbidden=terr.forbidden,
+                        mountain=terr.mountain, water=terr.water, fords=terr.fords, forest=terr.forest,
+                        dt_s=scen.save_dt_s, heading_deg=scen.heading_deg,
+                        map_m=float(terr.axis[-1] - terr.axis[0]), speed_mean_mps=scen.speed_mps,
+                        exit_step=scen.exit_step)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("scenario", type=Path, help="Scenario folder with track.npy, exit_step.npy, meta.json")
@@ -43,13 +59,7 @@ def main():
     scen = load_scenario(args.scenario, mmap=False)
     cfg = ScenarioConfig.from_dict(meta["config"])
     terr = load_terrain(Path(meta["terrain"]))
-    out = args.output or Path("rl_search/data/export")/args.scenario.name
-    out.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out/"simulation_data.npz", terrain=terr.z, axis=terr.axis,
-                        track=scen.track.astype(float), lkp=scen.lkp, forbidden=terr.forbidden,
-                        mountain=terr.mountain, water=terr.water, fords=terr.fords, forest=terr.forest,
-                        dt_s=scen.save_dt_s, heading_deg=scen.heading_deg, map_m=float(terr.axis[-1] - terr.axis[0]),
-                        speed_mean_mps=scen.speed_mps, exit_step=scen.exit_step)
+    out = export(scen, terr, args.output or export_dir(args.scenario))
     print(f"Saved {out/'simulation_data.npz'}")
 
     t_int = scen.metrics["intercept_s"]
