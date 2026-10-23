@@ -12,14 +12,10 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 from scipy.ndimage import label
 
 from rl_search.plotting import draw_terrain
 from rl_search.terrain import BASE_LAYERS, TerrainConfig, load_terrain, make_terrain, save_terrain
-
-LEVELS_KM = (20, 40, 60)  # curriculum spawn/LKP areas, centred on the origin
-AREA_COLOR = "#4a148c"
 
 
 def main():
@@ -54,16 +50,9 @@ def main():
           f"steep {((terr.slope_deg >= cfg.max_slope_deg) & ~terr.mountain & ~terr.water).mean():.1%} | "
           f"no-go total {terr.forbidden.mean():.1%}")
     print(f"Fords {label(terr.fords)[1]} | forest share of passable land {terr.forest[free].mean():.1%}")
-    for L in LEVELS_KM:
-        m = np.abs(terr.axis) <= L*500
-        print(f"  level {L:2d} km area: no-go {terr.forbidden[np.ix_(m, m)].mean():.1%}")
 
     fig, ax = plt.subplots(figsize=(11, 8.6), layout="constrained")
-    draw_terrain(ax, terr, legend_extra=(Line2D([], [], color=AREA_COLOR, lw=1.3, ls="--",
-                                                label="Curriculum areas 20 / 40 / 60 km"),))
-    for L in LEVELS_KM[:-1]:
-        ax.add_patch(plt.Rectangle((-L/2, -L/2), L, L, fill=False, ec=AREA_COLOR, lw=1.3, ls="--", zorder=8))
-        ax.text(-L/2 + .3, L/2 - 1.3, f"{L} km", color=AREA_COLOR, fontsize=9, weight="bold", zorder=9)
+    draw_terrain(ax, terr)
     ax.set_title(f"Search terrain {args.map_km:g} km x {args.map_km:g} km (seed {cfg.seed})")
     png = out.with_suffix(".png")
     fig.savefig(png, dpi=150)
