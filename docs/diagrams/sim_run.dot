@@ -1,0 +1,26 @@
+digraph sim_run {
+  rankdir=TB;
+  graph [fontname="Noto Sans CJK KR", bgcolor="white", pad=0.3, nodesep=0.5, ranksep=0.4];
+  node  [fontname="Noto Sans CJK KR", shape=box, style="rounded,filled", fontsize=12, margin="0.2,0.1", fillcolor="#f1f5f9", color="#64748b"];
+  edge  [fontname="Noto Sans CJK KR", fontsize=10, color="#555555"];
+
+  a [label="터미널 1: source envs/activate_gz.sh", fillcolor="#dcfce7", color="#16a34a"];
+  b [label="make px4_sitl gz_rc_cessna", fillcolor="#dcfce7", color="#16a34a"];
+  c [label="pxh> 가 나왔나?", shape=diamond, fillcolor="#fff7ed", color="#ea580c"];
+  d [label="터미널 2: qgroundcontrol", fillcolor="#fef3c7", color="#d97706"];
+  e [label="Ready for takeoff!\n가 나왔나?", shape=diamond, fillcolor="#fff7ed", color="#ea580c"];
+  f [label="이륙: commander takeoff\n또는 QGC Takeoff", fillcolor="#dbeafe", color="#2563eb"];
+  g [label="비행: Go to location\n또는 미션 업로드 후 Start Mission", fillcolor="#dbeafe", color="#2563eb"];
+  h [label="귀환과 착륙: RTL 또는 Land", fillcolor="#dbeafe", color="#2563eb"];
+  i [label="끄기: pxh> 에서 shutdown, QGC 닫기"];
+  j [label="로그 확인: rootfs/log/날짜/*.ulg", fillcolor="#f3e8ff", color="#9333ea"];
+  t [label="8장 문제 해결 확인", fillcolor="#fee2e2", color="#dc2626"];
+
+  a -> b -> c;
+  c -> d [label="예"];
+  c -> t [label="아니오"];
+  d -> e;
+  e -> f [label="예"];
+  e -> t [label="아니오 (1분 넘게)"];
+  f -> g -> h -> i -> j;
+}

@@ -1,0 +1,39 @@
+digraph modules {
+  rankdir=LR;
+  graph [fontname="Noto Sans CJK KR", bgcolor="white", pad=0.3, nodesep=0.35, ranksep=0.7];
+  node  [fontname="Noto Sans CJK KR", shape=box, style="rounded,filled", fontsize=11, margin="0.18,0.08", fillcolor="#f1f5f9", color="#64748b"];
+  edge  [fontname="Noto Sans CJK KR", fontsize=9, color="#555555"];
+
+  preset [label="config.py 프리셋\nrc_cessna / fast / JSON\n--set 섹션.값=...", fillcolor="#fef3c7", color="#d97706"];
+
+  subgraph cluster_parts {
+    label="바꿔 끼우는 부품 (등록표에 추가)"; fontsize=12; style="rounded"; color="#2563eb";
+    plant  [label="plants.py\nKinematic / FixedWing\n(PLANTS)", fillcolor="#dbeafe", color="#2563eb"];
+    energy [label="energy.py\nPowerModel", fillcolor="#dbeafe", color="#2563eb"];
+    wind   [label="wind.py\nWindModel / ConstantWind", fillcolor="#dbeafe", color="#2563eb"];
+    sensor [label="mission.py\nNadirSensor, belief", fillcolor="#dbeafe", color="#2563eb"];
+    plan   [label="planners.py\nstraight / greedy / tree\n(PLANNERS, RL 자리)", fillcolor="#dbeafe", color="#2563eb"];
+    lawn   [label="lawnmower.py", fillcolor="#dbeafe", color="#2563eb"];
+    wps    [label="waypoints.py\n솎기, ETA, CSV, .plan", fillcolor="#dbeafe", color="#2563eb"];
+    fol    [label="follower.py\n경로 추종, 일정 맞추기", fillcolor="#dbeafe", color="#2563eb"];
+  }
+
+  env    [label="env.py SearchEnv\nmake_env(preset)\n이동→인계, 에너지 종료", fillcolor="#dcfce7", color="#16a34a"];
+  runner [label="runner.py run_method\n계획 → 경로점 → 추종\n바람 모드 4가지", fillcolor="#dcfce7", color="#16a34a"];
+
+  subgraph cluster_scripts {
+    label="scripts/"; fontsize=12; style="rounded"; color="#9333ea";
+    cp  [label="check_plant.py (4)", fillcolor="#f3e8ff", color="#9333ea"];
+    ex  [label="export_plan.py (5)", fillcolor="#f3e8ff", color="#9333ea"];
+    cmp [label="compare.py (3, 4, 6)", fillcolor="#f3e8ff", color="#9333ea"];
+    sitl [label="sitl_fly_plan.py\n(fw-gz, PX4 SITL)", fillcolor="#f3e8ff", color="#9333ea"];
+  }
+
+  preset -> {plant energy wind sensor} [color="#d97706"];
+  {plant energy wind sensor} -> env;
+  env -> runner;
+  {plan lawn wps fol} -> runner;
+  runner -> {ex cmp};
+  plant -> cp;
+  ex -> sitl [label=".plan"];
+}

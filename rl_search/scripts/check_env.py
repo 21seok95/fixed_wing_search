@@ -9,8 +9,11 @@ Missions are saved next to the exported scenario for mission_viewer.py:
     search_ref_<planner>   original uav_search
     search_env_<planner>   SearchEnv with exits
 
+The settings come from the scenario's preset; scenarios written before presets are ``fast`` ones,
+the only setup uav_search.py can reproduce (instant turns, no energy model, no handover).
+
 Run from the repository root:
-    python -m rl_search.scripts.check_env rl_search/data/scenarios/eval/s1000001
+    python -m rl_search.scripts.check_env rl_search/data/scenarios/fast/eval/s1000001
 """
 from __future__ import annotations
 
@@ -22,9 +25,10 @@ import time
 import numpy as np
 
 import uav_search as ref
-from rl_search.env import SearchEnv, default_search_config
+from rl_search.config import preset_from_meta
+from rl_search.env import SearchEnv
 from rl_search.planners import PLANNERS, run_episode, save_mission
-from rl_search.scenario import ScenarioConfig, load_scenario
+from rl_search.scenario import load_scenario
 from rl_search.scripts.export_scenario import export, export_dir
 from rl_search.terrain import load_terrain
 
@@ -46,15 +50,17 @@ def reference(run_dir: Path, cfg, scen, name: str):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scenario", type=Path, nargs="?", default=Path("rl_search/data/scenarios/eval/s1000001"))
+    ap.add_argument("scenario", type=Path, nargs="?", default=Path("rl_search/data/scenarios/fast/eval/s1000001"))
     ap.add_argument("--planner", choices=sorted(PLANNERS), default="greedy")
     args = ap.parse_args()
 
     meta = json.loads((args.scenario/"meta.json").read_text())
-    scfg = ScenarioConfig.from_dict(meta["config"])
+    preset = preset_from_meta(meta)
+    if preset.plant.kind != "kinematic" or preset.energy.enabled or preset.handover.enabled:
+        raise SystemExit(f"Preset {preset.name!r} is not reproducible by uav_search.py; use a fast scenario")
+    scfg, cfg = preset.scenario, preset.search
     terr = load_terrain(Path(meta["terrain"]))
     scen = load_scenario(args.scenario, mmap=False)
-    cfg = default_search_config(scfg)
     run_dir = export(scen, terr, export_dir(args.scenario))
     opts = PLANNER_OPTS[args.planner]
     print(f"Scenario {args.scenario.name}: {cfg.n_steps} steps of {cfg.step_m:.1f} m, planner {args.planner}")

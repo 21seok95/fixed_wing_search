@@ -69,6 +69,7 @@ class Planner:
         self.turns = np.deg2rad(np.linspace(-cfg.max_turn_deg, cfg.max_turn_deg, n_headings))
         self.fallback = False
         self.coverage: Coverage | None = None
+        self.wind = np.zeros(2)               # known wind (east, north) m/s, drifts the planned steps
 
     @property
     def exploring(self) -> bool:
@@ -107,7 +108,10 @@ class Planner:
     def advance(self, poses: np.ndarray, turn) -> np.ndarray:
         yaw = poses[..., 2] + turn
         step = self.cfg.step_m
-        return np.stack([poses[..., 0] + step*np.cos(yaw), poses[..., 1] + step*np.sin(yaw), yaw], axis=-1)
+        x, y = poses[..., 0] + step*np.cos(yaw), poses[..., 1] + step*np.sin(yaw)
+        if self.wind.any():
+            x, y = x + self.wind[0]*self.cfg.dt_s, y + self.wind[1]*self.cfg.dt_s
+        return np.stack([x, y, yaw], axis=-1)
 
     def plan(self, belief: ParticleBelief, poses: np.ndarray, t_s: float) -> np.ndarray:
         raise NotImplementedError
@@ -248,26 +252,43 @@ class TreePlanner(Planner):
 PLANNERS = {p.name: p for p in (StraightPlanner, GreedyPlanner, TreePlanner)}
 
 
-def run_episode(env, planner: Planner, options: dict | None = None, seed: int | None = None) -> dict:
-    """Fly one episode with a planner; returns the env log (if recording) plus plan and fallback."""
-    obs, info = env.reset(seed=seed, options=options)
+def rollout(env, planner: Planner, info: dict | None = None, until_s: float = np.inf) -> dict:
+    """Fly the planner from the env's current state until the episode ends (or ``until_s``).
+
+    Returns t_s (K+1,), poses (K+1, 3) from the current pose on, plans, fallback, info, run_time_s."""
     planner.coverage = env.coverage
-    plans, fallback = [], []
-    done = False
+    t, poses, plans, fallback = [env.t_s], [env.pose.copy()], [], []
+    done = terminated = False
     t0 = time.perf_counter()
-    while not done:
+    while not done and env.t_s < until_s - 1e-9:
         turn, path = planner.act(env.belief, env.pose, env.t_s)
         plans.append(path)
         fallback.append(planner.fallback)
         obs, reward, terminated, truncated, info = env.step([turn])
+        t.append(env.t_s)
+        poses.append(env.pose.copy())
         done = terminated or truncated
-    elapsed = time.perf_counter() - t0
+    return dict(t_s=np.array(t), poses=np.array(poses), plans=plans, fallback=fallback, info=info or {},
+                run_time_s=time.perf_counter() - t0, terminated=bool(terminated), done=done)
+
+
+def run_episode(env, planner: Planner, options: dict | None = None, seed: int | None = None) -> dict:
+    """Fly one episode with a planner; returns the env log (if recording) plus plan and fallback.
+
+    With a handover the transit is part of the log; ``plan`` is NaN and ``fallback`` False there."""
+    obs, info = env.reset(seed=seed, options=options)
+    k0 = env.k
+    ro = rollout(env, planner, info)
     log = env.log() if env.record else {}
-    H = planner.horizon
-    plan = np.full((len(plans) + 1, 1, H, 3), np.nan)
-    plan[:-1, 0] = np.array(plans)
-    log |= dict(plan=plan, fallback=np.r_[fallback, False])
-    log["info"] = info | dict(run_time_s=elapsed, steps=len(plans), terminated=bool(terminated))
+    H, n = planner.horizon, len(ro["plans"])
+    plan = np.full((k0 + n + 1, 1, H, 3), np.nan)
+    fallback = np.zeros(k0 + n + 1, bool)
+    if n:
+        plan[k0:k0 + n, 0] = np.array(ro["plans"])
+        fallback[k0:k0 + n] = ro["fallback"]
+    log |= dict(plan=plan, fallback=fallback, traj_t=ro["t_s"], traj_poses=ro["poses"])
+    log["info"] = ro["info"] | dict(run_time_s=ro["run_time_s"], steps=n, terminated=ro["terminated"],
+                                    handover=env.handover)
     return log
 
 

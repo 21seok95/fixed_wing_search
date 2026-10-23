@@ -28,10 +28,10 @@ OFFSETS = np.deg2rad(np.array([-100, -75, -50, -30, -15, 0, 15, 30, 50, 75, 100]
 @dataclass
 class TargetConfig:
     particles: int = 5000
-    duration_s: float = 3600.0
+    duration_s: float = 4200.0         # flight time + handover margin
     dt_s: float = 5.0                  # simulation step
     save_dt_s: float = 10.0            # stored track interval (multiple of dt_s)
-    speed_cap_mps: float = 40/3.6      # instantaneous speed limit, also sets the guideline reach
+    speed_cap_mps: float = 30/3.6      # instantaneous speed limit, also sets the guideline reach
     speed_rel_std: float = 0.1         # speed_std = speed_rel_std * speed_mean
     heading_std_deg: float = 25.0
     reorient_std_deg: float = 20.0

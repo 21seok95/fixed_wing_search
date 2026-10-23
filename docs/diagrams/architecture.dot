@@ -1,0 +1,19 @@
+digraph architecture {
+  rankdir=LR;
+  graph [fontname="Noto Sans CJK KR", bgcolor="white", pad=0.3, nodesep=0.6, ranksep=0.9];
+  node  [fontname="Noto Sans CJK KR", shape=box, style="rounded,filled", fontsize=13, margin="0.25,0.15"];
+  edge  [fontname="Noto Sans CJK KR", fontsize=11, color="#555555"];
+
+  train [label="fw-train\nPython 탐색 시뮬레이션\n플래너, lawnmower, RL", fillcolor="#dbeafe", color="#2563eb"];
+  qgc   [label="QGroundControl\n지도, 이륙, 미션", fillcolor="#fef3c7", color="#d97706"];
+  sitl  [label="sitl_fly_plan.py (fw-gz)\n자동 업로드, 비행 기록", fillcolor="#fef3c7", color="#d97706"];
+  px4   [label="PX4 SITL\n비행 제어", fillcolor="#dcfce7", color="#16a34a"];
+  gz    [label="Gazebo Harmonic\nrc_cessna 물리", fillcolor="#f3e8ff", color="#9333ea"];
+
+  train -> qgc  [label="경로점 .plan\n(손으로 열기)"];
+  train -> sitl [label="경로점 .plan + .csv"];
+  qgc -> px4    [label="MAVLink UDP 14550", dir=both];
+  sitl -> px4   [label="MAVLink UDP 14540+N", dir=both];
+  px4 -> gz     [label="센서, 모터", dir=both];
+  px4 -> train  [label=".ulg 비행 로그, sitl_track.csv", style=dashed, constraint=false];
+}

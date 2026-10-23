@@ -1,7 +1,7 @@
 """Random search scenarios on the fixed terrain.
 
 A scenario is one target simulation (LKP, known heading, target speed -> particle tracks with
-exit times) plus a UAV launch pose on the map edge 10-30 km from the LKP, heading at the LKP.
+exit times) plus a UAV launch pose on the map edge ``start_dist_m`` from the LKP, heading at the LKP.
 t = 0 is both the LKP observation and the UAV launch.
 
 Training draws a fresh scenario on every ``ScenarioGenerator.next()``; with ``reuse > 1`` the
@@ -22,14 +22,14 @@ from rl_search.terrain import Terrain
 
 @dataclass
 class ScenarioConfig:
-    speed_kmh: tuple = (20.0, 40.0)        # per-scenario target mean speed, uniform
+    speed_kmh: tuple = (15.0, 30.0)        # per-scenario target mean speed, uniform
     lkp_clearance_m: float = 200.0         # LKP distance from any no-go cell
     lkp_margin_m: float = 1000.0           # LKP distance from the map edge
-    start_dist_m: tuple = (10000.0, 30000.0)
+    start_dist_m: tuple = (5000.0, 15000.0)
     corner_margin_m: float = 1000.0        # launch points skip this much of each map corner
     perimeter_step_m: float = 10.0
-    uav_speed_mps: float = 120/3.6
-    flight_s: float = 3000.0               # 100 km at 120 km/h
+    uav_speed_mps: float = 15.0
+    flight_s: float = 3600.0               # 54 km at 15 m/s (rc_cessna preset; fast: 3000 s at 33.3 m/s)
     reuse: int = 1                         # episodes per target simulation
     target: TargetConfig = field(default_factory=TargetConfig)
 
@@ -70,6 +70,7 @@ class ScenarioSampler:
         ok = (terr.clearance >= cfg.lkp_clearance_m)
         inner = np.abs(terr.axis) <= terr.axis[-1] - cfg.lkp_margin_m
         ok &= inner[:, None] & inner[None, :]
+        ok &= self._perimeter_dist(terr, cfg) <= cfg.start_dist_m[1]   # some launch point is close enough
         self.lkp_cells = np.flatnonzero(ok)
         if not len(self.lkp_cells):
             raise ValueError("No passable LKP cell with the requested clearance")
@@ -77,6 +78,17 @@ class ScenarioSampler:
         s = np.arange(lo + cfg.corner_margin_m, hi - cfg.corner_margin_m + 1e-6, cfg.perimeter_step_m)
         side = lambda x, y: np.stack(np.broadcast_arrays(x, y), axis=1)
         self.perimeter = np.concatenate([side(s, lo), side(hi, s), side(s, hi), side(lo, s)]).astype(float)
+
+    @staticmethod
+    def _perimeter_dist(terr: Terrain, cfg: ScenarioConfig) -> np.ndarray:
+        """Distance of every cell to the nearest launch point (map edge without the corner margins)."""
+        lo, hi = terr.axis[0], terr.axis[-1]
+        a, b = lo + cfg.corner_margin_m, hi - cfg.corner_margin_m
+        Y, X = np.meshgrid(terr.axis, terr.axis, indexing="ij")
+        along_x = np.abs(X - np.clip(X, a, b))
+        along_y = np.abs(Y - np.clip(Y, a, b))
+        return np.minimum.reduce([np.hypot(along_x, Y - lo), np.hypot(along_x, hi - Y),
+                                  np.hypot(along_y, X - lo), np.hypot(along_y, hi - X)])
 
     def sample_target(self, rng):
         n = len(self.terr.axis)

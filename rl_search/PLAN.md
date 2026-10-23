@@ -1,6 +1,6 @@
 ---
 name: RL vs lawnmower search
-overview: rl_search/에서 60 km 고정 지형 위의 무작위 시나리오 생성기와 평가 세트(0~1단계), 임무/기체를 나눈 reset/step 환경(2단계)을 만들었다. 다음은 PX4 Gazebo rc_cessna에 맞춘 고정익 모델과 선회 항력 반영 에너지 예산(4단계), 이동 중 계획 완성 후 경로점으로 인계(5단계), lawnmower 비교(3단계), 마지막으로 바람 반영(6단계)이다. RL 학습은 범위 밖이다.
+overview: rl_search/에서 60 km 고정 지형 위의 무작위 시나리오 생성기와 평가 세트(0~1단계), 임무/기체를 나눈 reset/step 환경(2단계), PX4 Gazebo rc_cessna에 맞춘 고정익 모델과 선회 항력 반영 에너지 예산(4단계), 이동 중 계획 완성 후 경로점 인계와 QGC .plan 내보내기(5단계), lawnmower 비교(3단계), 바람 반영(6단계)을 모두 만들고, 내보낸 경로를 PX4 SITL에서 이륙부터 착륙까지 비행해 확인했다. 설정은 프리셋(config.py)과 --set으로 바꾸고, 기체/플래너/방법/바람 방식은 등록표로 갈아 끼운다. RL 학습은 범위 밖이다.
 todos:
   - id: step0-folder
     content: "0단계: rl_search/ 폴더 구조, 의존성, 절차적 60 km 지형 1회 생성"
@@ -22,25 +22,28 @@ todos:
     status: completed
   - id: step4-config
     content: "4단계: PX4 rc_cessna 기준 설정으로 변경 (15 m/s, dt 4 s, 비행 60분, POD 0.3, LKP 5~15 km, 표적 15~30 km/h), 평가 세트 재생성과 분포 확인"
-    status: pending
+    status: completed
   - id: step4-plant
     content: "4단계: FixedWingPlant (NPFG 유도 근사 + 롤 1차 지연/속도/각도 한도 + 균형 선회, PX4 파라미터 이름), check_plant.py 검증 그림, max_turn 결정"
-    status: pending
+    status: completed
   - id: step4-energy
     content: "4단계: 롤과 속도에 따른 동력 모델로 에너지 예산 (선회 시 소비 증가), env 종료 조건을 에너지 기준으로"
-    status: pending
+    status: completed
   - id: step5-handover
     content: "5단계: 이동 단계(LKP로 자동 직진) + 계획 완성 시각(기본 120 s)에 인계, 계산 시간 측정"
-    status: pending
+    status: completed
   - id: step5-export
     content: "5단계: 계획 경로를 도착 시각 포함 경로점 목록으로 솎아 내보내기 (CSV + QGC .plan), 경로 추종 실행 결과와 계획 비교"
-    status: pending
+    status: completed
   - id: step3-lawnmower
     content: "3단계: 인계 시점부터 시작하는 lawnmower(경로점 목록)와 compare.py, 같은 에너지 예산과 평가 세트 평균/분산 비교"
-    status: pending
+    status: completed
   - id: step6-wind
     content: "6단계(마지막): 바람 모델, 바람 반영 계획, 대기 속도로 일정 맞추기, 일정 오차 기준 재계획, 세 방식 비교"
-    status: pending
+    status: completed
+  - id: final-sitl
+    content: "최종 검증: 내보낸 .plan을 PX4 SITL gz_rc_cessna에 올려 이륙, 경로점 비행, 착륙까지 자동 확인 (sitl_fly_plan.py)"
+    status: completed
 isProject: false
 ---
 
@@ -54,11 +57,15 @@ isProject: false
 
 ```mermaid
 flowchart LR
-  S0["0-2: terrain, scenarios, env (done)"] --> S4["4: PX4-matched plant and energy"]
-  S4 --> S5["5: transit, handover, waypoint export"]
-  S5 --> S3["3: lawnmower and compare"]
-  S3 --> S6["6 (last): wind-aware planning"]
+  S0["0-2: terrain, scenarios, env (done)"] --> S4["4: PX4-matched plant and energy (done)"]
+  S4 --> S5["5: transit, handover, waypoint export (done)"]
+  S5 --> S3["3: lawnmower and compare (done)"]
+  S3 --> S6["6 (last): wind-aware planning (done)"]
+  S6 --> V["PX4 SITL check (done)"]
+  V --> N["next: ulog fit, RL"]
 ```
+
+전체 흐름 그림은 `docs/diagrams/research_flow.png`, 모듈 구조는 `docs/diagrams/modules.png`에 있다.
 
 4단계를 3단계보다 먼저 한다. lawnmower는 기체의 선회 한계와 인계 방식 위에서 설계해야 하므로, 고정익 모델과 인계 구조가 먼저 있어야 한다.
 
@@ -171,6 +178,59 @@ flowchart LR
 - 새 설정의 평가 세트와 분포 그림이 나온다.
 - greedy와 tree를 `KinematicPlant`와 `FixedWingPlant` 위에서 돌려 POS와 에너지 차이를 표로 남긴다.
 
+### 4단계 구현 (모듈)
+
+```
+rl_search/
+  config.py       프리셋: PlantConfig(PX4 이름), EnergyConfig, HandoverConfig, ExportConfig, FollowConfig,
+                  LawnmowerConfig, WindConfig + 기존 SearchConfig/ScenarioConfig. rc_cessna(기본), fast.
+                  --preset, --set 섹션.이름=값, meta.json에 저장한 프리셋으로 다시 만들기
+  plants.py       KinematicPlant(기존과 같은 계산), FixedWingPlant(NPFG 근사 + 롤 루프), measure_max_turn, PLANTS 등록표
+  energy.py       PowerModel: P(φ, V), step_energy, endurance_s
+  wind.py         WindModel(일정 바람 + OU 돌풍, 상태 저장/복원), ConstantWind
+  env.py          SearchEnv(plant, power, handover, wind), snapshot/restore, make_env(preset, ...)
+  scripts/check_plant.py   검증 그림 3장 + plant_check.json
+```
+
+- **설정 바꾸기:** 값은 `--set plant.FW_R_LIM=45 search.pod=1`처럼 바꾼다. 같은 값이 두 곳에 있지 않게, 순항 속도는 `plant.FW_AIRSPD_TRIM`, 비행 시간은 `energy.budget_s`에서만 정하고 나머지(`search.uav_speed_mps`, `flight_min`, 시나리오 속도)는 `finalize`가 맞춘다. `search.max_turn_deg = None`이면 기체 모델로 잰다.
+- **부품 바꾸기:** 새 기체 모델은 `plants.PLANTS`, 새 플래너는 `planners.PLANNERS`, 새 비교 방법은 `runner.METHODS`에 등록한다. 기체는 `step(turn, airspeed, wind)`, `get_state/set_state`, `obs_extra`만 맞추면 된다.
+- **회귀:** `fast` 프리셋에서 `check_env.py`가 기존 `uav_search.py`와 POS, 자세 차이 0, 질량 보존 오차 2e-10으로 그대로 통과한다. 0~2단계 평가 세트는 `data/scenarios/fast/`로 옮겼다.
+
+### 4단계 결과
+
+**평가 세트 (rc_cessna, `data/scenarios/rc_cessna/`):** 평가 50개, 분포 확인 100개. 시나리오 하나 생성은 약 52 s(코어 하나)다.
+
+| 지표 | 중앙값 | 상위 10% | 최대 |
+|------|--------|----------|------|
+| 맵 밖 이탈 질량 | 2.1% | 66.5% | 98.9% |
+| 따라잡는 시간 | 790 s | 1020 s | 1200 s |
+| 출발점-LKP 거리 | 11.6 km | 14.4 km | 15.0 km |
+
+- 이탈 질량이 50%를 넘는 시나리오는 17%로, 33.3 m/s 설정(20%, 중앙값 1.5%)과 비슷하다. LKP가 가장자리 15 km 띠에 몰려도 이탈이 크게 늘지 않아서 60 km 맵을 유지한다.
+- 샘플러는 LKP에서 `start_dist_m` 범위 안에 가장자리 출발점이 있는지를 네 변까지의 정확한 거리로 걸러 낸다. 그래서 출발점 후보가 없는 LKP가 0개다(`fast` 프리셋에서는 예전 LKP가 그대로 나온다).
+
+**check_plant.py (`data/plant_check/rc_cessna/`):**
+
+| 진행 방향 계단 | 상승 시간 | 오버슈트 | 2% 정착 | 최대 롤 |
+|----------------|-----------|----------|---------|---------|
+| 30° | 3.7 s | 7.9% | 11.6 s | 11.4° |
+| 90° | 3.7 s | 7.9% | 11.6 s | 31.2° |
+| 179° | 3.8 s | 7.8% | 11.7 s | 49.8° |
+
+- 정상 선회 반경 19.257 m, 이론값 19.252 m(오차 0.03%, 1% 기준 통과).
+- **max_turn = 133.35° / 4 s**(최대 선회율 44.6°/s). 예상과 달리 NPFG 주기 때문에 크게 줄지 않았다. 롤 루프(시정수 0.4 s, 56°/s)가 빨라서 1초 안에 롤 한도에 닿고, 그 뒤는 이론 선회율(15 m/s, 50°에서 45°/s)로 돈다. 이 값이 `mission.MAX_TURN_RC_CESSNA` 기본값이고, 프리셋은 `None`으로 두어 기체 설정이 바뀌면 다시 잰다.
+- 큰 선회에서 롤이 49.8°까지 가서 짐벌 범위(45°)를 넘는다. `NadirSensor`가 경고를 한 번 낸다. 실제 greedy 계획의 최대 롤은 41° 정도라 지금은 계획용 롤 한도를 따로 두지 않았다(`--set plant.FW_R_LIM=45`로 바꿀 수 있다).
+
+**KinematicPlant 대 FixedWingPlant (같은 turn 명령열 60 s):**
+
+| 명령 | 위치 차이 평균 | 최대 | 에너지 Kinematic | 에너지 FixedWing |
+|------|----------------|------|------------------|------------------|
+| 직진 | 0 m | 0 m | 60.0 | 60.0 |
+| 최대 선회 | 56 m | 100 m | 83.8 | 77.9 |
+| 좌우 교대 | 206 m | 403 m | 83.8 | 77.6 |
+
+에너지 단위는 순항 1초 = 1(trim-s)이다. Kinematic은 롤이 즉시 바뀐다고 보므로 선회 에너지를 더 크게 잡는다. 좌우 교대처럼 방향을 자주 바꾸면 롤 지연 때문에 궤적이 크게 달라진다(최대 403 m). 이 차이는 플래너가 예측에 쓰는 운동 모델과 실제 기체의 차이이기도 하다(아래 "남은 문제").
+
 ## 5단계: 이동 중 계획 완성과 경로점 인계
 
 ```mermaid
@@ -192,6 +252,31 @@ flowchart LR
 - **실행 확인:** 솎은 경로점을 경로 추종 모드(NPFG 근사로 경로를 따라감)로 다시 비행해서, 계획 POS와 실행 POS, 시간 어긋남(계획 도착 시각 대비)을 비교한다.
 - **완료 기준:** 평가 세트에서 greedy와 tree의 계획 POS 대비 실행 POS 손실이 표로 나오고, 경로점 파일이 만들어진다.
 
+### 5단계 구현 (모듈)
+
+```
+rl_search/
+  waypoints.py    Waypoints(xy, eta), thin_path(Douglas-Peucker), 위경도 변환, qgc_plan, write_plan
+  follower.py     PathFollower: 경로 위 진행량 투영(창 제한) + lookahead 추적점, 바람 보정, 도착 시각 맞추기
+  planners.py     rollout(env, planner, until_s): 인계 시점부터 계획 펼치기. run_episode는 그 위에 있다
+  runner.py       plan_planner, follow, run_method(straight / lawnmower / greedy / tree), summary
+  scripts/export_plan.py    한 시나리오: 계획 -> 솎기 -> mission.csv / mission.plan -> 경로 추종으로 다시 비행 -> 그림, 요약
+  scripts/sitl_fly_plan.py  (fw-gz) .plan을 PX4 SITL에 올려 비행하고 궤적 비교
+envs/run_sitl_headless.sh   화면 없는 PX4 인스턴스 N(포트 14540+N, 따로 된 Gazebo)
+```
+
+- **실행 순서:** 계획용 env에서 출발 → 이동 → 인계 → 플래너를 에너지 끝까지 펼친다. 실행용 env는 같은 시나리오로 다시 시작해 솎은 경로점을 `PathFollower`로 따라간다. 둘 다 같은 기체·에너지·센서 모델이라 차이는 솎기와 경로 추종에서만 생긴다.
+- **`.plan` 형식:** `NAV_TAKEOFF`(이륙, 피치 15°) → `NAV_WAYPOINT`(수락 반경 15 m, 고도 100 m) → 착륙 패턴(`DO_LAND_START`, 홈 앞 500 m에서 `NAV_LOITER_TO_ALT` 50 m, `NAV_LAND`). PX4 고정익은 `MIS_TKO_LAND_REQ 2`라 착륙 패턴이 없으면 시동이 거부된다. `--set export.finish=rtl`이나 `none`으로 바꿀 수 있다.
+- **경로 추종:** 계획 경로가 스스로 겹치는 곳에서 다음 바퀴로 건너뛰지 않도록, 진행량은 한 스텝에 `1.5 (V_max + |w|) dt + lookahead`까지만 늘린다. 추적점은 UAV에서 lookahead(90 m) 이상 떨어진 첫 경로점이라, 선회 반경보다 작은 고리는 돌지 않고 잘라서 지나간다(돌면 수백 초씩 늦어졌다).
+
+### 5단계 결과 (s1000000, greedy, POD 0.3)
+
+- **인계:** 120 s에 인계. 출발 시점에 예측한 인계 자세와 실제 차이 0 m(직진이라 정확). 이동 중 탐지 0, 에너지 120 trim-s.
+- **계산 시간:** 54.8 s로 `t_plan` 120 s 안이다. tree는 한 판에 약 256 s라 `t_plan`을 넘는다(아래 비교 표의 계산 시간 참고). 운용에 쓰려면 tree의 beam/horizon을 줄이거나 `t_plan`을 늘려야 한다.
+- **솎기:** 799 자세 → 659 경로점, 최대 편차 15.0 m(허용 15 m).
+- **미션 한도:** 661 항목으로 실기체 한도 500을 넘는다(경고). greedy 경로는 4 s마다 방향을 바꿔서 솎아도 많이 남는다. 허용 오차를 30 m로 올리거나, 비행 중 미션을 나눠 올리거나, 고리를 `LOITER` 항목으로 바꾸는 방법이 남아 있다.
+- **계획 대비 실행:** POS 0.1549 → 0.1422(−8.2%), 에너지 3601 → 3602 trim-s. 일정 오차 평균 −57 s, 최대 180 s, 끝 +76 s. 경로 이탈 평균 19.9 m, 최대 84 m. 최대 롤 41°.
+
 ## 3단계: lawnmower 베이스라인과 비교
 
 - **시작:** 인계 시점부터 시작한다. 그전 이동 구간은 다른 방법과 같다.
@@ -200,6 +285,32 @@ flowchart LR
 - **형태:** lawnmower는 처음부터 경로점 목록으로 만들고, 같은 경로 추종 모드로 비행한다. 그래서 운용 형태가 RL 계획과 같다.
 - **`compare.py`:** 평가 세트에서 straight, lawnmower, greedy, tree를 돌린다. 조건은 POD 1과 0.3, 같은 에너지 예산이다. 지표는 시간에 따른 POS, 에너지에 따른 POS, 최종 POS, 1 - escaped 대비 비율, 탐색 면적, 계산 시간이다. 설정 조합별 결과를 `search_<설정 이름>/`으로 저장해서 뷰어에서 겹쳐 볼 수 있게 한다. 시나리오별 그림과 평균/분산 표를 만든다.
 - **완료 기준:** 평가 세트(맥 5개, 우분투 50개)에서 비교 그림과 표가 나온다.
+
+### 3단계 구현 (모듈)
+
+```
+rl_search/
+  lawnmower.py    HDR 80% 사각형(표적 heading 정렬), 줄, 건너뛰기, 왕복 경로, build_lawnmower
+  scripts/compare.py    --methods, --configs NAME:k=v, --wind-modes, --workers, --save-missions
+```
+
+- lawnmower는 경로점 목록으로 만들고 같은 `PathFollower`로 비행한다. 줄 간격은 footprint 폭(115 m), 건너뛸 줄 수는 `k = max(1, ceil(2 R_eff / 115))`이다. 15 m/s, 롤 50°에서 실효 반경이 약 19 m라 k = 1(바로 옆 줄)이다.
+- `compare.py`는 시나리오 × 방법 × 설정 × 바람 방식을 프로세스 풀로 돌린다. 워커마다 BLAS 스레드는 1개다. 결과는 `data/compare/<tag>/`에 `table.md`, `table.csv`, `pos_time.png`, `pos_energy.png`로 남는다.
+
+### 3단계 결과 (연기: 2시나리오 스모크, POD 0.3)
+
+평가 50개 전체 비교는 `data/compare/methods/`에 돌아가는 중이다. 스모크(2개)에서 최종 POS 평균은 다음과 같다.
+
+| 방법 | POS | 계산 시간 |
+|------|-----|-----------|
+| straight | 0.016 | ~1 s |
+| lawnmower | 0.006 | ~1 s |
+| greedy | 0.130 | ~51 s |
+| tree | 0.173 | ~256 s |
+
+- lawnmower POS가 낮은 이유: 인계 시점의 80% HDR을 표적 heading 사각형으로 감싸면 면적이 커진다(예: HDR 59 km² → 사각형 172 km², 줄 103개, 한 바퀴에 약 85,000 s). 에너지 60분으로는 일부를 훑을 뿐이다. 직진보다도 낮다. 베이스라인으로는 약하고, 사각형을 더 작게 하거나 줄 간격을 넓히는 자리가 `lawnmower.py`에 있다.
+- tree는 POS가 가장 높지만 계산이 `t_plan` 120 s를 넘는다. 운용에 쓰려면 beam/horizon을 줄이거나 계획을 더 일찍 시작해야 한다.
+- greedy는 POS와 계산 시간의 균형이 가장 낫다. 초기 heading에 민감하므로(2단계 발견) 평가는 세트 평균으로 본다.
 
 ## 6단계 (마지막): 바람 반영
 
@@ -210,8 +321,81 @@ flowchart LR
   - (c) (b)에 일정 오차가 기준(예: 30 s)을 넘으면 현재 상태에서 다시 계획하기를 추가
 - **결과:** 각 방식의 POS 손실과 에너지 차이를 표로 남겨, 실제 비행에 어떤 장치가 필요한지 정한다. RL 학습 때 바람을 무작위로 섞을지도 이 결과로 정한다.
 
+### 6단계 구현 (모듈)
+
+```
+rl_search/
+  wind.py      WindModel(에피소드마다 일정 바람 0~6 m/s + OU 돌풍), ConstantWind, 상태 저장/복원
+  follower.py  추정 바람이 있으면 게걸음(crab) 보정, schedule=True면 대기 속도 11~20 m/s로 도착 시각 맞춤
+  runner.py    WIND_MODES = none / unaware / aware / replan
+               replan: 일정 오차 > 30 s이고 직전 재계획과 120 s 이상 떨어지면 현재 상태에서 다시 계획
+```
+
+- **none:** 바람 없음(비교 기준). **unaware:** 바람은 있는데 계획은 바람이 없다고 짠다. **aware:** 추정 바람을 넣어 계획하고, 경로 추종이 게걸음과 대기 속도로 일정을 맞춘다. **replan:** aware에 일정 오차 재계획을 더한다.
+- 스모크(재계획, POD 0.3): greedy 0.197, tree 0.198. tree 재계획은 한 판에 약 26분이 걸린다. 평가 20개 × 네 방식 비교는 `data/compare/wind/`에 이어서 돈다.
+
+## 최종 검증: PX4 SITL
+
+```
+envs/run_sitl_headless.sh 1          # 인스턴스 1, 화면 없는 Gazebo (GZ_PARTITION fwverify_1)
+python rl_search/scripts/sitl_fly_plan.py <dir>/mission.plan --url udpin:0.0.0.0:14541
+python -m rl_search.scripts.plot_sitl <dir>
+envs/run_sitl_headless.sh stop 1
+```
+
+- 14분으로 자른 greedy 경로(`data/plans/rc_cessna/s1000000/greedy_14min/`, 102 경로점 + 이륙 + 착륙)를 인스턴스 1(포트 14541)에 올렸다. 0번(지금 켜 둔 GUI PX4)은 건드리지 않는다.
+- 시동은 첫 시도에서 된다. 이륙 후 100 m, 15 m/s로 첫 긴 구간(약 5 km, ETA 336 s)을 간다.
+- **착륙 중단:** `gz_rc_cessna`에는 거리 센서가 없다. 기본 `FW_LND_ABORT 3` + `FW_LND_USETER 1`이면 "지형을 못 찾음"으로 착륙을 멈추고 착륙점 위에 선회한다. `sitl_fly_plan.py`는 이 인스턴스에서만 `FW_LND_ABORT 0`, `FW_LND_USETER 0`으로 바꾼다. 착륙 패턴은 `DO_LAND_START` + `NAV_LOITER_TO_ALT`(홈 앞 500 m, 50 m) + `NAV_LAND`다.
+- **데이터링크 끊김:** `NAV_DLL_ACT 2`는 GCS가 사라지면 RTL이다. 스크립트는 GCS 하트비트를 보내고, 이 인스턴스에서만 `NAV_DLL_ACT 0`으로 바꿔 스크립트가 끝나도 RTL이 안 나게 한다.
+- 궤적은 `sitl_track.csv`, 숫자는 `sitl_report.json`, 그림은 `sitl_track.png`다. 검색 구간이 끝난 뒤의 경로 이탈·도착 시각 차이·착륙 여부를 본다.
+
+**s1000000 greedy 14분 SITL 결과 (인스턴스 1, 이륙→검색→착륙):**
+
+| 지표 | 값 |
+|------|-----|
+| 도달한 검색 경로점 | 102 / 102 |
+| 검색 시간 | 763 s (계획 840 s, 76 s 빠름) |
+| 경로 이탈 평균 / 상위 5% / 최대 | 2.4 m / 8.5 m / 41.6 m |
+| 착륙 | 됨, 시동 꺼짐. 홈에서 62 m, 고도 0.0 m |
+| 전체 비행 | 1327 s (검색 후 착륙·선회 507 s) |
+
+착륙 직후 `ESC failure` / `Attitude failure (roll)`은 시뮬 기체가 땅에 닿을 때 나오는 경고이고, 착륙 자체는 `Mission finished, landed` → `Disarmed by landing`으로 끝났다.
+
 ## 이번 범위에서 뺀 것
 
 - RL 학습(관측 설계, 보상 조정, PPO 학습 일정). 4~5단계 결과를 보고 따로 계획한다.
 - 포장/비포장 도로 지형과 차량 이동 모델. `surface` 층과 `move_model` 자리만 있다.
 - PX4/Gazebo 브리지 구현(로드맵 3, 5번), ulog로 모델 맞추기(로드맵 4번), 여러 대 UAV. 5단계 경로점 파일과 4단계 PX4 파라미터 이름은 이를 위한 준비다.
+
+## 파일 구조 (4~6단계 추가분)
+
+```
+rl_search/
+  config.py          프리셋과 --set. 순항 속도·비행 시간의 단일 출처
+  plants.py          KinematicPlant, FixedWingPlant, PLANTS
+  energy.py          PowerModel
+  wind.py            WindModel, ConstantWind
+  env.py             SearchEnv(plant, power, handover, wind), snapshot/restore
+  waypoints.py       솎기, CSV, QGC .plan (이륙 + 착륙 패턴)
+  follower.py        PathFollower (진행량 창, lookahead, 게걸음, 일정)
+  lawnmower.py       HDR 사각형 왕복
+  runner.py          METHODS, WIND_MODES, run_method
+  scripts/
+    check_plant.py   기체 검증 그림
+    export_plan.py   한 시나리오 계획 → 경로점 → 다시 비행
+    compare.py       방법 × 설정 × 바람 비교
+    sitl_fly_plan.py PX4 SITL에 .plan 업로드·비행·비교 (fw-gz)
+    plot_sitl.py     sitl_track.png
+envs/run_sitl_headless.sh
+docs/diagrams/       research_flow, modules, architecture
+```
+
+설정은 `--preset` / `--set 섹션.이름=값`으로 바꾸고, 부품은 `PLANTS` / `PLANNERS` / `METHODS` / `WIND_MODES`에 등록한다.
+
+## 남은 문제 / 다음
+
+- **ulog로 기체 맞추기:** `FixedWingPlant`의 NPFG 근사와 k(유도 항력 비율)를 `gz_rc_cessna` 비행 로그의 롤·추력으로 맞춘다. 파라미터 이름은 이미 PX4와 같다.
+- **tree가 느림:** 한 판 약 256 s로 `t_plan` 120 s를 넘는다. beam/horizon을 줄이거나, 플래너가 쓰는 운동 모델을 133° 격자에 맞춘다. 지금 플래너는 이산 turn을 쓰고, 실제 기체는 롤 지연이 있다(좌우 교대에서 궤적 차이 최대 403 m).
+- **미션 항목 500 한도:** 60분 greedy는 661 항목이다. `export.tolerance_m`을 올리거나, 비행 중 미션을 나눠 올리거나, 작은 고리를 `LOITER`로 바꾼다. SITL 확인은 `--max-minutes`로 자른 경로로 한다.
+- **lawnmower 베이스라인이 약함:** heading 정렬 사각형이 HDR보다 훨씬 크다. 사각형을 줄이거나 줄 간격을 넓히는 설정(`lawnmower.hdr`, `lane_spacing_m`)이 있다.
+- **RL 학습:** 관측·보상·PPO는 이 파이프라인 위에 따로 계획한다. 환경은 이미 `reset`/`step`이고 인계 이후부터 행동을 받는다.

@@ -1,0 +1,28 @@
+digraph research_flow {
+  rankdir=TB;
+  graph [fontname="Noto Sans CJK KR", bgcolor="white", pad=0.3, nodesep=0.5, ranksep=0.45];
+  node  [fontname="Noto Sans CJK KR", shape=box, style="rounded,filled", fontsize=12, margin="0.2,0.1", fillcolor="#f1f5f9", color="#64748b"];
+  edge  [fontname="Noto Sans CJK KR", fontsize=10, color="#555555"];
+
+  subgraph cluster_done {
+    label="완료 (fw-train, fw-gz)"; fontsize=13; style="rounded,filled"; fillcolor="#ecfdf5"; color="#16a34a";
+    s0  [label="0단계: 60 km 지형 생성", fillcolor="#dcfce7", color="#16a34a"];
+    s1  [label="1단계: 시나리오 생성기, 평가 세트", fillcolor="#dcfce7", color="#16a34a"];
+    s2  [label="2단계: SearchEnv, 플래너, 회귀 확인\n(fast 프리셋으로 유지)", fillcolor="#dcfce7", color="#16a34a"];
+    s4a [label="4단계: 프리셋 (rc_cessna / fast)\n평가 세트 50개 재생성", fillcolor="#dcfce7", color="#16a34a"];
+    s4b [label="4단계: FixedWingPlant, 에너지 모델\ncheck_plant.py, max_turn 133°", fillcolor="#dcfce7", color="#16a34a"];
+    s5  [label="5단계: 이동 → 인계 (120 s)\n경로점 CSV + QGC .plan", fillcolor="#dcfce7", color="#16a34a"];
+    s3  [label="3단계: lawnmower\ncompare.py 방법별 비교 표", fillcolor="#dcfce7", color="#16a34a"];
+    s6  [label="6단계: 바람 모델\n모름 / 반영+속도 / 재계획 비교", fillcolor="#dcfce7", color="#16a34a"];
+    chk [label="최종 검증: .plan을 PX4 SITL\nrc_cessna로 비행 (sitl_fly_plan.py)", fillcolor="#dcfce7", color="#16a34a"];
+    s0 -> s1 -> s2 -> s4a -> s4b -> s5 -> s3 -> s6;
+    s5 -> chk [label=".plan"];
+  }
+
+  fit [label="로그로 PX4 파라미터 맞추기\n(pyulog, 다음 단계)", fillcolor="#f3e8ff", color="#9333ea"];
+  rl  [label="RL 학습 (별도 계획)", fillcolor="#fee2e2", color="#dc2626"];
+
+  chk -> fit [label=".ulg"];
+  fit -> s4b [label="파라미터 갱신", style=dashed];
+  s6 -> rl;
+}

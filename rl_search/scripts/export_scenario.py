@@ -5,7 +5,7 @@ which a footprint rarely covers. Also reports the particle density check: the be
 at the centroid intercept time for KDE bandwidths 150 m and 300 m.
 
 Run from the repository root:
-    python -m rl_search.scripts.export_scenario rl_search/data/scenarios/eval/s1000000
+    python -m rl_search.scripts.export_scenario rl_search/data/scenarios/fast/eval/s1000000
 """
 from __future__ import annotations
 
@@ -14,12 +14,10 @@ from pathlib import Path
 import json
 import numpy as np
 
-from rl_search.scenario import Scenario, ScenarioConfig, load_scenario
+from rl_search.config import preset_from_meta
+from rl_search.scenario import Scenario, load_scenario
 from rl_search.terrain import Terrain, load_terrain
 from uav_search import footprint_probs
-
-MAX_TURN_DEG = 23.5   # fixed-wing limit at 35 deg bank, 33.3 m/s, 2 s step
-
 
 def best_poa(track, exit_step, save_dt_s, t_s, heading_deg, h_m, n_centres=2000, seed=0):
     """Largest share of the initial probability inside one footprint at t_s (centres on particles)."""
@@ -34,7 +32,8 @@ def best_poa(track, exit_step, save_dt_s, t_s, heading_deg, h_m, n_centres=2000,
 
 
 def export_dir(scenario_dir: Path) -> Path:
-    return Path("rl_search/data/export")/scenario_dir.name
+    """rl_search/data/export/<preset folder>/<scenario> for rl_search/data/scenarios/<preset folder>/eval/<scenario>."""
+    return Path("rl_search/data/export")/scenario_dir.resolve().parent.parent.name/scenario_dir.name
 
 
 def export(scen: Scenario, terr: Terrain, out: Path) -> Path:
@@ -57,7 +56,8 @@ def main():
 
     meta = json.loads((args.scenario/"meta.json").read_text())
     scen = load_scenario(args.scenario, mmap=False)
-    cfg = ScenarioConfig.from_dict(meta["config"])
+    preset = preset_from_meta(meta)
+    cfg, scfg = preset.scenario, preset.search
     terr = load_terrain(Path(meta["terrain"]))
     out = export(scen, terr, args.output or export_dir(args.scenario))
     print(f"Saved {out/'simulation_data.npz'}")
@@ -69,9 +69,9 @@ def main():
             flag = "  (below 1e-3: consider a wider bandwidth)" if v < 1e-3 else ""
             print(f"Best footprint POA at intercept t* = {t_int/60:.1f} min, h = {h:g} m: {v:.2e}{flag}")
     sx, sy = scen.start
-    print("Fly the existing greedy planner:")
+    print("Fly the existing greedy planner (instant turns, no energy model, no handover):")
     print(f"  python uav_search.py {out} --plan greedy --launch-delay 0 --flight {cfg.flight_s/60:g} "
-          f"--speed {cfg.uav_speed_mps:.2f} --dt 2 --max-turn {MAX_TURN_DEG} "
+          f"--speed {cfg.uav_speed_mps:.2f} --dt {scfg.dt_s:g} --max-turn {scfg.max_turn_deg:g} "
           f"--start {sx:.0f} {sy:.0f} --start-heading {scen.start_heading_deg:.1f}")
     print(f"  python mission_viewer.py {out}/search_greedy")
 

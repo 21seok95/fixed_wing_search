@@ -1,11 +1,13 @@
 """Build the fixed-seed evaluation set and check the training scenario distribution.
 
-Evaluation scenarios use seeds ``eval_seed + i`` and are saved (track.npy, exit_step.npy, meta.json).
-The distribution check draws ``n_stats`` scenarios with the same seed stream as
-``ScenarioGenerator(seed=stats_seed)`` and only keeps their metrics.
+Evaluation scenarios use seeds ``eval_seed + i`` and are saved (track.npy, exit_step.npy, meta.json
+with the full preset). The distribution check draws ``n_stats`` scenarios with the same seed stream as
+``ScenarioGenerator(seed=stats_seed)`` and only keeps their metrics. Output goes to
+rl_search/data/scenarios/<preset name>/ unless --output is given.
 
 Run from the repository root:
-    python -m rl_search.scripts.make_scenarios --n-eval 5 --n-stats 100
+    python -m rl_search.scripts.make_scenarios --preset rc_cessna --n-eval 50 --n-stats 100
+    python -m rl_search.scripts.make_scenarios --preset fast --n-eval 5      # stage 0-2 setup
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+from rl_search.config import add_preset_args, finalize, raw_preset
 from rl_search.plotting import draw_terrain
 from rl_search.scenario import ScenarioConfig, ScenarioSampler, make_scenario, save_scenario
 from rl_search.terrain import load_terrain
@@ -29,9 +32,10 @@ DEFAULT_TERRAIN = Path("rl_search/data/terrain_seed7_60km.npz")
 _worker: dict = {}
 
 
-def _init(terrain_path: str, cfg: ScenarioConfig):
+def _init(terrain_path: str, cfg: ScenarioConfig, preset: dict):
     _worker["terrain"] = Path(terrain_path)
     _worker["sampler"] = ScenarioSampler(load_terrain(Path(terrain_path)), cfg)
+    _worker["preset"] = preset
 
 
 def _eval_job(args):
@@ -39,6 +43,8 @@ def _eval_job(args):
     sampler = _worker["sampler"]
     scen = make_scenario(sampler, seed)
     save_scenario(Path(out), scen, sampler.cfg, _worker["terrain"])
+    meta_path = Path(out)/"meta.json"
+    meta_path.write_text(json.dumps(json.loads(meta_path.read_text()) | dict(preset=_worker["preset"]), indent=1))
     k_end = min(int(round(sampler.cfg.flight_s/scen.save_dt_s)), len(scen.track) - 1)
     in_map = (scen.exit_step < 0) | (scen.exit_step > k_end)
     return scen.meta(), np.asarray(scen.track[k_end][in_map][::5])
@@ -85,7 +91,8 @@ def histogram_figure(metas, path: Path):
         v = m(k)*scale
         v = v[np.isfinite(v)]
         ax.hist(v, bins=20, color="#3949ab", alpha=.85)
-        ax.set_title(f"{title}\nmedian {np.median(v):.3g}, min {v.min():.3g}, max {v.max():.3g}", fontsize=9)
+        ax.set_title(f"{title}\nmedian {np.median(v):.3g}, p90 {np.percentile(v, 90):.3g}, "
+                     f"min {v.min():.3g}, max {v.max():.3g}", fontsize=9)
     fig.suptitle(f"Training scenario distribution ({len(metas)} scenarios)")
     fig.savefig(path, dpi=140)
     plt.close(fig)
@@ -94,27 +101,33 @@ def histogram_figure(metas, path: Path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--terrain", type=Path, default=DEFAULT_TERRAIN)
-    ap.add_argument("--output", type=Path, default=Path("rl_search/data/scenarios"))
+    ap.add_argument("--output", type=Path, default=None, help="Default: rl_search/data/scenarios/<preset name>")
     ap.add_argument("--n-eval", type=int, default=5)
     ap.add_argument("--eval-seed", type=int, default=1_000_000, help="Evaluation seeds start here")
     ap.add_argument("--n-stats", type=int, default=100, help="Scenarios for the distribution check (not saved)")
     ap.add_argument("--stats-seed", type=int, default=0, help="Seed of the ScenarioGenerator stream")
     ap.add_argument("--particles", type=int, default=None)
     ap.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
+    add_preset_args(ap)
     args = ap.parse_args()
 
-    cfg = ScenarioConfig()
+    raw = raw_preset(args.preset or "rc_cessna", args.set)
+    preset = finalize(raw)
+    cfg = preset.scenario
+    args.output = args.output or Path("rl_search/data/scenarios")/preset.name
     if args.particles:
         cfg.target.particles = args.particles
     terr = load_terrain(args.terrain)
     eval_dir = args.output/"eval"
     eval_dir.mkdir(parents=True, exist_ok=True)
-    pool = ProcessPoolExecutor(args.workers, initializer=_init, initargs=(str(args.terrain), cfg))
+    pool = ProcessPoolExecutor(args.workers, initializer=_init, initargs=(str(args.terrain), cfg, raw.to_dict()))
 
     t0 = time.perf_counter()
     jobs = [(args.eval_seed + i, str(eval_dir/f"s{args.eval_seed + i}")) for i in range(args.n_eval)]
     results = list(pool.map(_eval_job, jobs))
     metas = [r[0] for r in results]
+    print(f"Preset {preset.name}: target {cfg.speed_kmh} km/h, launch {np.array(cfg.start_dist_m)/1000} km, "
+          f"flight {cfg.flight_s:.0f} s at {cfg.uav_speed_mps:g} m/s, tracks {cfg.target.duration_s:.0f} s")
     print(f"Saved {len(metas)} evaluation scenarios in {eval_dir} ({time.perf_counter()-t0:.0f} s)")
     for x in metas:
         mt = x["metrics"]

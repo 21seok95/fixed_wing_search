@@ -18,18 +18,20 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.special import ndtr
 
+MAX_TURN_RC_CESSNA = 133.35  # deg per 4 s step from straight flight, measured by scripts/check_plant.py
+
 
 @dataclass
 class SearchConfig:
     launch_delay_min: float = 0.0
-    flight_min: float = 50.0
-    uav_speed_mps: float = 120/3.6
-    dt_s: float = 2.0
+    flight_min: float = 60.0
+    uav_speed_mps: float = 15.0
+    dt_s: float = 4.0
     fov_along_m: float = 83.0
     fov_cross_m: float = 115.0
-    max_turn_deg: float = 23.5         # fixed-wing limit at 35 deg bank (planner lattice and env clip)
+    max_turn_deg: float | None = MAX_TURN_RC_CESSNA  # planner lattice and env clip; None: measure from the plant
     bandwidth_m: float = 150.0
-    pod: float = 1.0
+    pod: float = 0.3
     particle_weights: str = "remaining"  # planner mass: "remaining" w/N or "conditional" w/sum(w)
     explore_weight: float = 0.0
     explore_density: float = 0.0

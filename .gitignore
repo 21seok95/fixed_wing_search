@@ -21,6 +21,7 @@ results_*/
 search_*/
 *.npz
 *.png
+!docs/diagrams/*.png
 
 # Training artifacts
 runs/
