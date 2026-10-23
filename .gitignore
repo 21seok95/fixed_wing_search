@@ -15,6 +15,7 @@ venv/
 .DS_Store
 
 # Simulation / mission outputs
+rl_search/data/
 results/
 results_*/
 search_*/
