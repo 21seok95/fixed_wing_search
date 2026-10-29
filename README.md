@@ -11,3 +11,6 @@ See **[ENV_SETUP.md](ENV_SETUP.md)** for the two environments:
 ```bash
 source envs/activate_train.sh   # or activate_gz.sh
 ```
+
+단일 무인기 강화학습 설계·구현 진행 상황은
+**[RL TODO 체크리스트](docs/single_uav_rl_todo.md)**에서 관리합니다.
