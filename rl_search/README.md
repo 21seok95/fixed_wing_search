@@ -154,3 +154,31 @@ Ornstein-Uhlenbeck gust; ground velocity = air velocity + wind. Modes in `runner
 (plan without wind), `aware` (plan with the wind estimate, crab-angle correction, airspeed
 scheduled to the ETA within 11-20 m/s), `replan` (aware + new plan from the current state when the
 schedule error exceeds `wind.replan_error_s`).
+
+## RL environment and PPO (design log: `todo_response.md`)
+
+`rl_env.RLSearchEnv` implements the agreed RL design (numpy only): 5 s decisions with a course target
+(+-30 deg per decision), the interval sensor (25 m cells under the footprint every 1 s, one POD update
+per interval), the expanded-HDR area reward, reward `w_pos dPOS/pos_ref + w_area dA/area_ref`, four
+2-channel 64x64 maps (near 1.6 km, mid 6.4 km, wide 25.6 km UAV-centred; global 60 km fixed) and an
+8-vector. Curriculum stage 1/2 start near the prior at t0 = 2 min / 10-15 min; stage 3 is the full
+launch + 120 s transit. `rl_gym.RLSearchGym` wraps it for Gymnasium/SB3 and `rl_gym.MultiMapExtractor`
+is the 4-CNN feature extractor.
+
+```bash
+python -m rl_search.scripts.make_terrain                     # once per machine (data/ is not in git)
+python -m rl_search.scripts.check_rl_env --stages 1 2 3      # step 9 checks, no torch needed
+python -m rl_search.scripts.check_hdr                        # prior spread and reward zone
+```
+
+Training needs `pip install -r rl_search/requirements-rl.txt` plus torch:
+
+- **Mac (check only):** `pip install torch`, then a short CPU run
+  `python -m rl_search.scripts.train_ppo --tag smoke --n-envs 1 --n-steps 256 --total-steps 2048 --device cpu`
+  and `python -m rl_search.scripts.check_rl_env --model rl_search/data/rl/smoke/model_final.zip`.
+- **Ubuntu + RTX 2070:** install a CUDA build of torch (check `nvidia-smi` for the driver's CUDA version
+  and pick the matching command on pytorch.org), check `python -c "import torch; print(torch.cuda.is_available())"`, then
+  `python -m rl_search.scripts.train_ppo --tag stage1 --n-envs <physical cores> --total-steps 2000000 --device cuda`.
+  The environment runs on the CPU and is the bottleneck (about 12-23 ms per step on one core), so
+  `--n-envs` matters more than the GPU. `tensorboard --logdir rl_search/data/rl` shows episode POS,
+  area, exit rate and the course-target gap.
