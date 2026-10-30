@@ -64,6 +64,7 @@ def run(env, options, policy, name):
         log["darea"].append(info["darea_m2"])
         log["r"].append(r)
         log["gap"].append(info["gap_deg"])
+        log.setdefault("shield", []).append(info["shield"])
         log["roll"].append(info["roll_deg"])
         log["mass_err"].append(abs(pos0 + np.sum(log["dpos"]) - b.pos) + max(0.0, -float(b.w.min())))
         assert info["darea_m2"] <= info["n_cells"]*env.cfg.cell_m**2 + 1e-6
@@ -75,7 +76,7 @@ def run(env, options, policy, name):
     out = {k_: np.array(v) for k_, v in log.items()}
     c = env.cfg
     out["summary"] = dict(
-        steps=k, flight_min=round((env.t - log["t"][0])/60, 1), exited=bool(info["exited"]),
+        steps=k, shield_steps=int(np.sum(log.get("shield", [0]))), flight_min=round((env.t - log["t"][0])/60, 1), exited=bool(info["exited"]),
         energy_end=round(float(info["energy_left"]), 1), pos=round(float(np.sum(log["dpos"])), 4),
         area_km2=round(float(np.sum(log["darea"]))/1e6, 3),
         R_pos=round(float(c.w_pos*np.sum(log["dpos"])/c.pos_ref), 3),

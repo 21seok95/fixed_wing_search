@@ -86,6 +86,7 @@ def main():
         def _on_step(self) -> bool:
             for info in self.locals["infos"]:
                 self.logger.record_mean("step/gap_abs_deg", abs(info.get("gap_deg", 0.0)))
+                self.logger.record_mean("step/shield", float(info.get("shield", False)))
                 ep = info.get("episode")
                 if ep:
                     for k in info_keys:

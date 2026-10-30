@@ -53,6 +53,8 @@ class RLConfig:
     heading_offset_deg: float = 90.0        # stage 1/2: initial heading = bearing to the prior +- this
     reuse: int = 8                          # episodes per target simulation
     map_margin_m: float = 1000.0            # stage 1/2 start points keep this far from the map edge
+    geofence_m: float = 1000.0              # 6.2 v3: inside this band, an outward course target is replaced by
+                                            # a full turn toward the map centre (0 disables)
 
 
 MAP_NAMES = ("near", "mid", "wide", "global")
@@ -167,10 +169,29 @@ class RLSearchEnv:
     # ------------------------------------------------------------------ step
     def step(self, action):
         a = float(np.clip(np.ravel(action)[0], -1.0, 1.0))
+        a, shield = self._geofence(a)
         self.chi_tgt = self.chi_tgt + a*self.turn
         out = self._interval()
+        out["shield"] = shield
         self.k += 1
         return self._obs(), out["reward"], out["terminated"], False, self._info(out)
+
+    def _geofence(self, a: float):
+        """Safety layer (6.2 v3): within ``geofence_m`` of the map edge, a course target that points outward
+        is replaced by a full turn toward the map centre. Returns (action, shield active)."""
+        g = self.cfg.geofence_m
+        if g <= 0:
+            return a, False
+        x, y, _ = self.plant.pose
+        lim = self.half_map - g
+        out = np.array([x - np.clip(x, -lim, lim), y - np.clip(y, -lim, lim)])
+        if not out.any():
+            return a, False
+        chi = self.chi_tgt + a*self.turn
+        if np.cos(chi)*out[0] + np.sin(chi)*out[1] <= 0:     # target already points inward
+            return a, False
+        to_centre = np.arctan2(-y, -x)
+        return float(np.sign(wrap(to_centre - self.chi_tgt)) or 1.0), True
 
     def _interval(self) -> dict:
         c = self.cfg
@@ -356,6 +377,7 @@ class RLSearchEnv:
 
     def _info(self, out: dict) -> dict:
         b = self.belief
+        out.setdefault("shield", False)
         return dict(t_s=self.t, k=self.k, pos=b.pos, pos_policy=self.pos_cum, remaining=b.mass,
                     escaped=b.escaped, area_policy_km2=self.area_cum/1e6, energy_left=self.energy,
                     gap_deg=float(np.degrees(wrap(self.chi_tgt - self.plant.pose[2]))),
