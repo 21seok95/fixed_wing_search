@@ -70,3 +70,61 @@ def draw_terrain(ax, terr: Terrain, legend_extra=(), window=None, legend=True):
     ax.set(xlabel="x (km)", ylabel="y (km)", xlim=(x0/1000, x1/1000), ylim=(y0/1000, y1/1000))
     ax.set_aspect("equal")
     return extent
+
+
+def draw_rl_episode(terr: Terrain, belief, path_xy: np.ndarray, path_t: np.ndarray, snaps, title: str = ""):
+    """RL episode in time slices: one panel per ``snaps`` entry (t_s, particle weights at t_s, POS, area km²).
+    Each panel shows the particles where they are at t_s (grey: unseen, red: share already searched
+    away) and the path flown up to t_s, coloured by time, on faded terrain."""
+    from matplotlib.collections import LineCollection
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from matplotlib.patches import Rectangle
+
+    t0, t1 = float(path_t[0]), float(path_t[-1])
+    seen_cmap = LinearSegmentedColormap.from_list("seen", plt.cm.Reds(np.linspace(.35, 1, 256)))
+    tnorm = Normalize(t0/60, t1/60)
+    pts = [path_xy]
+    for t, _, _, _ in snaps:
+        p = belief.positions(t)[belief.active(t)]
+        if len(p):
+            pts.append(np.quantile(p, [.01, .99], axis=0))
+    pts = np.vstack(pts)
+    lo, hi = pts.min(0) - 1500, pts.max(0) + 1500
+    half, (cx, cy) = max(hi - lo)/2, (lo + hi)/2
+    window = (cx - half, cx + half, cy - half, cy + half)
+
+    fig, axes = plt.subplots(1, len(snaps), figsize=(5.2*len(snaps) + 1.2, 5.6), squeeze=False,
+                             constrained_layout=True)
+    for ax, (t, w, pos, area) in zip(axes[0], snaps):
+        draw_terrain(ax, terr, window=window, legend=False)
+        ax.add_patch(Rectangle((window[0]/1000, window[2]/1000), 2*half/1000, 2*half/1000, color="white",
+                               alpha=.55, zorder=6.5, lw=0))
+        act = belief.active(t)
+        p, ww = belief.positions(t)[act]/1000, w[act]
+        unseen = ww >= .98
+        ax.scatter(p[unseen, 0], p[unseen, 1], s=3, color="#6b6b6b", alpha=.45, lw=0, zorder=7)
+        o = np.flatnonzero(~unseen)
+        o = o[np.argsort(-ww[o])]
+        sc = ax.scatter(p[o, 0], p[o, 1], s=7, c=1 - ww[o], cmap=seen_cmap, vmin=0, vmax=.5, lw=0, zorder=8)
+        k = int(np.searchsorted(path_t, t, side="right"))
+        xy = path_xy[:k]/1000
+        if len(xy) > 1:
+            seg = np.stack([xy[:-1], xy[1:]], axis=1)
+            ax.plot(xy[:, 0], xy[:, 1], color="black", lw=3.6, solid_capstyle="round", zorder=9)
+            lc = LineCollection(seg, cmap="cool", norm=tnorm, lw=2.2, capstyle="round", zorder=10)
+            lc.set_array(path_t[1:k]/60)
+            ax.add_collection(lc)
+        ax.plot(*xy[0], "o", ms=8, color="white", mec="black", mew=1.5, zorder=11)
+        ax.plot(*xy[-1], "*", ms=17, color="yellow", mec="black", mew=1.2, zorder=11)
+        ax.set_title(f"t = {t/60:.0f} min:  POS {pos:.3f},  area {area:.2f} km²", fontsize=11)
+    fig.colorbar(plt.cm.ScalarMappable(tnorm, "cool"), ax=axes[0, -1], fraction=.05, pad=.02,
+                 label="flight time (min)")
+    fig.colorbar(sc, ax=axes[0, -1], fraction=.05, pad=.08, extend="max",
+                 label="searched share of particle (1 − weight)")
+    handles = [Line2D([], [], marker="o", ls="", color="white", mec="black", label="start"),
+               Line2D([], [], marker="*", ls="", ms=12, color="yellow", mec="black", label="UAV now"),
+               Line2D([], [], marker="o", ls="", color="#6b6b6b", alpha=.6, label="unseen particle")]
+    axes[0, 0].legend(handles=handles, loc="lower left", fontsize=8, framealpha=.9)
+    if title:
+        fig.suptitle(title, fontsize=12)
+    return fig

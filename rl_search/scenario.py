@@ -102,6 +102,8 @@ class ScenarioSampler:
         d = np.linalg.norm(self.perimeter - lkp, axis=1)
         lo, hi = self.cfg.start_dist_m
         cand = np.flatnonzero((d >= lo) & (d <= hi))
+        if not len(cand):      # LKP jitter can push a border cell just past ``hi``: take the closest point
+            cand = [int(np.argmin(np.abs(d - np.clip(d, lo, hi))))]
         start = self.perimeter[rng.choice(cand)].copy()
         heading = float(np.degrees(np.arctan2(lkp[1]-start[1], lkp[0]-start[0])))
         return start, heading
