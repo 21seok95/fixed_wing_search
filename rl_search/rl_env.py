@@ -95,6 +95,7 @@ class RLSearchEnv:
         self._uses = 0
         self.pos_cum = 0.0
         self.area_cum = 0.0
+        self.fast = False      # path evaluation only: no maps, no reward zone / area (POS reward term only)
 
     # ------------------------------------------------------------------ scenario and reset
     def _next_scenario(self) -> Scenario:
@@ -174,7 +175,9 @@ class RLSearchEnv:
         out = self._interval()
         out["shield"] = shield
         self.k += 1
-        return self._obs(), out["reward"], out["terminated"], False, self._info(out)
+        self.last_cells, self.last_t0 = out.pop("cells"), out.pop("t0")
+        obs = None if self.fast else self._obs()
+        return obs, out["reward"], out["terminated"], False, self._info(out)
 
     def _geofence(self, a: float):
         """Safety layer (6.2 v3): within ``geofence_m`` of the map edge, a course target that points outward
@@ -196,7 +199,7 @@ class RLSearchEnv:
     def _interval(self) -> dict:
         c = self.cfg
         t0 = self.t
-        zone = self._zone(t0)                       # 0. fixed for this interval
+        zone = None if self.fast else self._zone(t0)   # 0. fixed for this interval
         hist = []
         phis = self.plant._integrate(self.chi_tgt, self.plant.n_inner, self.v, out=hist)   # 1-2
         self.plant.trace = (phis, np.full(len(phis), self.v), self.plant.h)
@@ -209,7 +212,7 @@ class RLSearchEnv:
         cells = self._cells_under(poses) if len(poses) else np.zeros(0, int)
         dpos = self._detect(cells, t0)                 # 3
         new = cells[~self.seen.flat[cells]]
-        darea = float(self._in_zone(new, zone).sum())*c.cell_m**2   # 4
+        darea = 0.0 if self.fast else float(self._in_zone(new, zone).sum())*c.cell_m**2   # 4
         self.seen.flat[cells] = True
         reward = c.w_pos*dpos/c.pos_ref + c.w_area*darea/self.area_ref   # 5
         self.t = t0 + c.decision_dt_s
@@ -218,7 +221,7 @@ class RLSearchEnv:
         self.area_cum += darea
         terminated = exited or self.energy <= 0        # 7
         return dict(dpos=dpos, darea_m2=darea, reward=reward, terminated=terminated, exited=exited,
-                    n_cells=len(cells))
+                    n_cells=len(cells), cells=cells, t0=t0)
 
     # ------------------------------------------------------------------ sensor
     def _cells_under(self, poses: np.ndarray) -> np.ndarray:
@@ -242,24 +245,44 @@ class RLSearchEnv:
             out.append((IY*self.n + IX)[ok])
         return np.unique(np.concatenate(out)) if out else np.zeros(0, int)
 
-    def _detect(self, cells: np.ndarray, t: float) -> float:
-        """w_i <- w_i (1 - POD q_i), q_i = Gaussian kernel mass of particle i over the cells (5.4 v3)."""
+    def _detect(self, cells: np.ndarray, t: float, w: np.ndarray | None = None) -> float:
+        """w_i <- w_i (1 - POD q_i), q_i = Gaussian kernel mass of particle i over the cells (5.4 v3).
+        Updates ``w`` in place (default: the belief weights) and returns the probability found."""
         if len(cells) == 0:
             return 0.0
         b, c, h = self.belief, self.cfg.cell_m, self.h
+        w = b.w if w is None else w
         iy, ix = np.divmod(cells, self.n)
         cx, cy = self.lo + (ix + .5)*c, self.lo + (iy + .5)*c
         pts = b.positions(t)
-        near = (b.w > 0) & (pts[:, 0] > cx.min() - 4*h) & (pts[:, 0] < cx.max() + 4*h) \
+        near = (w > 0) & (pts[:, 0] > cx.min() - 4*h) & (pts[:, 0] < cx.max() + 4*h) \
             & (pts[:, 1] > cy.min() - 4*h) & (pts[:, 1] < cy.max() + 4*h)
         idx = np.flatnonzero(near)
         if not len(idx):
             return 0.0
         d2 = (pts[idx, 0, None] - cx[None])**2 + (pts[idx, 1, None] - cy[None])**2
         q = np.minimum(np.exp(-d2/(2*h*h)).sum(1)*c*c/(2*np.pi*h*h), 1.0)
-        before = b.w[idx].copy()
-        b.w[idx] = before*(1 - self.search.pod*q)
-        return float((before - b.w[idx]).sum()/b.n)
+        before = w[idx].copy()
+        w[idx] = before*(1 - self.search.pod*q)
+        return float((before - w[idx]).sum()/b.n)
+
+    def preview(self, actions) -> float:
+        """Probability that the action sequence would find from the current state (POS term only, map exits
+        ignored); the environment state is left unchanged. For lookahead planners."""
+        st, chi, t = self.plant.get_state(), self.chi_tgt, self.t
+        w = self.belief.w.copy()
+        gain = 0.0
+        for a in actions:
+            chi = chi + float(np.clip(a, -1, 1))*self.turn
+            hist = []
+            self.plant._integrate(chi, self.plant.n_inner, self.v, out=hist)
+            poses = np.array([hist[i][:3] for i in self.sample_idx])
+            poses = poses[self.terr.inside(poses[:, 0], poses[:, 1])]
+            if len(poses):
+                gain += self._detect(self._cells_under(poses), t, w)
+            t += self.cfg.decision_dt_s
+        self.plant.set_state(st)
+        return gain
 
     # ------------------------------------------------------------------ reward zone (1.1)
     def margin(self, t: float) -> float:
