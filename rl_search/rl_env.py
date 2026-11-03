@@ -266,6 +266,20 @@ class RLSearchEnv:
         w[idx] = before*(1 - self.search.pod*q)
         return float((before - w[idx]).sum()/b.n)
 
+    def snapshot(self) -> dict:
+        """Episode state for planning rollouts in fast mode (the seen-cell grid is not saved: it only feeds the
+        area term, which fast mode skips)."""
+        b = self.belief
+        return dict(plant=self.plant.get_state(), chi=self.chi_tgt, t=self.t, k=self.k, energy=self.energy,
+                    w=b.w.copy(), escaped=b.escaped, gone=b._gone.copy(), pos=self.pos_cum, area=self.area_cum)
+
+    def restore(self, s: dict) -> None:
+        b = self.belief
+        self.plant.set_state(s["plant"])
+        self.chi_tgt, self.t, self.k, self.energy = s["chi"], s["t"], s["k"], s["energy"]
+        b.w[:], b.escaped, b._gone[:] = s["w"], s["escaped"], s["gone"]
+        self.pos_cum, self.area_cum = s["pos"], s["area"]
+
     def preview(self, actions) -> float:
         """Probability that the action sequence would find from the current state (POS term only, map exits
         ignored); the environment state is left unchanged. For lookahead planners."""
