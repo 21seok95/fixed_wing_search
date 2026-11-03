@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 from rl_search.patterns import _rot, parallel_pts
 from rl_search.patterns_v2 import FramedFollower, find_clusters
@@ -83,13 +84,14 @@ def sweep_profile_lrc(env, n_int: int = 40, path=None):
 
 class Accordion:
     def __init__(self, env, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, effort=0.85,
-                 ell_min=None, gamma=None, dt_snap=60.0):
+                 ell_min=None, gamma=None, dt_snap=60.0, start_smooth_m=0.0, n_starts=1, start_sep_m=1500.0):
         self.env, self.variant, self.T, self.g = env, variant, cycle_s, cell
         self.W = W if W is not None else sweep_width(env)
         self.effort = effort
         self.r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
         self.ell_min = ell_min if ell_min is not None else max(600.0, 4*self.r_turn)
         self.gamma = gamma if gamma is not None else 0.25*env.fp_cross
+        self.start_smooth_m, self.n_starts, self.start_sep_m = start_smooth_m, n_starts, start_sep_m
         self.taus = np.arange(0, 2*cycle_s + 1e-6, dt_snap)
         self.k_mid = int(np.argmin(np.abs(self.taus - cycle_s/2)))
 
@@ -155,14 +157,37 @@ class Accordion:
         return cl[0].theta if cl else 0.0
 
     def plan(self) -> Rect | None:
+        """Accordion search. ``n_starts`` > 1: one search per density peak (find_clusters, each in a grid along
+        its own main axis), the best approximate POS wins (transit is in the approximation). ``start_smooth_m``:
+        pick the start cell on a Gaussian-smoothed density instead of the single densest cell."""
+        if self.n_starts > 1:
+            cls = find_clusters(self.env, self.env.t + self.T/2, k=self.n_starts, smooth=max(self.start_smooth_m, 250.0),
+                                sep=self.start_sep_m)
+            best = None
+            for cl in cls:
+                th = cl.theta if self.variant == "tavg_pca" else 0.0
+                G = self._grid(th)
+                q = cl.peak @ G["R"]
+                ci = int(np.clip((q[0] - G["ex"][0])//self.g, 0, len(G["ex"]) - 2))
+                cj = int(np.clip((q[1] - G["ey"][0])//self.g, 0, len(G["ey"]) - 2))
+                r = self._climb(G, ci, cj)
+                if r is not None and (best is None or r.approx > best.approx):
+                    best = r
+            if best is not None or cls:
+                return best
         G = self._grid(self.theta())
         H = G["H"]
-        nx, ny = H.shape[1:]
         dens = H[0] if self.variant == "snap0" else H[self.k_mid] if self.variant == "mid" else H[self.taus <= self.T].mean(0)
         if dens.max() <= 0:
             return None
+        if self.start_smooth_m > 0:
+            dens = gaussian_filter(dens, self.start_smooth_m/self.g)
         ci, cj = np.unravel_index(np.argmax(dens), dens.shape)
-        # smallest admissible start around the best cell: ell_min long, as wide as the spacing limit needs
+        return self._climb(G, ci, cj)
+
+    def _climb(self, G, ci, cj) -> Rect | None:
+        nx, ny = G["H"].shape[1:]
+        # smallest admissible start around the start cell: ell_min long, as wide as the spacing limit needs
         L0 = self.effort*self.env.v*self.T
         a = int(np.ceil(self.ell_min/self.g))
         bw = max(1, int(np.ceil(self.gamma*L0/(self.ell_min + np.pi*self.r_turn)/self.g)))
@@ -249,14 +274,14 @@ def simulate(env, r: Rect, cycle_s=600.0) -> float:
 class AccordionPlanner:
     """policy(env) -> action: every cycle place one rectangle by accordion search and fly its lanes."""
 
-    def __init__(self, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, hook=None):
-        self.variant, self.cycle_s, self.cell, self.W, self.hook = variant, cycle_s, cell, W, hook
+    def __init__(self, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, hook=None, **acc_kw):
+        self.variant, self.cycle_s, self.cell, self.W, self.hook, self.acc_kw = variant, cycle_s, cell, W, hook, acc_kw
         self.follower, self.t_next, self.log = None, -np.inf, []
         self.rects = []      # (plan time, Rect, lanes in world coordinates) for plotting
 
     def __call__(self, env) -> float:
         if env.t >= self.t_next or self.follower is None:
-            acc = Accordion(env, self.variant, self.cycle_s, self.cell, self.W)
+            acc = Accordion(env, self.variant, self.cycle_s, self.cell, self.W, **self.acc_kw)
             if self.hook is not None:
                 self.hook(env, acc)
             r = acc.plan()
