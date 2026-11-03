@@ -252,6 +252,7 @@ class AccordionPlanner:
     def __init__(self, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, hook=None):
         self.variant, self.cycle_s, self.cell, self.W, self.hook = variant, cycle_s, cell, W, hook
         self.follower, self.t_next, self.log = None, -np.inf, []
+        self.rects = []      # (plan time, Rect, lanes in world coordinates) for plotting
 
     def __call__(self, env) -> float:
         if env.t >= self.t_next or self.follower is None:
@@ -260,9 +261,10 @@ class AccordionPlanner:
                 self.hook(env, acc)
             r = acc.plan()
             if r is not None:
-                _, self.follower = lanes(env, r, self.cycle_s)
+                pts, self.follower = lanes(env, r, self.cycle_s)
                 self.log.append(dict(t_min=round(env.t/60, 1), ell=r.ell, wid=r.wid,
                                      theta_deg=round(np.rad2deg(r.theta)), approx=round(r.approx, 4)))
+                self.rects.append((env.t, r, np.array([r.cx, r.cy]) + pts @ _rot(r.theta).T))
             self.t_next = env.t + self.cycle_s
         if self.follower is None:
             return 0.0
