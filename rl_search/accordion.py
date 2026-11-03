@@ -18,6 +18,7 @@ n*ell, so POD = 1 - exp(-W n ell / A). Constraints: ell >= ell_min, track spacin
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
@@ -25,6 +26,10 @@ from rl_search.patterns import _rot, parallel_pts
 from rl_search.patterns_v2 import FramedFollower, find_clusters
 
 VARIANTS = ("snap0", "mid", "tavg", "tavg_pca")
+TASK_EFFORT = 0.92    # task mode: polyline budget / (v * search_s); flown length is 3-10 % over the polyline
+TASK_FLOWN = 1.06     # task mode: flown length / polyline length (measured 1.03-1.11, pursuit around the corners)
+TASK_FILL = 0.8       # task mode: the lanes must use at least this share of the budget (SAROPS: the pattern fills the
+                      # available path length), else the rectangle is too small for the search time
 
 
 @dataclass
@@ -86,8 +91,13 @@ def sweep_profile_lrc(env, n_int: int = 40, path=None):
 class Accordion:
     def __init__(self, env, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, effort=0.85,
                  ell_min=None, gamma=None, dt_snap=60.0, start_smooth_m=0.0, n_starts=1, start_sep_m=1500.0,
-                 pod_model="exp"):
-        self.env, self.variant, self.T, self.g = env, variant, cycle_s, cell
+                 pod_model="exp", search_s=None, max_transit_s=300.0):
+        self.env, self.variant, self.g = env, variant, cell
+        # task mode (search_s set, 2026-11-04 I1/I3): every rectangle gets search_s of searching after its own
+        # transit, rectangles farther than max_transit_s are not admissible, the score is POS per minute of
+        # (transit + search); otherwise the fixed cycle: transit and search share cycle_s
+        self.search_s, self.max_transit_s = search_s, max_transit_s
+        self.T = search_s if search_s is not None else cycle_s
         if pod_model not in ("exp", "lanes"):
             raise ValueError(pod_model)
         self.pod_model = pod_model
@@ -98,8 +108,9 @@ class Accordion:
         self.ell_min = ell_min if ell_min is not None else max(600.0, 4*self.r_turn)
         self.gamma = gamma if gamma is not None else 0.25*env.fp_cross
         self.start_smooth_m, self.n_starts, self.start_sep_m = start_smooth_m, n_starts, start_sep_m
-        self.taus = np.arange(0, 2*cycle_s + 1e-6, dt_snap)
-        self.k_mid = int(np.argmin(np.abs(self.taus - cycle_s/2)))
+        horizon = 2*cycle_s if search_s is None else max_transit_s + search_s
+        self.taus = np.arange(0, horizon + dt_snap/2, dt_snap)
+        self.k_mid = int(np.argmin(np.abs(self.taus - self.T/2)))
 
     # ------------------------------------------------------------------ grid of remaining probability
     def _grid(self, theta):
@@ -136,6 +147,8 @@ class Accordion:
     def approx(self, G, i0, i1, j0, j1):
         """Approximate POS of the index rectangle, or -1 if not admissible."""
         ell, wid = (i1 - i0)*self.g, (j1 - j0)*self.g
+        if self.search_s is not None:
+            return self._approx_task(G, i0, i1, j0, j1, ell, wid)
         v = self.variant
         tr = 0.0 if v in ("snap0", "mid") else self._transit(G, i0, i1, j0, j1)
         if tr > 1.5*self.T:
@@ -154,6 +167,28 @@ class Accordion:
             k = (self.taus >= tr - 1e-6) & (self.taus <= t_end + 1e-6)
             poc = p[k].mean() if k.any() else p[np.searchsorted(self.taus, tr) - 1]
         return float(poc*self.pod(wid/n))
+
+    def _approx_task(self, G, i0, i1, j0, j1, ell, wid):
+        """Task mode: approximate POS per minute = POC averaged over [transit, transit + lane time] x POD, divided
+        by (transit + lane time) in minutes. Lanes: the most that fit search_s (actual polyline), and they must fill
+        at least TASK_FILL of it (otherwise small rectangles finishing in 2 min win on POS per minute, measured
+        2026-11-04); lane time from the polyline. -1 if farther than max_transit_s, not admissible, or spacing over
+        twice a lane's cover. The detections during the transit are not in the approximation (the simulation has
+        them)."""
+        tr = self._transit(G, i0, i1, j0, j1)
+        if tr > self.max_transit_s:
+            return -1.0
+        if ell < self.ell_min:
+            return -1.0
+        n, length = fit_lanes(float(ell), float(wid), TASK_EFFORT*self.env.v*self.search_s, float(self.r_turn), float(self.gamma))
+        budget = TASK_EFFORT*self.env.v*self.search_s
+        if n < 1 or wid/n > 2*self.cover_w or length < TASK_FILL*budget:
+            return -1.0                          # wider gaps than a lane's cover, or too small to fill the search time
+        t_lanes = TASK_FLOWN*length/self.env.v   # small rectangles finish early and are charged only their own time
+        p = self._poc_t(G, i0, i1, j0, j1)
+        k = (self.taus >= tr - 1e-6) & (self.taus <= tr + t_lanes + 1e-6)
+        poc = p[k].mean() if k.any() else p[np.searchsorted(self.taus, tr) - 1]
+        return float(poc*self.pod(wid/n)/((tr + t_lanes)/60.0))
 
     def pod(self, s: float) -> float:
         """Detection probability inside the rectangle for track spacing ``s``.
@@ -262,23 +297,46 @@ class Accordion:
         return max(self.approx(G, i0, i1, j0, j1), 0.0)
 
 
-def lane_count(env, r: Rect, cycle_s=600.0, effort=0.85) -> int:
-    """Lanes that fit the search time left after the transit to the rectangle's nearest corner."""
-    r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
+@lru_cache(maxsize=65536)
+def fit_lanes(ell: float, wid: float, budget_m: float, r_turn: float, gamma: float) -> tuple[int, float]:
+    """Task mode: most lanes whose actual polyline (lanes + lane changes, ``parallel_pts``) fits ``budget_m``,
+    with track spacing >= gamma. Returns (lanes, polyline length); (0, 0) if not even one lane fits."""
+    n_max = max(1, int(wid//max(gamma, 1e-6)))
+    for n in range(n_max, 0, -1):
+        s = wid/n
+        pts = parallel_pts(max(ell - s, 100.0), n, s, r_turn)
+        length = float(np.hypot(*np.diff(pts, axis=0).T).sum())
+        if length <= budget_m:
+            return n, length
+    return 0, 0.0
+
+
+def transit_time(env, r: Rect) -> float:
+    """Straight-line time from the UAV to the rectangle's nearest corner."""
     R = _rot(r.theta)
     corners = [np.array([sx*r.ell/2, sy*r.wid/2]) for sx in (-1, 1) for sy in (-1, 1)]
-    tr = min(np.hypot(*(np.array([r.cx, r.cy]) + c @ R.T - env.plant.pose[:2])) for c in corners)/env.v
-    L = effort*env.v*(max(cycle_s, tr + cycle_s/2) - tr)
+    return min(np.hypot(*(np.array([r.cx, r.cy]) + c @ R.T - env.plant.pose[:2])) for c in corners)/env.v
+
+
+def lane_count(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None) -> int:
+    """Lanes that fit the search time: ``search_s`` (task mode), or what is left of the cycle after the transit
+    to the rectangle's nearest corner."""
+    r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
+    if search_s is not None:
+        return max(1, fit_lanes(float(r.ell), float(r.wid), TASK_EFFORT*env.v*search_s, float(r_turn), 0.25*env.fp_cross)[0])
+    else:
+        tr = transit_time(env, r)
+        L = effort*env.v*(max(cycle_s, tr + cycle_s/2) - tr)
     return max(1, int(L//(r.ell + np.pi*r_turn)))
 
 
-def lane_plan(env, r: Rect, cycle_s=600.0, effort=0.85):
+def lane_plan(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None):
     """Polyline of the parallel lanes in the rectangle frame (first leg along theta) and its start corner
     (sx, sy): ``r.corner``, or the corner nearest the UAV."""
     r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
     x = env.plant.pose[:2]
     R = _rot(r.theta)
-    n = lane_count(env, r, cycle_s, effort)
+    n = lane_count(env, r, cycle_s, effort, search_s)
     s = r.wid/n
     pts = parallel_pts(max(r.ell - s, 100.0), n, s, r_turn)
     if r.corner is not None:
@@ -293,52 +351,107 @@ def lane_plan(env, r: Rect, cycle_s=600.0, effort=0.85):
     return best[1], best[2]
 
 
-def lanes(env, r: Rect, cycle_s=600.0, effort=0.85):
+def lanes(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None):
     """Parallel lanes filling the rectangle, started at ``r.corner`` or the corner nearest the UAV.
     Returns (polyline in the rectangle frame, follower)."""
-    pts, _ = lane_plan(env, r, cycle_s, effort)
+    pts, _ = lane_plan(env, r, cycle_s, effort, search_s)
     return pts, FramedFollower(env, pts, np.array([r.cx, r.cy]), env.t, r.theta, np.zeros(2))
 
 
-def simulate(env, r: Rect, cycle_s=600.0) -> float:
-    """Probability found by flying the rectangle's lanes for one cycle from the current state (state kept)."""
-    _, f = lanes(env, r, cycle_s)
+def simulate(env, r: Rect, cycle_s=600.0, task: dict | None = None) -> float:
+    """Probability found by flying the rectangle's lanes for one cycle from the current state (state kept).
+    ``task`` (dict search_s, max_transit_s, extra_s): fly until the lanes are done once (or transit + search_s +
+    extra_s), detections on the way included, and return POS per minute of flight; 0 if the rectangle is
+    farther than max_transit_s."""
+    if task is not None:
+        tr = transit_time(env, r)
+        if tr > task["max_transit_s"]:
+            return 0.0
+        _, f = lanes(env, r, cycle_s, search_s=task["search_s"])
+        t_cap = env.t + tr + task["search_s"] + task["extra_s"]
+    else:
+        _, f = lanes(env, r, cycle_s)
+        t_cap = env.t + cycle_s
     snap = env.snapshot()
     skip, env.skip_cells = env.skip_cells, True      # the cell grid only feeds the area term and the kernel sensor
-    p0, t_end = env.pos_cum, env.t + cycle_s
-    while env.t < t_end - 1e-6:
+    p0, t0 = env.pos_cum, env.t
+    while env.t < t_cap - 1e-6:
         _, _, term, _, _ = env.step([f.action()])
-        if term:
+        if term or (task is not None and f.laps >= 1):
             break
-    gain = env.pos_cum - p0
+    gain, dt = env.pos_cum - p0, env.t - t0
     env.skip_cells = skip
     env.restore(snap)
+    if task is not None:
+        return gain/max(dt/60.0, 1e-9)
     return gain
 
 
 class AccordionPlanner:
-    """policy(env) -> action: every cycle place one rectangle by accordion search and fly its lanes."""
+    """policy(env) -> action: place one rectangle by accordion search and fly its lanes.
 
-    def __init__(self, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, hook=None, **acc_kw):
+    Fixed cycle (default): re-plan every ``cycle_s``. Task mode (``search_s`` set, 2026-11-04 I1-I4): each rectangle
+    is sized for ``search_s`` of searching after its transit, candidates farther than ``max_transit_s`` are dropped,
+    candidates compete on POS per minute, and the next plan comes when the lanes are done (or after transit +
+    search_s + ``extra_s``). With no candidate within ``max_transit_s`` the UAV flies toward the remaining-mass
+    centroid at the intercept time (``lead_action``) and tries again every ``approach_check_s``."""
+
+    def __init__(self, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, hook=None, search_s=None,
+                 max_transit_s=300.0, extra_s=120.0, approach_check_s=30.0, **acc_kw):
         self.variant, self.cycle_s, self.cell, self.W, self.hook, self.acc_kw = variant, cycle_s, cell, W, hook, acc_kw
+        self.search_s, self.max_transit_s, self.extra_s, self.approach_check_s = search_s, max_transit_s, extra_s, approach_check_s
         self.follower, self.t_next, self.log = None, -np.inf, []
         self.rects = []      # (plan time, Rect, lanes in world coordinates) for plotting
+        self.tasks = []      # task mode: dict per rectangle (plan time, transit estimate, end time, how it ended)
+        self.approach = []   # task mode: (start, end) of approach phases
+
+    @property
+    def task(self) -> dict | None:
+        if self.search_s is None:
+            return None
+        return dict(search_s=self.search_s, max_transit_s=self.max_transit_s, extra_s=self.extra_s)
 
     def choose(self, env, acc) -> Rect | None:
         return acc.plan()
 
+    def _plan(self, env) -> bool:
+        acc = Accordion(env, self.variant, self.cycle_s, self.cell, self.W, search_s=self.search_s,
+                        max_transit_s=self.max_transit_s, **self.acc_kw)
+        if self.hook is not None:
+            self.hook(env, acc)
+        r = self.choose(env, acc)
+        if r is None:
+            return False
+        pts, self.follower = lanes(env, r, self.cycle_s, search_s=self.search_s)
+        self.log.append(dict(t_min=round(env.t/60, 1), ell=r.ell, wid=r.wid,
+                             theta_deg=round(np.rad2deg(r.theta)), approx=round(r.approx, 4)))
+        self.rects.append((env.t, r, np.array([r.cx, r.cy]) + pts @ _rot(r.theta).T))
+        if self.search_s is not None:
+            tr = transit_time(env, r)
+            self.tasks.append(dict(t0=env.t, transit=tr, t_cap=env.t + tr + self.search_s + self.extra_s, end=None, how=None))
+        return True
+
     def __call__(self, env) -> float:
-        if env.t >= self.t_next or self.follower is None:
-            acc = Accordion(env, self.variant, self.cycle_s, self.cell, self.W, **self.acc_kw)
-            if self.hook is not None:
-                self.hook(env, acc)
-            r = self.choose(env, acc)
-            if r is not None:
-                pts, self.follower = lanes(env, r, self.cycle_s)
-                self.log.append(dict(t_min=round(env.t/60, 1), ell=r.ell, wid=r.wid,
-                                     theta_deg=round(np.rad2deg(r.theta)), approx=round(r.approx, 4)))
-                self.rects.append((env.t, r, np.array([r.cx, r.cy]) + pts @ _rot(r.theta).T))
-            self.t_next = env.t + self.cycle_s
+        if self.search_s is None:
+            if env.t >= self.t_next or self.follower is None:
+                self._plan(env)
+                self.t_next = env.t + self.cycle_s
+            return 0.0 if self.follower is None else self.follower.action()
+        # task mode
+        cur = self.tasks[-1] if self.tasks and self.tasks[-1]["end"] is None else None
+        if cur is not None and (self.follower.laps >= 1 or env.t >= cur["t_cap"]):
+            cur["end"], cur["how"] = env.t, ("done" if self.follower.laps >= 1 else "cap")
+            self.follower, cur = None, None
+        if cur is None and env.t >= self.t_next:
+            if self._plan(env):
+                if self.approach and self.approach[-1][1] is None:
+                    self.approach[-1] = (self.approach[-1][0], env.t)
+            else:
+                self.follower = None
+                if not self.approach or self.approach[-1][1] is not None:
+                    self.approach.append((env.t, None))
+                self.t_next = env.t + self.approach_check_s
         if self.follower is None:
-            return 0.0
+            from rl_search.patterns import lead_action
+            return lead_action(env)
         return self.follower.action()

@@ -92,6 +92,7 @@ class FramedFollower:
         self.cum = np.concatenate([[0], np.cumsum(np.hypot(seg[:, 0], seg[:, 1]))])
         self.O, self.t_ref, self.R, self.vel = np.asarray(origin_ref, float), t_ref, _rot(theta), np.asarray(vel)
         self.s, self.started, self.L = 0.0, False, lookahead
+        self.laps = 0          # completed passes over the whole polyline
 
     def origin(self, t):
         return self.O + self.vel*(t - self.t_ref)
@@ -113,6 +114,7 @@ class FramedFollower:
             self.s = max(self.s, ss[int(np.argmin(np.hypot(*(self.point_at(ss) - q).T)))])
             if self.s >= self.cum[-1] - 1.0:
                 self.s, self.started = 0.0, False
+                self.laps += 1
                 target = self.pts[0]
             else:
                 target = self.point_at(self.s + self.L)
