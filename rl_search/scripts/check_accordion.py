@@ -8,6 +8,7 @@ Questions:
   3. A planner that only uses the accordion (no simulation) each cycle vs v2 (cross-entropy, 48 rollouts).
 
     python -m rl_search.scripts.check_accordion --n-scen 8 --workers 2
+    python -m rl_search.scripts.check_accordion --sensor new --detect lrc   # footprint 286 m, POD 0.7, SAROPS CPA+LRC
 """
 from __future__ import annotations
 
@@ -27,8 +28,11 @@ OUT = Path("rl_search/data/accordion_check")
 PLAN_VARIANTS = [("snap0", 100), ("mid", 100), ("tavg", 100), ("tavg_pca", 100), ("tavg_pca", 200)]
 
 
+SENSORS = {"old": [], "new": ["search.fov_cross_m=286", "search.fov_along_m=207", "search.pod=0.7"]}
+
+
 def run_scenario(job):
-    seed, n_pert = job
+    seed, n_pert, sensor, detect = job
     warnings.filterwarnings("ignore")
     from rl_search.accordion import Accordion, AccordionPlanner, Rect, simulate, sweep_width
     from rl_search.config import get_preset
@@ -38,7 +42,7 @@ def run_scenario(job):
     from rl_search.terrain import load_terrain
     t0 = time.perf_counter()
     terr = load_terrain(Path("rl_search/data/terrain_seed7_60km.npz"))
-    env = RLSearchEnv(terr, get_preset("rc_cessna"), RLConfig(stage=3), seed=seed)
+    env = RLSearchEnv(terr, get_preset("rc_cessna", SENSORS[sensor]), RLConfig(stage=3, detect_model=detect), seed=seed)
     env.fast = True
     opts = dict(scenario=make_scenario(env.sampler, seed), stage=3)
     W = sweep_width(env)
@@ -92,9 +96,11 @@ def run_scenario(job):
     return out
 
 
-def summarize(res, v2):
+def summarize(res, v2, sensor="old", detect="kernel"):
     L = []
-    L.append(f"Effective sweep width of the env sensor (measured): {res[0]['W']:.1f} m (nominal POD x width = 34.5 m)\n")
+    nom = {"old": "0.3 x 115 m = 34.5 m", "new": "0.7 x 286 m = 200 m"}[sensor]
+    L.append(f"Sensor: {sensor} ({SENSORS[sensor] or 'footprint 115 x 83 m, POD 0.3'}), detection model: {detect}\n")
+    L.append(f"Effective sweep width of the env sensor (measured): {res[0]['W']:.1f} m (nominal POD x width = {nom})\n")
     # 1. ranking
     rho = {f: [] for f in ("snap0", "tavg")}
     top = {f: [] for f in ("snap0", "tavg")}
@@ -148,7 +154,7 @@ def summarize(res, v2):
     eps = {}
     for n in res[0]["episodes"]:
         eps[n] = [r["episodes"][n] for r in res]
-    if v2:
+    if v2 and sensor == "old" and detect == "kernel":
         by = {x["seed"]: x for x in v2}
         for m in ("v2 mixed T10", "v2 sector T10", "v2 parallel T10", "greedy90"):
             if all(r["seed"] in by and m in by[r["seed"]]["methods"] for r in res):
@@ -165,15 +171,18 @@ def main():
     ap.add_argument("--seed0", type=int, default=300)
     ap.add_argument("--n-pert", type=int, default=24)
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--sensor", choices=tuple(SENSORS), default="old")
+    ap.add_argument("--detect", choices=("kernel", "lrc"), default="kernel")
     args = ap.parse_args()
-    OUT.mkdir(parents=True, exist_ok=True)
-    jobs = [(s, args.n_pert) for s in range(args.seed0, args.seed0 + args.n_scen)]
+    out = OUT if (args.sensor, args.detect) == ("old", "kernel") else OUT.parent/f"{OUT.name}_{args.sensor}_{args.detect}"
+    out.mkdir(parents=True, exist_ok=True)
+    jobs = [(s, args.n_pert, args.sensor, args.detect) for s in range(args.seed0, args.seed0 + args.n_scen)]
     with Pool(args.workers) as pool:
         res = pool.map(run_scenario, jobs)
-    (OUT/"results.json").write_text(json.dumps(res, default=float))
+    (out/"results.json").write_text(json.dumps(res, default=float))
     v2p = Path("rl_search/data/compare_patterns_v2/results.json")
-    txt = summarize(res, json.loads(v2p.read_text()) if v2p.exists() else None)
-    (OUT/"table.md").write_text(txt)
+    txt = summarize(res, json.loads(v2p.read_text()) if v2p.exists() else None, args.sensor, args.detect)
+    (out/"table.md").write_text(txt)
     print(txt)
 
 

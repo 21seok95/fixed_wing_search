@@ -38,7 +38,9 @@ class Rect:
 
 def sweep_width(env, n_int: int = 40) -> float:
     """Effective sweep width (m) of the env sensor model on a straight leg: integral of the cumulative POD
-    across the track (Gaussian-kernel POD update once per 5 s interval)."""
+    across the track (kernel model: Gaussian-kernel POD update once per 5 s interval; lrc model: CPA + LRC)."""
+    if getattr(env, "lrc", False):
+        return float(sweep_profile_lrc(env, n_int)[1].sum()*10.0)
     c, h, v, pod = env.cfg.cell_m, env.h, env.v, env.search.pod
     dt = env.cfg.decision_dt_s
     d = np.arange(-800, 801, 10.0)
@@ -51,6 +53,32 @@ def sweep_width(env, n_int: int = 40) -> float:
         q = np.minimum(np.exp(-((X - cx[None])**2 + (d[:, None] - cy[None])**2)/(2*h*h)).sum(1)*c*c/(2*np.pi*h*h), 1)
         logs += np.log(1 - pod*q)
     return float((1 - np.exp(logs)).sum()*10.0)
+
+
+def sweep_profile_lrc(env, n_int: int = 40, path=None):
+    """Cumulative POD of stationary test particles at lateral offsets -800..800 m (10 m) after a straight leg
+    (or ``path``: (S, 2) UAV positions at 1 s), using the env's own CPA + LRC code. Returns (offsets, POD)."""
+    from rl_search.mission import ParticleBelief
+    v, dt = env.v, env.cfg.decision_dt_s
+    d = np.arange(-800, 801, 10.0)
+    X = n_int*dt*v/2
+    pts = np.stack([np.full_like(d, X), d], 1)
+    save = getattr(env, "belief", None), getattr(env, "_pass_p", None), getattr(env, "_last_in", None)
+    env.belief = ParticleBelief(np.stack([pts, pts]), 1e6, None, False)
+    env._pass_p, env._last_in = np.zeros(len(d)), np.full(len(d), -np.inf)
+    try:
+        if path is None:
+            for k in range(n_int):
+                ts = k*dt + env.seg_t
+                env._detect_lrc(np.stack([ts*v, np.zeros_like(ts)], 1), ts)
+        else:
+            for k in range(0, len(path) - 1, int(dt)):
+                seg = path[k:k + int(dt) + 1]
+                env._detect_lrc(seg, k + np.arange(len(seg), dtype=float))
+        pod = 1 - env.belief.w
+    finally:
+        env.belief, env._pass_p, env._last_in = save
+    return d, pod
 
 
 class Accordion:
