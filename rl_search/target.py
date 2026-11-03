@@ -45,6 +45,9 @@ class TargetConfig:
     surface_speed: tuple = (1.0, 1.0, 1.0)  # speed factor for off-road / unpaved / paved
     guide_stride_m: float = 60.0
     move_model: str = "infiltrator"
+    # SAROPS-style options (0 = off, the original model)
+    lkp_pos_std_m: float = 0.0         # initial position uncertainty (bivariate normal around the LKP)
+    speed_persist_rel_std: float = 0.0  # per-particle persistent speed factor exp(N(0, s)), drawn once
 
     @property
     def save_every(self) -> int:
@@ -116,8 +119,13 @@ def create_guidelines(terr: Terrain, cfg: TargetConfig, lkp: np.ndarray):
 def init_infiltrator(terr: Terrain, cfg: TargetConfig, guide, lkp, heading_deg, speed_mps, rng):
     n = cfg.particles
     heading = heading_deg + rng.normal(0, cfg.heading_std_deg, n)
+    pos = np.tile(lkp, (n, 1)).astype(float)
+    if cfg.lkp_pos_std_m > 0:
+        pos += rng.normal(0, cfg.lkp_pos_std_m, (n, 2))
+    if cfg.speed_persist_rel_std > 0:
+        speed_mps = speed_mps*np.exp(rng.normal(0, cfg.speed_persist_rel_std, n))
     return SimpleNamespace(
-        pos=np.tile(lkp, (n, 1)).astype(float), psi=np.deg2rad(heading),
+        pos=pos, psi=np.deg2rad(heading),
         guide_index=np.rint(heading).astype(int) % 360, gk=np.zeros(n, int),
         turn_dir=rng.choice([-1, 1], n), actions=rng.choice(len(MODES), size=n, p=action_probs(cfg)),
         speed_mean=speed_mps, speed_std=cfg.speed_rel_std*speed_mps)
@@ -235,7 +243,7 @@ def simulate(terr: Terrain, cfg: TargetConfig, lkp, heading_deg: float, speed_mp
     st = init(terr, cfg, guide, lkp, heading_deg, speed_mps, rng)
     every, n = cfg.save_every, cfg.particles
     track = np.empty((cfg.n_steps//every + 1, n, 2), np.float32)
-    track[0] = lkp
+    track[0] = st.pos
     exit_step = np.full(n, -1, np.int16)
     alive = np.ones(n, bool)
     for t in range(cfg.n_steps):
