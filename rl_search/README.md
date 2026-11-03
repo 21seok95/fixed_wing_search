@@ -182,3 +182,23 @@ Training needs `pip install -r rl_search/requirements-rl.txt` plus torch:
   The environment runs on the CPU and is the bottleneck (about 12-23 ms per step on one core), so
   `--n-envs` matters more than the GPU. `tensorboard --logdir rl_search/data/rl` shows episode POS,
   area, exit rate and the course-target gap.
+
+## SAROPS-style planner and detection (design log: `docs/sarops_approach_todo.md`)
+
+- **Detection model** (`RLConfig.detect_model`): `"kernel"` (default, design 5.4: kernel mass over the 1 s footprint
+  cells, one POD update per 5 s interval) or `"lrc"` (SAROPS: closest point of approach per particle to each 1 s path
+  segment, definite-range lateral range curve LRC(d) = POD for d <= footprint width / 2, one chance per pass).
+  The agreed sensor (S.11) is `search.fov_cross_m=286 search.fov_along_m=207 search.pod=0.7` with `"lrc"`
+  (sweep width about 200 m). `accordion.sweep_width(env)` measures the sweep width of either model.
+- **Accordion search** (`accordion.py`): SAROPS initial placement of one rectangle per cycle. Approximate POS =
+  time-averaged POC over the search window after the transit x (1 - exp(-W n ell / A)), lanes n = L / (ell + pi R),
+  grid along the cluster main axis, `n_starts` density peaks. `AccordionPlanner` flies the rectangle's lanes.
+
+```bash
+python -m rl_search.scripts.check_accordion --sensor new --detect lrc   # approx vs simulation, variants, episodes
+python -m rl_search.scripts.check_accordion_start                      # start-point rules
+python -m rl_search.scripts.plot_accordion --seeds 301 302 --n-starts 3 # per-cycle figures
+python -m rl_search.scripts.check_split                                # ideal effort allocation, 1-6 UAVs
+python -m rl_search.scripts.check_spread                               # spread mechanisms vs SAROPS
+python -m rl_search.scripts.compare_patterns_v2 --n-scen 8 --workers 6 # IAMSAR patterns re-planned per cycle
+```

@@ -5,6 +5,47 @@
 참고 문헌: Kratzke, Stone, Frost (2010) "Search and Rescue Optimal Planning System" (Fusion 2010),
 프로젝트 문서 `claude/literature_moving_target_search.md`.
 
+## 2026-11-03 저녁 · 현황과 다음 할 일 (Ubuntu에서 이어서 작업)
+
+**진행 방식:** 항목을 하나씩, 의논 → 합의 → 실험 순서로 진행한다.
+
+**오늘 정한 것**
+- 입자 퍼짐 모델은 유지한다(S.7 v3).
+- 구역 분할: 1단계는 SAROPS 방식(UAV마다 사각형 하나, 1대면 시간 순서). 2단계는 탐색 이론 배분으로 구역 수와
+  위치를 정한다(S.8 단계 결정).
+- 센서는 논문식으로 정의한다(S.11). POD = 통과 1회당 확률, 탐지 = 최근접 거리(CPA) + 측방 거리 곡선(LRC).
+  새 가정은 고도 약 250 m, footprint 286 × 207 m, POD 0.7, 유효 탐지 폭 W ≈ 200 m(실측 203 m).
+  - 코드: `RLConfig(detect_model="lrc")` + 프리셋 덮어쓰기
+    `search.fov_cross_m=286 search.fov_along_m=207 search.pod=0.7`.
+  - **기본값은 기존(kernel, 115 m, POD 0.3) 그대로다. 기존 PPO 학습 설정은 바뀌지 않는다.**
+- 아코디언 초기 배치(S.10): POC는 도착 후 탐색 구간의 시간 평균(이동 시간 반영), 덩어리 주축 회전, 200 m 격자,
+  최소 제약(구간 600 m, 간격 0.25 × footprint)을 쓴다. 시작점은 봉우리 3개에서 각각 탐색해 근사 최선을 고른다
+  (`n_starts=3`, POS +7%).
+
+**결과 요약 (새 센서 + lrc, 시나리오 8개, 에피소드 POS)**
+- 아코디언만 사용(시뮬레이션 없음): 시작점 기존 0.345 → 봉우리 3개 0.369
+- 그림: `rl_search/data/accordion_plots/*.png` (git에 포함)
+
+**열린 문제 (다음 의논 순서 후보)**
+1. 사이클 길이: 고정 10분이라 첫 사이클이 이동으로 낭비되고, 레인이 일찍 끝나면 시작점으로 되돌아가며, 레인
+   도중에 재계획된다. 비행 시간의 52%가 레인 밖이다. 대안은 "레인이 끝나면 다음 계획"이고 상한은 15분 제안.
+2. 덩어리 왕복: 두 구역 짝 평가(구역 1 + 구역 1 실패 조건의 구역 2, 근사 POS 합, 구역 1만 실행). 구역 2 할인
+   1.0과 0.5를 비교하고, 구역 1 종료 위치는 사각형 중심으로 근사한다. 설계는 합의했고 실험 전이다.
+3. 전체 최적화 나머지: 고정 표본 1,500개 시뮬레이션 평가(3-2) → 12가지 이동(정의는 더 검토) → 큰 점프.
+4. 실제 표적 발견 시간(`compare_patterns.detection_times`)을 CPA 규칙으로 맞춘다. 비교 기준(v2, greedy90)을
+   새 센서로 다시 돌린다.
+5. RL을 새 센서로 학습하려면 먼저 `pos_ref`와 `area_ref`를 다시 정한다(POS가 약 2배). 학습 후 반경 143 m 근처를
+   맴도는 경로가 나오는지 확인한다(통과마다 독립 0.7 기회라 재방문이 약간 과대평가됨).
+
+**Ubuntu에서 실행**
+```bash
+git fetch && git checkout feat/rl-env && git pull
+python -m rl_search.scripts.make_terrain                       # data/는 git에 없음 (이미 했으면 생략)
+python -m rl_search.scripts.check_accordion --sensor new --detect lrc --workers 6
+python -m rl_search.scripts.check_accordion_start              # 시작점 기준 비교
+python -m rl_search.scripts.plot_accordion --seeds 301 302 --n-starts 3
+```
+
 ## 2026-11-03 · 논의 결론 v1
 
 1. **SAROPS 방식 적용 방안:** RL을 대체하는 방법이 아니라 RL을 평가·보강하는 도구로 가져온다.
@@ -16,7 +57,8 @@
    - 고정익 선회 제약: 선회 반경(33 m/s, ±30°/5 s에서 약 318 m) 때문에 바로 옆 줄로 돌아올 수 없다.
      기존 `lawnmower.py`의 줄 건너뛰기를 쓴다.
    - 탐지 계산: SAROPS는 구간별 최근접 거리(CPA)와 측방 거리 곡선으로 계산한다. 우리는 이미 구현한
-     1 s 간격 셀 센서 모델(5.3, 5.4)을 그대로 쓴다.
+     1 s 간격 셀 센서 모델(5.3, 5.4)을 그대로 쓴다. → **2026-11-03 저녁 변경:** 셀 모델이 통과 1회를 여러 번
+     세는 문제가 확인되어, SAROPS식 CPA + LRC를 `detect_model="lrc"`로 추가했다(S.11).
 3. **상위 계층(탐색 구역 결정)만 RL로 하는 것은 의미가 약할 수 있다.**
    비행 중 새 정보가 없는 현재 설정에서는 결정이 몇 번(예: 10분 단위 6회)뿐이라 교차 엔트로피 같은 직접
    최적화로도 시나리오마다 충분히 빠르게 풀 수 있다. 이 경우 RL의 이점은 계산 속도와 일반화 정도라
