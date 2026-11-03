@@ -1,0 +1,40 @@
+{
+ "tag": "stage3_pos",
+ "preset": "rc_cessna",
+ "set": [
+  "search.fov_cross_m=286",
+  "search.fov_along_m=207",
+  "search.pod=0.7"
+ ],
+ "rl": [
+  "detect_model=lrc",
+  "w_area=0",
+  "pos_ref=0.45"
+ ],
+ "stage": 3,
+ "n_envs": 12,
+ "n_steps": 256,
+ "batch_size": 64,
+ "n_epochs": 5,
+ "lr": 0.0001,
+ "gamma": 1.0,
+ "gae_lambda": 0.95,
+ "ent_coef": 0.005,
+ "target_kl": 0.02,
+ "log_std_init": -1.0,
+ "total_steps": 2000000,
+ "device": "cuda",
+ "seed": 0,
+ "checkpoint_every": 50000,
+ "eval_every": 50000,
+ "eval_scenarios": 6,
+ "eval_dir": null,
+ "resume": null,
+ "out": "rl_search/data/rl",
+ "rl_cfg": {
+  "detect_model": "lrc",
+  "w_area": 0,
+  "pos_ref": 0.45,
+  "stage": 3
+ }
+}

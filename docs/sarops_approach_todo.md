@@ -5,7 +5,16 @@
 참고 문헌: Kratzke, Stone, Frost (2010) "Search and Rescue Optimal Planning System" (Fusion 2010),
 프로젝트 문서 `claude/literature_moving_target_search.md`.
 
-## 2026-11-03 밤 · 맥에서 이어서 작업 (최신 인계)
+## 2026-11-04 새벽 · 3단계 RL 결과 (최신 인계)
+
+**결론:** 3단계 RL(새 센서, POS 보상만, 200만 스텝)의 검증 POS는 0.080이다. SAROPS 0.439, greedy90 0.428, seek 0.144, 직진 0.089보다 낮다.
+학습 곡선의 r_pos 0.2는 POS 0.09다(`R_pos = POS/0.45`). 분포 안 비행 시간이 36%(SAROPS 78%)이고, 분포 안 분당 POS도 SAROPS의 약 3분의 1이다.
+자세한 수치와 원인 가설은 [RL 학습 기록](rl_training_log.md)의 stage3_pos, 그림은 `rl_search/data/rl/stage3_pos/analysis/`.
+
+**맥에서 볼 것:** `tensorboard --logdir rl_search/data/rl/stage3_pos/tb`, `analysis/summary.png`, `analysis/paths_s316.png`, `analysis/paths_s328.png`.
+다음 RL 실험은 아직 정하지 않았다. 아래 절의 "다음 순서" 1, 2번도 그대로 남아 있고, 3번은 이 실험으로 진행했다.
+
+## 2026-11-03 밤 · 맥에서 이어서 작업
 
 **먼저 읽을 곳:** 이 절, 그다음 S.10의 "국소 탐색 구현과 이동 선택"과 "큰 점프와 greedy90 비교".
 

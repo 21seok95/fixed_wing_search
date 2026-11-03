@@ -71,7 +71,8 @@ def episode_figure(env, trace, title=""):
     from rl_search.plotting import draw_rl_episode
     snaps = trace["snaps"]
     pick = [snaps[min(int(round(f*(len(snaps) - 1))), len(snaps) - 1)] for f in (1/3, 2/3, 1)]
-    return draw_rl_episode(env.terr, env.belief, np.array(trace["path"]), np.array(trace["t"]), pick, title)
+    return draw_rl_episode(env.terr, env.belief, np.array(trace["path"]), np.array(trace["t"]), pick, title,
+                           vmax=1.0 if env.lrc else .5)    # lrc: one pass already searches POD (0.7) of a particle
 
 
 def main():

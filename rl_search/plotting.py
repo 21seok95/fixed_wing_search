@@ -113,7 +113,7 @@ def _rl_panel(ax, terr, belief, path_xy, path_t, t, w, window, tnorm, seen_cmap,
     return sc
 
 
-def draw_rl_episode(terr: Terrain, belief, path_xy: np.ndarray, path_t: np.ndarray, snaps, title: str = ""):
+def draw_rl_episode(terr: Terrain, belief, path_xy: np.ndarray, path_t: np.ndarray, snaps, title: str = "", vmax=.5):
     """RL episode in time slices: one panel per ``snaps`` entry (t_s, particle weights at t_s, POS, area km²).
     Each panel shows the particles where they are at t_s (grey: unseen, red: share already searched
     away) and the path flown up to t_s, coloured by time, on faded terrain."""
@@ -127,7 +127,7 @@ def draw_rl_episode(terr: Terrain, belief, path_xy: np.ndarray, path_t: np.ndarr
     fig, axes = plt.subplots(1, len(snaps), figsize=(5.2*len(snaps) + 1.2, 5.6), squeeze=False,
                              constrained_layout=True)
     for ax, (t, w, pos, area) in zip(axes[0], snaps):
-        sc = _rl_panel(ax, terr, belief, path_xy, path_t, t, w, window, tnorm, seen_cmap)
+        sc = _rl_panel(ax, terr, belief, path_xy, path_t, t, w, window, tnorm, seen_cmap, vmax)
         ax.set_title(f"t = {t/60:.0f} min:  POS {pos:.3f},  area {area:.2f} km²", fontsize=11)
     fig.colorbar(plt.cm.ScalarMappable(tnorm, "cool"), ax=axes[0, -1], fraction=.05, pad=.02,
                  label="flight time (min)")
