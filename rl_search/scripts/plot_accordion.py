@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--variant", default="tavg_pca")
     ap.add_argument("--cell", type=float, default=200.0)
     ap.add_argument("--cycles", type=int, default=6)
+    ap.add_argument("--n-starts", type=int, default=1, help="accordion starts over this many density peaks")
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/accordion_plots"))
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -46,7 +47,7 @@ def main():
             b = env.belief
             snaps.append((env.t, b.positions(env.t + 300.0).copy(), b.w.copy()/b.n, env.pos_cum))
 
-        pol = AccordionPlanner(args.variant, cell=args.cell, hook=hook)
+        pol = AccordionPlanner(args.variant, cell=args.cell, hook=hook, n_starts=args.n_starts)
         log = run_episode(env, dict(scenario=make_scenario(env.sampler, seed), stage=3), pol)
         t, xy, pos = np.array(log.t), np.array(log.xy), np.array(log.pos)
         n = min(args.cycles, len(pol.rects))
@@ -92,10 +93,10 @@ def main():
                 ax.legend(loc="lower left", fontsize=7)
         for a in axs[n + 1:]:
             a.axis("off")
-        fig.suptitle(f"Accordion planner ({args.variant}, {args.cell:.0f} m grid), sensor {args.sensor}, detection {args.detect}; "
+        fig.suptitle(f"Accordion planner ({args.variant}, {args.cell:.0f} m grid, starts {args.n_starts}), sensor {args.sensor}, detection {args.detect}; "
                      "probability shown at mid-cycle", fontsize=12)
         fig.tight_layout()
-        f = args.out/f"accordion_s{seed}_{args.sensor}_{args.detect}.png"
+        f = args.out/(f"accordion_s{seed}_{args.sensor}_{args.detect}" + (f"_starts{args.n_starts}" if args.n_starts > 1 else "") + ".png")
         fig.savefig(f, dpi=110)
         plt.close(fig)
         print(f)
