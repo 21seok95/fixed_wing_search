@@ -35,6 +35,7 @@ class Rect:
     wid: float
     theta: float
     approx: float = 0.0
+    corner: tuple | None = None    # start corner (sx, sy) of the lanes; None: the corner nearest the UAV
 
 
 def sweep_width(env, n_int: int = 40) -> float:
@@ -156,25 +157,33 @@ class Accordion:
         cl = find_clusters(self.env, self.env.t + self.T/2, k=1)
         return cl[0].theta if cl else 0.0
 
+    def peak_rects(self) -> list[Rect] | None:
+        """One accordion search per density peak (find_clusters, each in a grid along its own main axis), best
+        approximate POS first; None if there is no peak."""
+        cls = find_clusters(self.env, self.env.t + self.T/2, k=self.n_starts, smooth=max(self.start_smooth_m, 250.0),
+                            sep=self.start_sep_m)
+        if not cls:
+            return None
+        out = []
+        for cl in cls:
+            th = cl.theta if self.variant == "tavg_pca" else 0.0
+            G = self._grid(th)
+            q = cl.peak @ G["R"]
+            ci = int(np.clip((q[0] - G["ex"][0])//self.g, 0, len(G["ex"]) - 2))
+            cj = int(np.clip((q[1] - G["ey"][0])//self.g, 0, len(G["ey"]) - 2))
+            r = self._climb(G, ci, cj)
+            if r is not None:
+                out.append(r)
+        return sorted(out, key=lambda r: -r.approx)
+
     def plan(self) -> Rect | None:
-        """Accordion search. ``n_starts`` > 1: one search per density peak (find_clusters, each in a grid along
-        its own main axis), the best approximate POS wins (transit is in the approximation). ``start_smooth_m``:
-        pick the start cell on a Gaussian-smoothed density instead of the single densest cell."""
+        """Accordion search. ``n_starts`` > 1: the peak with the best approximate POS (transit is in the
+        approximation). ``start_smooth_m``: pick the start cell on a Gaussian-smoothed density instead of the
+        single densest cell."""
         if self.n_starts > 1:
-            cls = find_clusters(self.env, self.env.t + self.T/2, k=self.n_starts, smooth=max(self.start_smooth_m, 250.0),
-                                sep=self.start_sep_m)
-            best = None
-            for cl in cls:
-                th = cl.theta if self.variant == "tavg_pca" else 0.0
-                G = self._grid(th)
-                q = cl.peak @ G["R"]
-                ci = int(np.clip((q[0] - G["ex"][0])//self.g, 0, len(G["ex"]) - 2))
-                cj = int(np.clip((q[1] - G["ey"][0])//self.g, 0, len(G["ey"]) - 2))
-                r = self._climb(G, ci, cj)
-                if r is not None and (best is None or r.approx > best.approx):
-                    best = r
-            if best is not None or cls:
-                return best
+            rects = self.peak_rects()
+            if rects is not None:
+                return rects[0] if rects else None
         G = self._grid(self.theta())
         H = G["H"]
         dens = H[0] if self.variant == "snap0" else H[self.k_mid] if self.variant == "mid" else H[self.taus <= self.T].mean(0)
@@ -235,38 +244,56 @@ class Accordion:
         return max(self.approx(G, i0, i1, j0, j1), 0.0)
 
 
-def lanes(env, r: Rect, cycle_s=600.0, effort=0.85):
-    """Parallel lanes filling the rectangle (first leg along theta), started at the corner nearest the UAV.
-    Returns (polyline in the rectangle frame, follower)."""
+def lane_count(env, r: Rect, cycle_s=600.0, effort=0.85) -> int:
+    """Lanes that fit the search time left after the transit to the rectangle's nearest corner."""
+    r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
+    R = _rot(r.theta)
+    corners = [np.array([sx*r.ell/2, sy*r.wid/2]) for sx in (-1, 1) for sy in (-1, 1)]
+    tr = min(np.hypot(*(np.array([r.cx, r.cy]) + c @ R.T - env.plant.pose[:2])) for c in corners)/env.v
+    L = effort*env.v*(max(cycle_s, tr + cycle_s/2) - tr)
+    return max(1, int(L//(r.ell + np.pi*r_turn)))
+
+
+def lane_plan(env, r: Rect, cycle_s=600.0, effort=0.85):
+    """Polyline of the parallel lanes in the rectangle frame (first leg along theta) and its start corner
+    (sx, sy): ``r.corner``, or the corner nearest the UAV."""
     r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
     x = env.plant.pose[:2]
     R = _rot(r.theta)
-    corners = [np.array([sx*r.ell/2, sy*r.wid/2]) for sx in (-1, 1) for sy in (-1, 1)]
-    tr = min(np.hypot(*(np.array([r.cx, r.cy]) + c @ R.T - x)) for c in corners)/env.v
-    L = effort*env.v*(max(cycle_s, tr + cycle_s/2) - tr)
-    n = max(1, int(L//(r.ell + np.pi*r_turn)))
+    n = lane_count(env, r, cycle_s, effort)
     s = r.wid/n
     pts = parallel_pts(max(r.ell - s, 100.0), n, s, r_turn)
+    if r.corner is not None:
+        return pts*np.array(r.corner), r.corner
     best = None
     for sx in (-1, 1):
         for sy in (-1, 1):
             p = pts*np.array([sx, sy])
             d = np.hypot(*(np.array([r.cx, r.cy]) + p[0] @ R.T - x))
             if best is None or d < best[0]:
-                best = (d, p)
-    return best[1], FramedFollower(env, best[1], np.array([r.cx, r.cy]), env.t, r.theta, np.zeros(2))
+                best = (d, p, (sx, sy))
+    return best[1], best[2]
+
+
+def lanes(env, r: Rect, cycle_s=600.0, effort=0.85):
+    """Parallel lanes filling the rectangle, started at ``r.corner`` or the corner nearest the UAV.
+    Returns (polyline in the rectangle frame, follower)."""
+    pts, _ = lane_plan(env, r, cycle_s, effort)
+    return pts, FramedFollower(env, pts, np.array([r.cx, r.cy]), env.t, r.theta, np.zeros(2))
 
 
 def simulate(env, r: Rect, cycle_s=600.0) -> float:
     """Probability found by flying the rectangle's lanes for one cycle from the current state (state kept)."""
     _, f = lanes(env, r, cycle_s)
     snap = env.snapshot()
+    skip, env.skip_cells = env.skip_cells, True      # the cell grid only feeds the area term and the kernel sensor
     p0, t_end = env.pos_cum, env.t + cycle_s
     while env.t < t_end - 1e-6:
         _, _, term, _, _ = env.step([f.action()])
         if term:
             break
     gain = env.pos_cum - p0
+    env.skip_cells = skip
     env.restore(snap)
     return gain
 
@@ -279,12 +306,15 @@ class AccordionPlanner:
         self.follower, self.t_next, self.log = None, -np.inf, []
         self.rects = []      # (plan time, Rect, lanes in world coordinates) for plotting
 
+    def choose(self, env, acc) -> Rect | None:
+        return acc.plan()
+
     def __call__(self, env) -> float:
         if env.t >= self.t_next or self.follower is None:
             acc = Accordion(env, self.variant, self.cycle_s, self.cell, self.W, **self.acc_kw)
             if self.hook is not None:
                 self.hook(env, acc)
-            r = acc.plan()
+            r = self.choose(env, acc)
             if r is not None:
                 pts, self.follower = lanes(env, r, self.cycle_s)
                 self.log.append(dict(t_min=round(env.t/60, 1), ell=r.ell, wid=r.wid,

@@ -104,6 +104,7 @@ class RLSearchEnv:
         self.pos_cum = 0.0
         self.area_cum = 0.0
         self.fast = False      # path evaluation only: no maps, no reward zone / area (POS reward term only)
+        self.skip_cells = False  # "lrc" in fast mode: no cell grid either (detection does not use it)
         if c.detect_model not in ("kernel", "lrc"):
             raise ValueError(c.detect_model)
         self.lrc = c.detect_model == "lrc"
@@ -229,7 +230,7 @@ class RLSearchEnv:
         exited = not inside.all()
         if exited:
             poses = poses[:np.argmin(inside)]          # observe until the exit
-        cells = self._cells_under(poses) if len(poses) else np.zeros(0, int)
+        cells = self._cells_under(poses) if len(poses) and not (self.lrc and self.skip_cells) else np.zeros(0, int)
         if self.lrc:                                   # 3 (SAROPS CPA + LRC)
             dpos = self._detect_lrc(np.vstack([xy0, poses[:, :2]]), t0 + self.seg_t[:len(poses) + 1])
         else:                                          # 3 (5.4 v3 kernel)

@@ -193,11 +193,16 @@ Training needs `pip install -r rl_search/requirements-rl.txt` plus torch:
 - **Accordion search** (`accordion.py`): SAROPS initial placement of one rectangle per cycle. Approximate POS =
   time-averaged POC over the search window after the transit x (1 - exp(-W n ell / A)), lanes n = L / (ell + pi R),
   grid along the cluster main axis, `n_starts` density peaks. `AccordionPlanner` flies the rectangle's lanes.
+- **Local search and big jump** (`sarops.py`): `SaropsPlanner` improves the accordion rectangle on the flown result
+  (`accordion.simulate`, all particles): rotation, start corner, track spacing. `big_jump=True` runs this from every
+  density peak and keeps the best. `check_sarops` and `compare_greedy` also score POS on held-out particles.
 
 ```bash
 python -m rl_search.scripts.check_accordion --sensor new --detect lrc   # approx vs simulation, variants, episodes
 python -m rl_search.scripts.check_accordion_start                      # start-point rules
 python -m rl_search.scripts.plot_accordion --seeds 301 302 --n-starts 3 # per-cycle figures
+python -m rl_search.scripts.check_sarops --n-scen 8 --workers 6        # local search: effect of each move
+python -m rl_search.scripts.compare_greedy --n-scen 30 --workers 6     # planner vs greedy90, tables and figures
 python -m rl_search.scripts.check_split                                # ideal effort allocation, 1-6 UAVs
 python -m rl_search.scripts.check_spread                               # spread mechanisms vs SAROPS
 python -m rl_search.scripts.compare_patterns_v2 --n-scen 8 --workers 6 # IAMSAR patterns re-planned per cycle
