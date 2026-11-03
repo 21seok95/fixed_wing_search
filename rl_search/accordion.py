@@ -85,8 +85,13 @@ def sweep_profile_lrc(env, n_int: int = 40, path=None):
 
 class Accordion:
     def __init__(self, env, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, effort=0.85,
-                 ell_min=None, gamma=None, dt_snap=60.0, start_smooth_m=0.0, n_starts=1, start_sep_m=1500.0):
+                 ell_min=None, gamma=None, dt_snap=60.0, start_smooth_m=0.0, n_starts=1, start_sep_m=1500.0,
+                 pod_model="exp"):
         self.env, self.variant, self.T, self.g = env, variant, cycle_s, cell
+        if pod_model not in ("exp", "lanes"):
+            raise ValueError(pod_model)
+        self.pod_model = pod_model
+        self.cover_w = 2*env.lrc_R if getattr(env, "lrc", False) else env.fp_cross   # width one lane covers
         self.W = W if W is not None else sweep_width(env)
         self.effort = effort
         self.r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
@@ -148,7 +153,20 @@ class Accordion:
         else:
             k = (self.taus >= tr - 1e-6) & (self.taus <= t_end + 1e-6)
             poc = p[k].mean() if k.any() else p[np.searchsorted(self.taus, tr) - 1]
-        return float(poc*(1 - np.exp(-self.W*n*ell/(ell*wid))))
+        return float(poc*self.pod(wid/n))
+
+    def pod(self, s: float) -> float:
+        """Detection probability inside the rectangle for track spacing ``s``.
+        exp:   random-search formula 1 - exp(-W/s) (Koopman; SAROPS initial placement)
+        lanes: exact parallel lanes with a definite-range sensor: a point is covered floor(m) or ceil(m) times,
+               m = covered width / s, each pass detecting with the single-pass POD"""
+        if self.pod_model == "exp":
+            return float(1 - np.exp(-self.W/s))
+        q = 1 - self.env.search.pod
+        m = self.cover_w/s
+        k = np.floor(m)
+        f = m - k
+        return float((1 - f)*(1 - q**k) + f*(1 - q**(k + 1)))
 
     # ------------------------------------------------------------------ search
     def theta(self):
