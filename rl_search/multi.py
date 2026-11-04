@@ -33,6 +33,12 @@ class TrackedEnv(RLSearchEnv):
         self.surv[m] *= self.belief.w[m]/before[m]
         return gain
 
+    def idle(self):
+        """Wait one decision interval on the ground (staggered launch): time and target exits advance, the UAV
+        does not move, sense or spend energy."""
+        self.t += self.cfg.decision_dt_s
+        self.belief.update_exits(self.t)
+
     def snapshot(self):
         s = super().snapshot()
         s["surv"] = self.surv.copy()
@@ -81,10 +87,11 @@ def future_factor(env, pol) -> np.ndarray:
     return out
 
 
-def run_team(envs, planners, options, actions=None, log_plans=None):
+def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.0):
     """Fly N UAVs together. ``planners``: one per env; or None to replay ``actions`` (list per UAV). Returns dict(t,
-    pos: shared POS over time (policy part, after the handover), actions). ``log_plans``: list to append
-    (t, uav, n_others_committed) per planning event."""
+    pos: shared POS over time (policy part, after the handover), actions, xy per UAV, times per UAV).
+    ``log_plans``: list to append (t, uav, n_others_committed) per planning event. ``stagger_s``: UAV u starts its
+    mission u * stagger_s later (approximation: it waits after the common launch transit, rounded to 5 s steps)."""
     n = len(envs)
     for e in envs:
         e.reset(options=options)
@@ -95,8 +102,16 @@ def run_team(envs, planners, options, actions=None, log_plans=None):
     alive = [True]*n
     t_log, pos_log = [envs[0].t], [0.0]
     xy = [[e.plant.pose[:2].copy()] for e in envs]
+    tt = [[e.t] for e in envs]
+    wait = [int(round(u*stagger_s/envs[0].cfg.decision_dt_s)) for u in range(n)]
     while any(alive):
-        todo = [u for u in range(n) if alive[u]]
+        idling = []
+        for u in range(n):
+            if wait[u] > 0 and alive[u]:
+                envs[u].idle()
+                wait[u] -= 1
+                idling.append(u)
+        todo = [u for u in range(n) if alive[u] and u not in idling]
         planning = [] if replay else [u for u in todo if due(planners[u], envs[u])]
         fut = {}
         if planning:
@@ -124,9 +139,33 @@ def run_team(envs, planners, options, actions=None, log_plans=None):
                 acts[u].append(a)
             _, _, term, _, _ = e.step([a])
             xy[u].append(e.plant.pose[:2].copy())
+            tt[u].append(e.t)
             if term:
                 alive[u] = False
         S = np.prod([x.surv/s for x, s in zip(envs, s0)], axis=0)
         t_log.append(max(x.t for x in envs))
         pos_log.append(float((1 - S).sum()/envs[0].belief.n))
-    return dict(t=np.array(t_log), pos=np.array(pos_log), actions=acts, xy=[np.array(x) for x in xy])
+    return dict(t=np.array(t_log), pos=np.array(pos_log), actions=acts, xy=[np.array(x) for x in xy],
+                tt=[np.array(x) for x in tt])
+
+
+def separation(res, d_safe=300.0):
+    """Closest horizontal distance between any two UAVs at the same time, and the time any pair spends closer than
+    ``d_safe`` (common 5 s grid, from the last UAV's launch: before that the waiting UAVs sit at the handover point).
+    Returns (min distance m, seconds below d_safe, number of close encounters)."""
+    xy, tt = res["xy"], res["tt"]
+    n = len(xy)
+    if n < 2:
+        return np.inf, 0.0, 0
+    t0, t1 = max(t[1] - 5.0 if len(t) > 1 else t[0] for t in tt), min(t[-1] for t in tt)   # from the last launch
+    grid = np.arange(t0, t1, 5.0)
+    P = [np.stack([np.interp(grid, tt[u], xy[u][:, 0]), np.interp(grid, tt[u], xy[u][:, 1])], 1) for u in range(n)]
+    dmin, below, enc = np.inf, 0.0, 0
+    for a in range(n):
+        for b in range(a + 1, n):
+            d = np.hypot(*(P[a] - P[b]).T)
+            dmin = min(dmin, d.min())
+            close = d < d_safe
+            below += close.sum()*5.0
+            enc += int(np.sum(np.diff(close.astype(int)) == 1) + close[0])
+    return dmin, below, enc

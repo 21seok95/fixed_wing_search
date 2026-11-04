@@ -31,7 +31,7 @@ def make_envs(n, seed):
 def main():
     warnings.filterwarnings("ignore")
     from rl_search.accordion import AccordionPlanner, sweep_width
-    from rl_search.multi import run_team
+    from rl_search.multi import run_team, separation
     from rl_search.sarops import SaropsPlanner
     from rl_search.scenario import make_scenario
     from rl_search.scripts.check_sarops import holdout_scenario
@@ -42,6 +42,7 @@ def main():
     ap.add_argument("--planner", choices=("accordion", "sarops"), default="accordion")
     ap.add_argument("--lane-mode", default="cover")
     ap.add_argument("--plot", action="store_true")
+    ap.add_argument("--stagger-s", type=float, default=10.0)
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/multi"))
     args = ap.parse_args()
     probe = make_envs(1, args.seed)[0]
@@ -57,22 +58,24 @@ def main():
         pols = [make() for _ in range(n)]
         events = []
         t0 = time.perf_counter()
-        res = run_team(envs, pols, opts, log_plans=events)
+        res = run_team(envs, pols, opts, log_plans=events, stagger_s=args.stagger_s)
         sec = time.perf_counter() - t0
-        h = run_team(make_envs(n, args.seed), None, hold, actions=res["actions"])
+        h = run_team(make_envs(n, args.seed), None, hold, actions=res["actions"], stagger_s=args.stagger_s)
+        dmin, below, enc = separation(res)
         t, pos = res["t"] - res["t"][0], res["pos"]
         rows.append(dict(n=n, pos=pos[-1], hold=h["pos"][-1], p=[np.interp(m*60, t, pos) for m in (15, 30, 45)],
-                         plans=len(events), sec=sec))
+                         plans=len(events), sec=sec, dmin=dmin, below=below, enc=enc))
         flights[n] = (pols, res, [x for x in envs])
         print(f"N={n}: POS {pos[-1]:.3f}, held-out {h['pos'][-1]:.3f}, plans {len(events)}, {sec:.0f} s", flush=True)
-    print(f"\nscenario {args.seed}, planner {args.planner}, task mode (search 10 min, transit <= 10 min, lanes {args.lane_mode})\n")
-    print("| UAVs | POS | held-out POS | gain over 1 UAV | POS at 15 / 30 / 45 min | plans | s |")
-    print("|---|---|---|---|---|---|---|")
+    print(f"\nscenario {args.seed}, planner {args.planner}, task mode (search 10 min, transit <= 10 min, lanes {args.lane_mode}), "
+          f"launch {args.stagger_s:.0f} s apart\n")
+    print("| UAVs | POS | held-out POS | gain over 1 UAV | POS at 15 / 30 / 45 min | plans | closest pair (m) | time any pair < 300 m (s) | encounters < 300 m | s |")
+    print("|---|---|---|---|---|---|---|---|---|---|")
     base = rows[0]["hold"] if rows and rows[0]["n"] == 1 else None
     for r in rows:
         g = f"{r['hold']/base:.2f}x" if base else "-"
         print(f"| {r['n']} | {r['pos']:.3f} | {r['hold']:.3f} | {g} | {r['p'][0]:.3f} / {r['p'][1]:.3f} / {r['p'][2]:.3f} | "
-              f"{r['plans']} | {r['sec']:.0f} |")
+              f"{r['plans']} | {r['dmin']:.0f} | {r['below']:.0f} | {r['enc']} | {r['sec']:.0f} |")
     if args.plot:
         plot(flights, args, probe)
 
@@ -101,7 +104,7 @@ def plot(flights, args, probe):
         ax.autoscale_view()
     fig.suptitle(f"scenario {args.seed}, {args.planner}, task mode: rectangles per UAV (colour), label = plan minute", fontsize=11)
     fig.tight_layout()
-    f = args.out/f"multi_s{args.seed}_{args.planner}.png"
+    f = args.out/f"multi_s{args.seed}_{args.planner}_stagger{args.stagger_s:.0f}.png"
     fig.savefig(f, dpi=110)
     print(f)
 
