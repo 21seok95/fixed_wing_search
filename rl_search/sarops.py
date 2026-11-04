@@ -35,7 +35,7 @@ def neighbours(env, r: Rect, moves, scale: float, gamma: float, cycle_s: float, 
         out += [("rotate", replace(r, theta=r.theta + d*scale*d_theta)) for d in (-1, 1)]
     if "corner" in moves:
         out += [("corner", replace(r, corner=c)) for c in CORNERS if c != r.corner]
-    if "spacing" in moves:
+    if "spacing" in moves and r.spacing is None:      # fixed spacing (lane_mode "fixed"): no spacing move
         for d in (-1, 1):
             q = replace(r, wid=r.wid*(1 + d*scale*d_spacing))
             if q.wid/lane_count(env, q, cycle_s, search_s=search_s) >= gamma:

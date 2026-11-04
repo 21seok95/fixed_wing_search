@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--peak-timing", choices=("now", "arrival", "both"), default="now")
+    ap.add_argument("--lane-mode", choices=("fill", "fixed", "both"), default="fill")
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/task_mode"))
     args = ap.parse_args()
     env = make_env(args.seed)
@@ -44,9 +45,11 @@ def main():
         "SAROPS, 10-min cycle": lambda: SaropsPlanner(W=W, n_starts=3, big_jump=True),
     }
     for pt in (("now", "arrival") if args.peak_timing == "both" else (args.peak_timing,)):
-        tag = "" if pt == "now" else ", peaks at arrival"
-        makers[f"accordion, task{tag}"] = lambda pt=pt: AccordionPlanner(W=W, n_starts=3, peak_timing=pt, **task)
-        makers[f"SAROPS, task{tag}"] = lambda pt=pt: SaropsPlanner(W=W, n_starts=3, big_jump=True, peak_timing=pt, **task)
+        for lm in (("fill", "fixed") if args.lane_mode == "both" else (args.lane_mode,)):
+            tag = ("" if pt == "now" else ", peaks at arrival") + ("" if lm == "fill" else ", lanes no overlap")
+            makers[f"accordion, task{tag}"] = lambda pt=pt, lm=lm: AccordionPlanner(W=W, n_starts=3, peak_timing=pt, lane_mode=lm, **task)
+            makers[f"SAROPS, task{tag}"] = lambda pt=pt, lm=lm: SaropsPlanner(W=W, n_starts=3, big_jump=True, peak_timing=pt,
+                                                                               lane_mode=lm, **task)
     rows, flights = [], {}
     for name, make in makers.items():
         if args.only and not any(o in name for o in args.only):
@@ -115,7 +118,7 @@ def plot(flights, args, env):
         ax.set(title=f"{name}: POS {pos[-1]:.3f}", xlabel="km", ylabel="km", aspect="equal")
     fig.suptitle(f"scenario {args.seed}: rectangles coloured by plan time (label = minute), red = approach phase", fontsize=11)
     fig.tight_layout()
-    f = args.out/(f"task_mode_s{args.seed}_x{args.max_transit_s/60:.0f}" + ("_arrival" if args.peak_timing != "now" else "") + ".png")
+    f = args.out/(f"task_mode_s{args.seed}_x{args.max_transit_s/60:.0f}" + ("_arrival" if args.peak_timing != "now" else "") + ("_fixed" if args.lane_mode == "fixed" else "") + ".png")
     fig.savefig(f, dpi=110)
     print(f)
 
