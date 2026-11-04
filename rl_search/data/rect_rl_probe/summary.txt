@@ -1,0 +1,26 @@
+1 UAV, held-out POS, scenarios 300 - 329
+  random_turn    0.017  0.4 s
+  rect_uniform   0.016  0.5 s
+  flat_ppo       0.080  -
+  rect_density   0.226  0.7 s
+  loc_climb      0.297  1.0 s
+  peak_greedy    0.384  3.8 s
+  sarops_task    0.402  49.7 s
+  rollout        0.407  75.5 s
+  sarops_fixed   0.439  47.0 s
+  rollout - sarops_task: +0.005 +- 0.004, higher in 19/30
+  rollout - peak_greedy: +0.023 +- 0.007, higher in 25/30
+  sarops_fixed - sarops_task: +0.037 +- 0.005, higher in 27/30
+  candidates per decision in rollout: 11.7
+  decisions per episode, peak_greedy: 4.6
+
+5 UAVs, separation check
+  rect_density         POS 0.573, below 300 m 339 s, closest 6 m, no feasible option 0, 12.5 s/episode, 20.5 decisions
+  rect_density+check   POS 0.567, below 300 m 114 s, closest 7 m, no feasible option 90, 23.5 s/episode, 20.8 decisions
+  loc_climb            POS 0.627, below 300 m 352 s, closest 4 m, no feasible option 0, 15.2 s/episode, 21.3 decisions
+  loc_climb+check      POS 0.619, below 300 m 206 s, closest 1 m, no feasible option 75, 29.8 s/episode, 21.0 decisions
+  SAROPS               POS 0.676, below 300 m 246 s, closest 0 m, no feasible option 69
+
+Sum of per-decision marginal POS against team POS (flown: location from probability + accordion shape)
+  1 UAV: team 0.2377, sum 0.2380, largest difference 0.0033, approach flight 2.9 % of 60 min, 8 scenarios
+  5 UAV: team 0.5808, sum 0.5798, largest difference 0.0030, approach flight 2.8 % of 60 min, 8 scenarios

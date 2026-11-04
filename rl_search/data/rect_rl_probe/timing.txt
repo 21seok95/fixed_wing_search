@@ -1,0 +1,17 @@
+make_scenario 16.0 s, track (421, 5000, 2), 17 MB
+load_scenario from disk 0 ms
+reset incl. 120 s transit, fast 13 ms
+accordion peak_rects, 5 peaks 39 ms, 1 rectangles
+simulate one rectangle (transit + lanes) 151 ms
+observation (four maps) 3 ms
+full env step 5 s incl. observation 4 ms
+fast env step 5 s, no observation 0.3 ms
+extractor forward, CPU 1 thread, 1 sample 1.3 ms; 1,246,720 parameters
+1 UAV episode, random rectangles: 1.0 s, 3 decisions, 695 5 s steps, POS 0.161, min distance inf m, 0 s below 300 m
+5 UAV episode, random rectangles: 9.5 s, 20 decisions, 3475 5 s steps, POS 0.504, min distance 56 m, 195 s below 300 m
+301 full env step ms by 10-min bin: {0: 5.8, 1: 9.8, 2: 14.0, 3: 18.3, 4: 23.7, 5: 28.8}
+301 observation with the zone recomputed, ms: 49.8
+301 observation with the zone cached, ms: 4.3
+318 full env step ms by 10-min bin: {0: 5.4, 1: 7.5, 2: 9.6, 3: 11.9, 4: 14.7, 5: 17.7}
+318 observation with the zone recomputed, ms: 30.3
+318 observation with the zone cached, ms: 4.1
