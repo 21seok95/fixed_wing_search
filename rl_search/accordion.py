@@ -41,7 +41,8 @@ class Rect:
     theta: float
     approx: float = 0.0
     corner: tuple | None = None    # start corner (sx, sy) of the lanes; None: the corner nearest the UAV
-    spacing: float | None = None   # fixed track spacing (lane_mode "fixed"): lanes = round(wid / spacing)
+    spacing: float | None = None   # fixed track spacing (lane_mode "fixed"/"cover"): lanes = round(wid / spacing)
+    k_max: int = 1                 # lane_mode "cover": most passes over each point the local search may choose
 
 
 def sweep_width(env, n_int: int = 40) -> float:
@@ -108,10 +109,15 @@ class Accordion:
         self.cover_w = 2*env.lrc_R if getattr(env, "lrc", False) else env.fp_cross   # width one lane covers
         # lane_mode "fixed" (task mode, 2026-11-04): lanes do not overlap, spacing = cover_w, the width grows by whole
         # lanes; the lane time follows from the geometry and must fit search_s; POD = single-pass POD everywhere
-        if lane_mode not in ("fill", "fixed"):
+        # lane_mode "cover": the same with spacing cover_w / k, k = 1, 2, 3 passes over every point, k chosen per
+        # rectangle by the approximation (lanes closer than 2 R are skipped, time from the polyline)
+        if lane_mode not in ("fill", "fixed", "cover"):
             raise ValueError(lane_mode)
         self.lane_mode = lane_mode
-        self.gy = self.cover_w if (lane_mode == "fixed" and search_s is not None) else cell   # grid step across lanes
+        self.ks = {"fill": (), "fixed": (1,), "cover": (1, 2, 3)}[lane_mode]
+        self.lanes_fixed = lane_mode in ("fixed", "cover") and search_s is not None
+        self.gy = self.cover_w if self.lanes_fixed else cell   # grid step across lanes: one cover width
+        self._k = {}
         self.W = W if W is not None else sweep_width(env)
         self.effort = effort
         self.r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
@@ -190,16 +196,23 @@ class Accordion:
             return -1.0
         if ell < self.ell_min:
             return -1.0
-        if self.lane_mode == "fixed":
-            n = j1 - j0
-            t_lanes = fixed_lane_time(ell, n, self.cover_w, self.r_turn, self.env.v)
-            if t_lanes > self.search_s:
-                return -1.0
+        if self.lanes_fixed:
+            units = j1 - j0
             p = self._poc_t(G, i0, i1, j0, j1)
-            k = (self.taus >= tr - 1e-6) & (self.taus <= tr + t_lanes + 1e-6)
-            poc = p[k].mean() if k.any() else p[np.searchsorted(self.taus, tr) - 1]
-            # every task is charged transit + search_s, so a rectangle grows until its lanes fill the search time
-            return float(poc*self.env.search.pod/((tr + self.search_s)/60.0))
+            q = 1 - self.env.search.pod
+            best, best_k = -1.0, 1
+            for kk in self.ks:
+                t_lanes = fixed_lane_time(ell, kk*units, self.cover_w/kk, self.r_turn, self.env.v)
+                if t_lanes > self.search_s:
+                    continue
+                m = (self.taus >= tr - 1e-6) & (self.taus <= tr + t_lanes + 1e-6)
+                poc = p[m].mean() if m.any() else p[np.searchsorted(self.taus, tr) - 1]
+                # every task is charged transit + search_s, so a rectangle grows until its lanes fill the search time
+                v = float(poc*(1 - q**kk)/((tr + self.search_s)/60.0))
+                if v > best:
+                    best, best_k = v, kk
+            self._k[(id(G), i0, i1, j0, j1)] = best_k
+            return best
         n, length = fit_lanes(float(ell), float(wid), TASK_EFFORT*self.env.v*self.search_s, float(self.r_turn), float(self.gamma))
         budget = TASK_EFFORT*self.env.v*self.search_s
         if n < 1 or wid/n > 2*self.cover_w or length < TASK_FILL*budget:
@@ -295,7 +308,7 @@ class Accordion:
         # smallest admissible start around the start cell: ell_min long, as wide as the spacing limit needs
         L0 = self.effort*self.env.v*self.T
         a = int(np.ceil(self.ell_min/self.g))
-        bw = 1 if self.lane_mode == "fixed" and self.search_s is not None else \
+        bw = 1 if self.lanes_fixed else \
             max(1, int(np.ceil(self.gamma*L0/(self.ell_min + np.pi*self.r_turn)/self.g)))
         cur = [max(0, ci - a//2), min(nx, ci - a//2 + a), max(0, cj - bw//2), min(ny, cj - bw//2 + bw)]
         val = self.approx(G, *cur)
@@ -326,8 +339,11 @@ class Accordion:
         i0, i1, j0, j1 = idx
         cxf, cyf = (G["ex"][i0] + G["ex"][i1])/2, (G["ey"][j0] + G["ey"][j1])/2
         cx, cy = np.array([cxf, cyf]) @ G["R"].T
-        sp = self.cover_w if (self.lane_mode == "fixed" and self.search_s is not None) else None
-        return Rect(float(cx), float(cy), float((i1 - i0)*self.g), float((j1 - j0)*self.gy), float(G["theta"]), val, spacing=sp)
+        if self.lanes_fixed:
+            k = self._k.get((id(G), *idx), 1)
+            return Rect(float(cx), float(cy), float((i1 - i0)*self.g), float((j1 - j0)*self.gy), float(G["theta"]), val,
+                        spacing=self.cover_w/k, k_max=max(self.ks))
+        return Rect(float(cx), float(cy), float((i1 - i0)*self.g), float((j1 - j0)*self.gy), float(G["theta"]), val)
 
     def approx_rect(self, G, r: Rect) -> float:
         """Approximate POS of an arbitrary rectangle (same theta as G) by snapping it to the grid."""

@@ -31,7 +31,7 @@ def main():
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--peak-timing", choices=("now", "arrival", "both"), default="now")
-    ap.add_argument("--lane-mode", choices=("fill", "fixed", "both"), default="fill")
+    ap.add_argument("--lane-mode", choices=("fill", "fixed", "cover", "both"), default="fill")
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/task_mode"))
     args = ap.parse_args()
     env = make_env(args.seed)
@@ -46,7 +46,8 @@ def main():
     }
     for pt in (("now", "arrival") if args.peak_timing == "both" else (args.peak_timing,)):
         for lm in (("fill", "fixed") if args.lane_mode == "both" else (args.lane_mode,)):
-            tag = ("" if pt == "now" else ", peaks at arrival") + ("" if lm == "fill" else ", lanes no overlap")
+            tag = ("" if pt == "now" else ", peaks at arrival") + {"fill": "", "fixed": ", lanes no overlap",
+                                                                       "cover": ", lanes k=1-3"}[lm]
             makers[f"accordion, task{tag}"] = lambda pt=pt, lm=lm: AccordionPlanner(W=W, n_starts=3, peak_timing=pt, lane_mode=lm, **task)
             makers[f"SAROPS, task{tag}"] = lambda pt=pt, lm=lm: SaropsPlanner(W=W, n_starts=3, big_jump=True, peak_timing=pt,
                                                                                lane_mode=lm, **task)
@@ -81,7 +82,9 @@ def main():
             for k in pol.tasks:
                 end = k["end"] if k["end"] is not None else t[-1]
                 act = f"{(k['lane_t'] - k['t0'])/60:4.1f}" if k.get("lane_t") is not None else "  - "
-                print(f"  {k['t0']/60:5.1f}  {k['transit']/60:4.1f} / {act}  {(end - k['t0'])/60:5.1f}  {k['how'] or 'episode end'}")
+                rr = next((r for tp, r, _ in pol.rects if abs(tp - k["t0"]) < 1e-6), None)
+                kk = f"  {rr.ell/1000:.1f}x{rr.wid/1000:.1f} km" + (f" k={2*env.lrc_R/rr.spacing:.0f}" if rr is not None and rr.spacing else "") if rr else ""
+                print(f"  {k['t0']/60:5.1f}  {k['transit']/60:4.1f} / {act}  {(end - k['t0'])/60:5.1f}  {k['how'] or 'episode end'}{kk}")
             if pol.approach:
                 print("  approach phases (min): " + ", ".join(f"{a/60:.1f}-{(b if b is not None else t[-1])/60:.1f}" for a, b in pol.approach))
     print(f"\nscenario {args.seed}, sweep width {W:.0f} m, search {args.search_s/60:.0f} min, max transit {args.max_transit_s/60:.0f} min\n")
@@ -118,7 +121,7 @@ def plot(flights, args, env):
         ax.set(title=f"{name}: POS {pos[-1]:.3f}", xlabel="km", ylabel="km", aspect="equal")
     fig.suptitle(f"scenario {args.seed}: rectangles coloured by plan time (label = minute), red = approach phase", fontsize=11)
     fig.tight_layout()
-    f = args.out/(f"task_mode_s{args.seed}_x{args.max_transit_s/60:.0f}" + ("_arrival" if args.peak_timing != "now" else "") + ("_fixed" if args.lane_mode == "fixed" else "") + ".png")
+    f = args.out/(f"task_mode_s{args.seed}_x{args.max_transit_s/60:.0f}" + ("_arrival" if args.peak_timing != "now" else "") + ("" if args.lane_mode in ("fill", "both") else "_" + args.lane_mode) + ".png")
     fig.savefig(f, dpi=110)
     print(f)
 

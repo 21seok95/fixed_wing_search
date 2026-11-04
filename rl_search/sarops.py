@@ -35,6 +35,10 @@ def neighbours(env, r: Rect, moves, scale: float, gamma: float, cycle_s: float, 
         out += [("rotate", replace(r, theta=r.theta + d*scale*d_theta)) for d in (-1, 1)]
     if "corner" in moves:
         out += [("corner", replace(r, corner=c)) for c in CORNERS if c != r.corner]
+    if "spacing" in moves and r.spacing is not None and r.k_max > 1:    # lane_mode "cover": passes k +- 1
+        cw = 2*env.lrc_R if getattr(env, "lrc", False) else env.fp_cross
+        k = int(round(cw/r.spacing))
+        out += [("spacing", replace(r, spacing=cw/kk)) for kk in (k - 1, k + 1) if 1 <= kk <= r.k_max]
     if "spacing" in moves and r.spacing is None:      # fixed spacing (lane_mode "fixed"): no spacing move
         for d in (-1, 1):
             q = replace(r, wid=r.wid*(1 + d*scale*d_spacing))
