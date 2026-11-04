@@ -91,12 +91,15 @@ def sweep_profile_lrc(env, n_int: int = 40, path=None):
 class Accordion:
     def __init__(self, env, variant="tavg_pca", cycle_s=600.0, cell=200.0, W=None, effort=0.85,
                  ell_min=None, gamma=None, dt_snap=60.0, start_smooth_m=0.0, n_starts=1, start_sep_m=1500.0,
-                 pod_model="exp", search_s=None, max_transit_s=300.0):
+                 pod_model="exp", search_s=None, max_transit_s=300.0, peak_timing="now"):
         self.env, self.variant, self.g = env, variant, cell
         # task mode (search_s set, 2026-11-04 I1/I3): every rectangle gets search_s of searching after its own
         # transit, rectangles farther than max_transit_s are not admissible, the score is POS per minute of
         # (transit + search); otherwise the fixed cycle: transit and search share cycle_s
         self.search_s, self.max_transit_s = search_s, max_transit_s
+        if peak_timing not in ("now", "arrival"):
+            raise ValueError(peak_timing)
+        self.peak_timing = peak_timing   # "arrival": start peaks from the distribution at each peak's own arrival
         self.T = search_s if search_s is not None else cycle_s
         if pod_model not in ("exp", "lanes"):
             raise ValueError(pod_model)
@@ -210,11 +213,34 @@ class Accordion:
         cl = find_clusters(self.env, self.env.t + self.T/2, k=1)
         return cl[0].theta if cl else 0.0
 
+    def peaks(self):
+        """Start peaks for the accordion. "now": peaks of the remaining distribution at t + T/2. "arrival" (task mode):
+        peaks at t + tau + T/2 for transit offsets tau = 0, 2, 4, ... min up to max_transit_s, each kept only where
+        its own straight-line transit is within 1 min of tau (so a far peak is taken where the targets will be when
+        the UAV gets there), then the heaviest n_starts at least start_sep_m apart."""
+        env, kw = self.env, dict(smooth=max(self.start_smooth_m, 250.0), sep=self.start_sep_m)
+        if self.peak_timing == "now" or self.search_s is None:
+            return find_clusters(env, env.t + self.T/2, k=self.n_starts, **kw)
+        x = env.plant.pose[:2]
+        cand = []
+        for tau in np.arange(0.0, self.max_transit_s + 1.0, 120.0):
+            for cl in find_clusters(env, env.t + tau + self.T/2, k=self.n_starts, **kw):
+                if abs(np.hypot(*(cl.peak - x))/env.v - tau) <= 60.0:
+                    cand.append(cl)
+        if not cand:
+            return find_clusters(env, env.t + self.T/2, k=self.n_starts, **kw)
+        out = []
+        for cl in sorted(cand, key=lambda c: -c.mass):
+            if all(np.hypot(*(cl.peak - o.peak)) >= self.start_sep_m for o in out):
+                out.append(cl)
+            if len(out) == self.n_starts:
+                break
+        return out
+
     def peak_rects(self) -> list[Rect] | None:
-        """One accordion search per density peak (find_clusters, each in a grid along its own main axis), best
+        """One accordion search per density peak (``peaks``, each in a grid along its own main axis), best
         approximate POS first; None if there is no peak."""
-        cls = find_clusters(self.env, self.env.t + self.T/2, k=self.n_starts, smooth=max(self.start_smooth_m, 250.0),
-                            sep=self.start_sep_m)
+        cls = self.peaks()
         if not cls:
             return None
         out = []
@@ -428,7 +454,8 @@ class AccordionPlanner:
         self.rects.append((env.t, r, np.array([r.cx, r.cy]) + pts @ _rot(r.theta).T))
         if self.search_s is not None:
             tr = transit_time(env, r)
-            self.tasks.append(dict(t0=env.t, transit=tr, t_cap=env.t + tr + self.search_s + self.extra_s, end=None, how=None))
+            self.tasks.append(dict(t0=env.t, transit=tr, t_cap=env.t + tr + self.search_s + self.extra_s, end=None, how=None,
+                                   lane_t=None))
         return True
 
     def __call__(self, env) -> float:
@@ -439,6 +466,8 @@ class AccordionPlanner:
             return 0.0 if self.follower is None else self.follower.action()
         # task mode
         cur = self.tasks[-1] if self.tasks and self.tasks[-1]["end"] is None else None
+        if cur is not None and cur["lane_t"] is None and self.follower.started:
+            cur["lane_t"] = env.t
         if cur is not None and (self.follower.laps >= 1 or env.t >= cur["t_cap"]):
             cur["end"], cur["how"] = env.t, ("done" if self.follower.laps >= 1 else "cap")
             self.follower, cur = None, None

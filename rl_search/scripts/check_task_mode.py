@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--max-transit-s", type=float, default=600.0)
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--plot", action="store_true")
+    ap.add_argument("--peak-timing", choices=("now", "arrival", "both"), default="now")
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/task_mode"))
     args = ap.parse_args()
     env = make_env(args.seed)
@@ -40,10 +41,12 @@ def main():
     task = dict(search_s=args.search_s, max_transit_s=args.max_transit_s)
     makers = {
         "accordion, 10-min cycle": lambda: AccordionPlanner(W=W, n_starts=3),
-        "accordion, task": lambda: AccordionPlanner(W=W, n_starts=3, **task),
         "SAROPS, 10-min cycle": lambda: SaropsPlanner(W=W, n_starts=3, big_jump=True),
-        "SAROPS, task": lambda: SaropsPlanner(W=W, n_starts=3, big_jump=True, **task),
     }
+    for pt in (("now", "arrival") if args.peak_timing == "both" else (args.peak_timing,)):
+        tag = "" if pt == "now" else ", peaks at arrival"
+        makers[f"accordion, task{tag}"] = lambda pt=pt: AccordionPlanner(W=W, n_starts=3, peak_timing=pt, **task)
+        makers[f"SAROPS, task{tag}"] = lambda pt=pt: SaropsPlanner(W=W, n_starts=3, big_jump=True, peak_timing=pt, **task)
     rows, flights = [], {}
     for name, make in makers.items():
         if args.only and not any(o in name for o in args.only):
@@ -71,10 +74,11 @@ def main():
                          jumps=jumps, sec=sec, pos15=np.interp(t[0] + 900, t, pos), pos30=np.interp(t[0] + 1800, t, pos)))
         flights[name] = (pol, np.array(log.xy), t, pos)
         if getattr(pol, "tasks", None):
-            print(f"\n{name}: tasks (plan min, transit est. min, length min, end)")
+            print(f"\n{name}: tasks (plan min, transit est. / actual min, length min, end)")
             for k in pol.tasks:
                 end = k["end"] if k["end"] is not None else t[-1]
-                print(f"  {k['t0']/60:5.1f}  {k['transit']/60:4.1f}  {(end - k['t0'])/60:5.1f}  {k['how'] or 'episode end'}")
+                act = f"{(k['lane_t'] - k['t0'])/60:4.1f}" if k.get("lane_t") is not None else "  - "
+                print(f"  {k['t0']/60:5.1f}  {k['transit']/60:4.1f} / {act}  {(end - k['t0'])/60:5.1f}  {k['how'] or 'episode end'}")
             if pol.approach:
                 print("  approach phases (min): " + ", ".join(f"{a/60:.1f}-{(b if b is not None else t[-1])/60:.1f}" for a, b in pol.approach))
     print(f"\nscenario {args.seed}, sweep width {W:.0f} m, search {args.search_s/60:.0f} min, max transit {args.max_transit_s/60:.0f} min\n")
@@ -111,7 +115,7 @@ def plot(flights, args, env):
         ax.set(title=f"{name}: POS {pos[-1]:.3f}", xlabel="km", ylabel="km", aspect="equal")
     fig.suptitle(f"scenario {args.seed}: rectangles coloured by plan time (label = minute), red = approach phase", fontsize=11)
     fig.tight_layout()
-    f = args.out/f"task_mode_s{args.seed}_x{args.max_transit_s/60:.0f}.png"
+    f = args.out/(f"task_mode_s{args.seed}_x{args.max_transit_s/60:.0f}" + ("_arrival" if args.peak_timing != "now" else "") + ".png")
     fig.savefig(f, dpi=110)
     print(f)
 
