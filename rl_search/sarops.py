@@ -52,13 +52,13 @@ def neighbours(env, r: Rect, moves, scale: float, gamma: float, cycle_s: float, 
 
 
 def refine(env, r0: Rect, moves=MOVES, gamma: float = 0.0, cycle_s=600.0, time_s: float | None = None,
-           task: dict | None = None):
+           task: dict | None = None, traffic=None, d_safe: float = 300.0):
     """Local search from ``r0``. Returns (best rectangle, its gain, log). ``time_s``: stop after this long.
     ``task``: task mode (gain = POS per minute of transit + lanes, see ``accordion.simulate``)."""
     t0 = time.perf_counter()
     ss = task["search_s"] if task else None
     cur = replace(r0, corner=lane_plan(env, r0, cycle_s, search_s=ss)[1])
-    gain0 = val = simulate(env, cur, cycle_s, task)
+    gain0 = val = simulate(env, cur, cycle_s, task, traffic, d_safe)
     evals, rounds, used, scale = 1, 0, Counter(), 1.0
     stop = False
     while not stop:
@@ -67,7 +67,7 @@ def refine(env, r0: Rect, moves=MOVES, gamma: float = 0.0, cycle_s=600.0, time_s
             if time_s is not None and time.perf_counter() - t0 > time_s:
                 stop = True
                 break
-            v = simulate(env, q, cycle_s, task)
+            v = simulate(env, q, cycle_s, task, traffic, d_safe)
             evals += 1
             if v > best_v + 1e-9:
                 best, best_v, kind = q, v, k
@@ -100,7 +100,8 @@ class SaropsPlanner(AccordionPlanner):
             rects = [] if r is None else [r]
         if not rects:
             return None
-        res = [refine(env, r, self.moves, acc.gamma, self.cycle_s, self.time_s, self.task) for r in rects]
+        res = [refine(env, r, self.moves, acc.gamma, self.cycle_s, self.time_s, self.task, self.traffic, self.d_safe)
+               for r in rects]
         picked = int(np.argmax([x[1] for x in res]))
         self.search_log.append(res[picked][2] | dict(evals=sum(x[2]["evals"] for x in res), sec=sum(x[2]["sec"] for x in res),
                                                      starts=len(res), picked=picked, gain_first=res[0][1]))

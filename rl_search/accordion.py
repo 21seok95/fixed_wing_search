@@ -439,7 +439,29 @@ def lanes(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None):
     return pts, FramedFollower(env, pts, np.array([r.cx, r.cy]), env.t, r.theta, np.zeros(2))
 
 
-def simulate(env, r: Rect, cycle_s=600.0, task: dict | None = None) -> float:
+def conflict_seconds(times, xy, traffic, d_safe) -> float:
+    """Seconds (5 s steps) at which the path (times, xy) is closer than ``d_safe`` to any traffic track (t, xy) at the
+    same time; a track counts only inside its own time span."""
+    if not traffic:
+        return 0.0
+    times, xy = np.asarray(times), np.asarray(xy)
+    bad = np.zeros(len(times), bool)
+    for tt, txy in traffic:
+        m = (times >= tt[0]) & (times <= tt[-1])
+        if not m.any():
+            continue
+        ox, oy = np.interp(times[m], tt, txy[:, 0]), np.interp(times[m], tt, txy[:, 1])
+        bad[m] |= np.hypot(xy[m, 0] - ox, xy[m, 1] - oy) < d_safe
+    return float(bad.sum()*5.0)
+
+
+def deconflicted(score: float, conflict_s: float) -> float:
+    """Planning-time separation: any conflict ranks a candidate below every conflict-free one; among conflicting
+    candidates, less conflict time first, then the score."""
+    return score if conflict_s <= 0 else score - 1.0 - 1e-3*conflict_s
+
+
+def simulate(env, r: Rect, cycle_s=600.0, task: dict | None = None, traffic=None, d_safe: float = 300.0) -> float:
     """Probability found by flying the rectangle's lanes for one cycle from the current state (state kept).
     ``task`` (dict search_s, max_transit_s, extra_s): fly until the lanes are done once (or transit + search_s +
     extra_s), detections on the way included, and return POS per minute of flight; 0 if the rectangle is
@@ -456,16 +478,21 @@ def simulate(env, r: Rect, cycle_s=600.0, task: dict | None = None) -> float:
     snap = env.snapshot()
     skip, env.skip_cells = env.skip_cells, True      # the cell grid only feeds the area term and the kernel sensor
     p0, t0 = env.pos_cum, env.t
+    times, xy = [], []
     while env.t < t_cap - 1e-6:
         _, _, term, _, _ = env.step([f.action()])
+        if traffic:
+            times.append(env.t)
+            xy.append(env.plant.pose[:2].copy())
         if term or (task is not None and f.laps >= 1):
             break
     gain, dt = env.pos_cum - p0, env.t - t0
     env.skip_cells = skip
     env.restore(snap)
-    if task is not None:
-        return gain/(max(dt, tr + task["search_s"])/60.0)    # a task that ends early is still charged the search time
-    return gain
+    score = gain/(max(dt, tr + task["search_s"])/60.0) if task is not None else gain   # early end charged search_s
+    if traffic:
+        score = deconflicted(score, conflict_seconds(times, xy, traffic, d_safe))
+    return score
 
 
 class AccordionPlanner:
@@ -484,6 +511,8 @@ class AccordionPlanner:
         self.follower, self.t_next, self.log = None, -np.inf, []
         self.rects = []      # (plan time, Rect, lanes in world coordinates) for plotting
         self.tasks = []      # task mode: dict per rectangle (plan time, transit estimate, end time, how it ended)
+        self.traffic = None  # multi-UAV: other UAVs' committed tracks [(t, xy)] while planning (set by multi.run_team)
+        self.d_safe = 300.0
         self.approach = []   # task mode: (start, end) of approach phases
 
     @property
@@ -493,7 +522,14 @@ class AccordionPlanner:
         return dict(search_s=self.search_s, max_transit_s=self.max_transit_s, extra_s=self.extra_s)
 
     def choose(self, env, acc) -> Rect | None:
-        return acc.plan()
+        if not self.traffic:
+            return acc.plan()
+        # planning-time separation: fly each peak's rectangle and keep the best conflict-free one
+        rects = acc.peak_rects() or []
+        if not rects:
+            return acc.plan()
+        vals = [simulate(env, r, self.cycle_s, self.task, self.traffic, self.d_safe) for r in rects]
+        return rects[int(np.argmax(vals))]
 
     def _plan(self, env) -> bool:
         acc = Accordion(env, self.variant, self.cycle_s, self.cell, self.W, search_s=self.search_s,

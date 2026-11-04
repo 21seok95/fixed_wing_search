@@ -59,16 +59,17 @@ def due(pol, env) -> bool:
     return env.t >= pol.t_next
 
 
-def future_factor(env, pol) -> np.ndarray:
+def future_factor(env, pol):
     """Survival factor per particle that the UAV's committed lanes still add (until the lanes are done or the task
-    cap / end of cycle); env and follower state restored. Ones if nothing is committed."""
+    cap / end of cycle), and the track (t, xy) flown meanwhile; env and follower state restored. (ones, None) if
+    nothing is committed."""
     f = pol.follower
     if f is None:
-        return np.ones(env.belief.n)
+        return np.ones(env.belief.n), None
     if pol.search_s is not None:
         cur = pol.tasks[-1] if pol.tasks and pol.tasks[-1]["end"] is None else None
         if cur is None:
-            return np.ones(env.belief.n)
+            return np.ones(env.belief.n), None
         t_end = cur["t_cap"]
     else:
         t_end = pol.t_next
@@ -76,22 +77,26 @@ def future_factor(env, pol) -> np.ndarray:
     s0 = env.surv.copy()
     skip, env.skip_cells = env.skip_cells, True
     laps0 = f.laps
+    ts, xs = [env.t], [env.plant.pose[:2].copy()]
     while env.t < t_end - 1e-6 and f.laps == laps0:
         _, _, term, _, _ = env.step([f.action()])
+        ts.append(env.t)
+        xs.append(env.plant.pose[:2].copy())
         if term:
             break
     out = np.where(s0 > 0, env.surv/np.maximum(s0, 1e-300), 1.0)
     env.skip_cells = skip
     env.restore(snap)
     f.s, f.started, f.laps = fs
-    return out
+    return out, (np.array(ts), np.array(xs))
 
 
-def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.0):
+def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.0, deconflict=False):
     """Fly N UAVs together. ``planners``: one per env; or None to replay ``actions`` (list per UAV). Returns dict(t,
     pos: shared POS over time (policy part, after the handover), actions, xy per UAV, times per UAV).
     ``log_plans``: list to append (t, uav, n_others_committed) per planning event. ``stagger_s``: UAV u starts its
-    mission u * stagger_s later (approximation: it waits after the common launch transit, rounded to 5 s steps)."""
+    mission u * stagger_s later (approximation: it waits after the common launch transit, rounded to 5 s steps).
+    ``deconflict``: planning-time separation, the planner gets the other UAVs' committed tracks (``pol.traffic``)."""
     n = len(envs)
     for e in envs:
         e.reset(options=options)
@@ -113,9 +118,11 @@ def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.
                 idling.append(u)
         todo = [u for u in range(n) if alive[u] and u not in idling]
         planning = [] if replay else [u for u in todo if due(planners[u], envs[u])]
-        fut = {}
+        fut, trk = {}, {}
         if planning:
-            fut = {v: future_factor(envs[v], planners[v]) for v in todo if v not in planning}
+            for v in todo:
+                if v not in planning:
+                    fut[v], trk[v] = future_factor(envs[v], planners[v])
         for u in todo:
             e = envs[u]
             if replay:
@@ -128,9 +135,12 @@ def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.
                 others = np.prod([f for v, f in fut.items() if v != u], axis=0) if fut else 1.0
                 own = e.belief.w.copy()
                 e.belief.w[:] = np.where(own > 0, S*others, 0.0)
+                if deconflict:
+                    planners[u].traffic = [x for v, x in trk.items() if v != u and x is not None]
                 a = float(planners[u](e))
+                planners[u].traffic = None
                 e.belief.w[:] = own
-                fut[u] = future_factor(e, planners[u])
+                fut[u], trk[u] = future_factor(e, planners[u])
                 if log_plans is not None:
                     log_plans.append((e.t, u, len([v for v in fut if v != u])))
             else:
@@ -149,23 +159,25 @@ def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.
                 tt=[np.array(x) for x in tt])
 
 
-def separation(res, d_safe=300.0):
+def separation(res, d_safe=300.0, early_s=900.0):
     """Closest horizontal distance between any two UAVs at the same time, and the time any pair spends closer than
     ``d_safe`` (common 5 s grid, from the last UAV's launch: before that the waiting UAVs sit at the handover point).
-    Returns (min distance m, seconds below d_safe, number of close encounters)."""
+    Returns (min distance m, seconds below d_safe, number of close encounters, seconds below d_safe in the first
+    ``early_s`` after the last launch)."""
     xy, tt = res["xy"], res["tt"]
     n = len(xy)
     if n < 2:
-        return np.inf, 0.0, 0
+        return np.inf, 0.0, 0, 0.0
     t0, t1 = max(t[1] - 5.0 if len(t) > 1 else t[0] for t in tt), min(t[-1] for t in tt)   # from the last launch
     grid = np.arange(t0, t1, 5.0)
     P = [np.stack([np.interp(grid, tt[u], xy[u][:, 0]), np.interp(grid, tt[u], xy[u][:, 1])], 1) for u in range(n)]
-    dmin, below, enc = np.inf, 0.0, 0
+    dmin, below, enc, early = np.inf, 0.0, 0, 0.0
     for a in range(n):
         for b in range(a + 1, n):
             d = np.hypot(*(P[a] - P[b]).T)
             dmin = min(dmin, d.min())
             close = d < d_safe
             below += close.sum()*5.0
+            early += close[grid < t0 + early_s].sum()*5.0
             enc += int(np.sum(np.diff(close.astype(int)) == 1) + close[0])
-    return dmin, below, enc
+    return dmin, below, enc, early
