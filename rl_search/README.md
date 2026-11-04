@@ -207,3 +207,12 @@ python -m rl_search.scripts.check_split                                # ideal e
 python -m rl_search.scripts.check_spread                               # spread mechanisms vs SAROPS
 python -m rl_search.scripts.compare_patterns_v2 --n-scen 8 --workers 6 # IAMSAR patterns re-planned per cycle
 ```
+
+## Multi-UAV comparison (docs/sarops_approach_todo.md, 2026-11-04)
+
+```bash
+python -m rl_search.scripts.check_multi --seed 301 --launch-gap-s 60 --deconflict --hard --n-starts 5 --plot  # one scenario
+python -m rl_search.scripts.compare_multi --n-scen 30 --n 1 2 3 4 5 --planner sarops --workers 10           # many, parallel
+```
+On macOS run it from a terminal with `caffeinate -i` in front so the machine does not sleep. Quick check that the
+environment matches: `--n-scen 2 --n 1 2 --planner accordion` gives held-out POS 0.461 / 0.567 for scenario 301.
