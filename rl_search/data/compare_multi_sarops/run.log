@@ -1,0 +1,196 @@
+(.venv) lee@leeui-MacBookPro fixed_wing_search % caffeinate -i python -m rl_search.scripts.compare_multi --n-scen 30 --planner sarops --workers 10
+seed 302 N=5: held-out 0.724, close 45 s, 139 s
+seed 304 N=5: held-out 0.672, close 155 s, 140 s
+seed 303 N=5: held-out 0.492, close 180 s, 144 s
+seed 305 N=5: held-out 0.715, close 135 s, 161 s
+seed 308 N=5: held-out 0.717, close 335 s, 168 s
+seed 309 N=5: held-out 0.637, close 195 s, 171 s
+seed 307 N=5: held-out 0.837, close 0 s, 173 s
+seed 300 N=5: held-out 0.432, close 140 s, 176 s
+seed 301 N=5: held-out 0.724, close 55 s, 180 s
+seed 306 N=5: held-out 0.764, close 0 s, 206 s
+seed 312 N=5: held-out 0.871, close 30 s, 132 s
+seed 311 N=5: held-out 0.614, close 220 s, 142 s
+seed 313 N=5: held-out 0.868, close 75 s, 133 s
+seed 314 N=5: held-out 0.588, close 195 s, 143 s
+seed 316 N=5: held-out 0.644, close 600 s, 140 s
+seed 310 N=5: held-out 0.990, close 95 s, 181 s
+seed 319 N=5: held-out 0.465, close 295 s, 142 s
+seed 315 N=5: held-out 0.474, close 55 s, 177 s
+seed 318 N=5: held-out 0.970, close 100 s, 171 s
+seed 317 N=5: held-out 0.763, close 75 s, 185 s
+seed 321 N=5: held-out 0.816, close 20 s, 150 s
+seed 325 N=5: held-out 0.383, close 1020 s, 119 s
+seed 329 N=5: held-out 0.122, close 1180 s, 79 s
+seed 320 N=5: held-out 0.514, close 520 s, 168 s
+seed 323 N=5: held-out 0.862, close 790 s, 149 s
+seed 322 N=5: held-out 0.699, close 30 s, 174 s
+seed 324 N=5: held-out 0.636, close 40 s, 177 s
+seed 327 N=5: held-out 0.709, close 625 s, 150 s
+seed 326 N=5: held-out 0.616, close 180 s, 177 s
+seed 328 N=5: held-out 0.965, close 0 s, 183 s
+seed 302 N=4: held-out 0.659, close 45 s, 118 s
+seed 300 N=4: held-out 0.377, close 95 s, 131 s
+seed 304 N=4: held-out 0.624, close 155 s, 104 s
+seed 303 N=4: held-out 0.467, close 170 s, 126 s
+seed 301 N=4: held-out 0.689, close 55 s, 136 s
+seed 305 N=4: held-out 0.661, close 130 s, 131 s
+seed 307 N=4: held-out 0.811, close 20 s, 117 s
+seed 306 N=4: held-out 0.737, close 0 s, 168 s
+seed 308 N=4: held-out 0.705, close 230 s, 141 s
+seed 309 N=4: held-out 0.588, close 115 s, 139 s
+seed 311 N=4: held-out 0.540, close 180 s, 122 s
+seed 313 N=4: held-out 0.839, close 75 s, 122 s
+seed 310 N=4: held-out 0.977, close 45 s, 136 s
+seed 314 N=4: held-out 0.550, close 150 s, 118 s
+seed 312 N=4: held-out 0.869, close 5 s, 132 s
+seed 316 N=4: held-out 0.610, close 455 s, 99 s
+seed 315 N=4: held-out 0.435, close 45 s, 148 s
+seed 319 N=4: held-out 0.406, close 110 s, 118 s
+seed 318 N=4: held-out 0.958, close 55 s, 134 s
+seed 325 N=4: held-out 0.372, close 790 s, 95 s
+seed 317 N=4: held-out 0.722, close 0 s, 155 s
+seed 320 N=4: held-out 0.460, close 255 s, 132 s
+seed 324 N=4: held-out 0.591, close 5 s, 125 s
+seed 323 N=4: held-out 0.833, close 660 s, 127 s
+seed 321 N=4: held-out 0.816, close 0 s, 134 s
+seed 322 N=4: held-out 0.676, close 15 s, 138 s
+seed 329 N=4: held-out 0.119, close 555 s, 64 s
+seed 302 N=3: held-out 0.608, close 0 s, 87 s
+seed 326 N=4: held-out 0.587, close 0 s, 165 s
+seed 303 N=3: held-out 0.417, close 170 s, 96 s
+seed 305 N=3: held-out 0.590, close 95 s, 90 s
+seed 304 N=3: held-out 0.583, close 50 s, 99 s
+seed 301 N=3: held-out 0.640, close 55 s, 109 s
+seed 327 N=4: held-out 0.680, close 0 s, 135 s
+seed 300 N=3: held-out 0.322, close 80 s, 117 s
+seed 328 N=4: held-out 0.949, close 0 s, 132 s
+seed 307 N=3: held-out 0.784, close 0 s, 98 s
+seed 308 N=3: held-out 0.662, close 130 s, 100 s
+seed 310 N=3: held-out 0.970, close 0 s, 93 s
+seed 306 N=3: held-out 0.697, close 0 s, 147 s
+seed 313 N=3: held-out 0.798, close 0 s, 94 s
+seed 311 N=3: held-out 0.487, close 90 s, 103 s
+seed 314 N=3: held-out 0.509, close 150 s, 100 s
+seed 312 N=3: held-out 0.858, close 10 s, 105 s
+seed 309 N=3: held-out 0.516, close 115 s, 122 s
+seed 315 N=3: held-out 0.380, close 45 s, 117 s
+seed 316 N=3: held-out 0.589, close 130 s, 94 s
+seed 319 N=3: held-out 0.362, close 0 s, 84 s
+seed 325 N=3: held-out 0.327, close 665 s, 66 s
+seed 318 N=3: held-out 0.905, close 140 s, 103 s
+seed 317 N=3: held-out 0.652, close 0 s, 117 s
+seed 320 N=3: held-out 0.421, close 115 s, 111 s
+seed 323 N=3: held-out 0.760, close 555 s, 106 s
+seed 324 N=3: held-out 0.563, close 0 s, 105 s
+seed 321 N=3: held-out 0.777, close 0 s, 125 s
+seed 322 N=3: held-out 0.624, close 15 s, 133 s
+seed 329 N=3: held-out 0.116, close 35 s, 53 s
+seed 302 N=2: held-out 0.477, close 0 s, 67 s
+seed 300 N=2: held-out 0.264, close 0 s, 81 s
+seed 301 N=2: held-out 0.573, close 0 s, 82 s
+seed 303 N=2: held-out 0.356, close 0 s, 72 s
+seed 326 N=3: held-out 0.522, close 0 s, 117 s
+seed 327 N=3: held-out 0.654, close 0 s, 113 s
+seed 328 N=3: held-out 0.914, close 0 s, 105 s
+seed 305 N=2: held-out 0.500, close 15 s, 67 s
+seed 304 N=2: held-out 0.497, close 0 s, 81 s
+seed 307 N=2: held-out 0.751, close 20 s, 70 s
+seed 306 N=2: held-out 0.588, close 0 s, 106 s
+seed 313 N=2: held-out 0.708, close 0 s, 63 s
+seed 310 N=2: held-out 0.938, close 0 s, 74 s
+seed 308 N=2: held-out 0.582, close 75 s, 81 s
+seed 311 N=2: held-out 0.403, close 0 s, 75 s
+seed 309 N=2: held-out 0.433, close 40 s, 83 s
+seed 314 N=2: held-out 0.445, close 130 s, 79 s
+seed 312 N=2: held-out 0.843, close 0 s, 94 s
+seed 315 N=2: held-out 0.311, close 15 s, 86 s
+seed 316 N=2: held-out 0.538, close 0 s, 70 s
+seed 319 N=2: held-out 0.313, close 0 s, 58 s
+seed 318 N=2: held-out 0.820, close 0 s, 76 s
+seed 317 N=2: held-out 0.561, close 0 s, 86 s
+seed 325 N=2: held-out 0.320, close 0 s, 53 s
+seed 320 N=2: held-out 0.331, close 0 s, 84 s
+seed 322 N=2: held-out 0.546, close 0 s, 85 s
+seed 323 N=2: held-out 0.661, close 460 s, 76 s
+seed 324 N=2: held-out 0.441, close 0 s, 73 s
+seed 321 N=2: held-out 0.701, close 0 s, 94 s
+seed 329 N=2: held-out 0.110, close 0 s, 43 s
+seed 300 N=1: held-out 0.183, close 0 s, 48 s
+seed 301 N=1: held-out 0.480, close 0 s, 54 s
+seed 302 N=1: held-out 0.297, close 0 s, 46 s
+seed 326 N=2: held-out 0.429, close 0 s, 88 s
+seed 303 N=1: held-out 0.231, close 0 s, 51 s
+seed 304 N=1: held-out 0.320, close 0 s, 52 s
+seed 305 N=1: held-out 0.289, close 0 s, 50 s
+seed 327 N=2: held-out 0.602, close 0 s, 95 s
+seed 328 N=2: held-out 0.863, close 0 s, 83 s
+seed 307 N=1: held-out 0.642, close 0 s, 46 s
+seed 306 N=1: held-out 0.427, close 0 s, 66 s
+seed 310 N=1: held-out 0.793, close 0 s, 44 s
+seed 308 N=1: held-out 0.455, close 0 s, 52 s
+seed 309 N=1: held-out 0.283, close 0 s, 54 s
+seed 311 N=1: held-out 0.272, close 0 s, 48 s
+seed 313 N=1: held-out 0.581, close 0 s, 50 s
+seed 315 N=1: held-out 0.185, close 0 s, 46 s
+seed 314 N=1: held-out 0.311, close 0 s, 48 s
+seed 312 N=1: held-out 0.735, close 0 s, 57 s
+seed 316 N=1: held-out 0.432, close 0 s, 46 s
+seed 317 N=1: held-out 0.391, close 0 s, 49 s
+seed 319 N=1: held-out 0.204, close 0 s, 42 s
+seed 318 N=1: held-out 0.722, close 0 s, 50 s
+seed 325 N=1: held-out 0.300, close 0 s, 36 s
+seed 323 N=1: held-out 0.505, close 0 s, 43 s
+seed 320 N=1: held-out 0.225, close 0 s, 58 s
+seed 322 N=1: held-out 0.390, close 0 s, 54 s
+seed 324 N=1: held-out 0.353, close 0 s, 52 s
+seed 321 N=1: held-out 0.572, close 0 s, 60 s
+seed 329 N=1: held-out 0.101, close 0 s, 32 s
+seed 326 N=1: held-out 0.270, close 0 s, 54 s
+seed 328 N=1: held-out 0.690, close 0 s, 50 s
+seed 327 N=1: held-out 0.429, close 0 s, 51 s
+done in 26.2 min with 10 workers
+Planner sarops, task mode (search 10 min, transit <= 10 min, coverage k = 1-3), launch 60 s apart, separation 300 m as a constraint. New sensor + CPA/LRC. 30 scenarios (300-329). Held-out POS = same flights on particles the planner never saw = detection probability of a target drawn from the model.
+
+| UAVs | held-out POS mean ± sd | median | 10th pct | min | vs 1 UAV (paired mean) | POS at 15 / 30 / 45 min | time any pair < 300 m (s, mean / max) | closest pair (min) | plans without a feasible option | s/episode |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0.402 ± 0.180 | 0.372 | 0.202 | 0.101 | - | 0.163 / 0.289 / 0.366 | 0 / 0 | nan | 0 | 50 |
+| 2 | 0.530 ± 0.193 | 0.519 | 0.313 | 0.110 | 1.32x | 0.232 / 0.404 / 0.489 | 25 / 460 | 12 | 7 | 77 |
+| 3 | 0.600 ± 0.195 | 0.599 | 0.359 | 0.116 | 1.49x | 0.273 / 0.465 / 0.558 | 88 / 665 | 0 | 23 | 104 |
+| 4 | 0.644 ± 0.194 | 0.660 | 0.403 | 0.119 | 1.60x | 0.302 / 0.506 / 0.601 | 147 / 790 | 0 | 44 | 128 |
+| 5 | 0.676 ± 0.188 | 0.704 | 0.462 | 0.122 | 1.68x | 0.313 / 0.531 / 0.633 | 246 / 1180 | 0 | 69 | 158 |
+
+## Per scenario, held-out POS
+
+| seed | 1 UAV | 2 UAV | 3 UAV | 4 UAV | 5 UAV |
+|---|---|---|---|---|---|
+| 300 | 0.183 | 0.264 | 0.322 | 0.377 | 0.432 |
+| 301 | 0.480 | 0.573 | 0.640 | 0.689 | 0.724 |
+| 302 | 0.297 | 0.477 | 0.608 | 0.659 | 0.724 |
+| 303 | 0.231 | 0.356 | 0.417 | 0.467 | 0.492 |
+| 304 | 0.320 | 0.497 | 0.583 | 0.624 | 0.672 |
+| 305 | 0.289 | 0.500 | 0.590 | 0.661 | 0.715 |
+| 306 | 0.427 | 0.588 | 0.697 | 0.737 | 0.764 |
+| 307 | 0.642 | 0.751 | 0.784 | 0.811 | 0.837 |
+| 308 | 0.455 | 0.582 | 0.662 | 0.705 | 0.717 |
+| 309 | 0.283 | 0.433 | 0.516 | 0.588 | 0.637 |
+| 310 | 0.793 | 0.938 | 0.970 | 0.977 | 0.990 |
+| 311 | 0.272 | 0.403 | 0.487 | 0.540 | 0.614 |
+| 312 | 0.735 | 0.843 | 0.858 | 0.869 | 0.871 |
+| 313 | 0.581 | 0.708 | 0.798 | 0.839 | 0.868 |
+| 314 | 0.311 | 0.445 | 0.509 | 0.550 | 0.588 |
+| 315 | 0.185 | 0.311 | 0.380 | 0.435 | 0.474 |
+| 316 | 0.432 | 0.538 | 0.589 | 0.610 | 0.644 |
+| 317 | 0.391 | 0.561 | 0.652 | 0.722 | 0.763 |
+| 318 | 0.722 | 0.820 | 0.905 | 0.958 | 0.970 |
+| 319 | 0.204 | 0.313 | 0.362 | 0.406 | 0.465 |
+| 320 | 0.225 | 0.331 | 0.421 | 0.460 | 0.514 |
+| 321 | 0.572 | 0.701 | 0.777 | 0.816 | 0.816 |
+| 322 | 0.390 | 0.546 | 0.624 | 0.676 | 0.699 |
+| 323 | 0.505 | 0.661 | 0.760 | 0.833 | 0.862 |
+| 324 | 0.353 | 0.441 | 0.563 | 0.591 | 0.636 |
+| 325 | 0.300 | 0.320 | 0.327 | 0.372 | 0.383 |
+| 326 | 0.270 | 0.429 | 0.522 | 0.587 | 0.616 |
+| 327 | 0.429 | 0.602 | 0.654 | 0.680 | 0.709 |
+| 328 | 0.690 | 0.863 | 0.914 | 0.949 | 0.965 |
+| 329 | 0.101 | 0.110 | 0.116 | 0.119 | 0.122 |
