@@ -100,6 +100,8 @@ class SaropsPlanner(AccordionPlanner):
             rects = [] if r is None else [r]
         if not rects:
             return None
+        if self.traffic and self.hard_sep:
+            rects = [q for q, _ in self.feasible_starts(env, rects)]   # each start with the hold that makes it feasible
         res = [refine(env, r, self.moves, acc.gamma, self.cycle_s, self.time_s, self.task, self.traffic, self.d_safe)
                for r in rects]
         picked = int(np.argmax([x[1] for x in res]))

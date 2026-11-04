@@ -17,7 +17,7 @@ n*ell, so POD = 1 - exp(-W n ell / A). Constraints: ell >= ell_min, track spacin
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -28,6 +28,8 @@ from rl_search.patterns_v2 import FramedFollower, find_clusters
 VARIANTS = ("snap0", "mid", "tavg", "tavg_pca")
 TASK_EFFORT = 0.92    # task mode: polyline budget / (v * search_s); flown length is 3-10 % over the polyline
 TASK_FLOWN = 1.06     # task mode: flown length / polyline length (measured 1.03-1.11, pursuit around the corners)
+HOLD_ACTION = 1.0     # multi-UAV hold: full right turn every decision (a circle of the turn radius)
+SEP_HOLDS = (0.0, 60.0, 120.0, 180.0, 300.0)   # holds tried when every candidate breaks the separation constraint
 TASK_FILL = 0.8       # task mode: the lanes must use at least this share of the budget (SAROPS: the pattern fills the
                       # available path length), else the rectangle is too small for the search time
 
@@ -43,6 +45,7 @@ class Rect:
     corner: tuple | None = None    # start corner (sx, sy) of the lanes; None: the corner nearest the UAV
     spacing: float | None = None   # fixed track spacing (lane_mode "fixed"/"cover"): lanes = round(wid / spacing)
     k_max: int = 1                 # lane_mode "cover": most passes over each point the local search may choose
+    hold_s: float = 0.0            # multi-UAV separation: circle in place this long before heading to the lanes
 
 
 def sweep_width(env, n_int: int = 40) -> float:
@@ -479,8 +482,11 @@ def simulate(env, r: Rect, cycle_s=600.0, task: dict | None = None, traffic=None
     skip, env.skip_cells = env.skip_cells, True      # the cell grid only feeds the area term and the kernel sensor
     p0, t0 = env.pos_cum, env.t
     times, xy = [], []
+    t_hold = env.t + r.hold_s
+    t_cap += r.hold_s
     while env.t < t_cap - 1e-6:
-        _, _, term, _, _ = env.step([f.action()])
+        a = HOLD_ACTION if env.t < t_hold - 1e-6 else f.action()
+        _, _, term, _, _ = env.step([a])
         if traffic:
             times.append(env.t)
             xy.append(env.plant.pose[:2].copy())
@@ -489,7 +495,7 @@ def simulate(env, r: Rect, cycle_s=600.0, task: dict | None = None, traffic=None
     gain, dt = env.pos_cum - p0, env.t - t0
     env.skip_cells = skip
     env.restore(snap)
-    score = gain/(max(dt, tr + task["search_s"])/60.0) if task is not None else gain   # early end charged search_s
+    score = gain/(max(dt, r.hold_s + tr + task["search_s"])/60.0) if task is not None else gain   # early end charged
     if traffic:
         score = deconflicted(score, conflict_seconds(times, xy, traffic, d_safe))
     return score
@@ -513,6 +519,9 @@ class AccordionPlanner:
         self.tasks = []      # task mode: dict per rectangle (plan time, transit estimate, end time, how it ended)
         self.traffic = None  # multi-UAV: other UAVs' committed tracks [(t, xy)] while planning (set by multi.run_team)
         self.d_safe = 300.0
+        self.hard_sep = False  # separation as a constraint: candidates breaking it are dropped (holds tried)
+        self.hold_until = -np.inf
+        self.violations = 0    # plans for which no candidate met the separation constraint
         self.approach = []   # task mode: (start, end) of approach phases
 
     @property
@@ -521,13 +530,35 @@ class AccordionPlanner:
             return None
         return dict(search_s=self.search_s, max_transit_s=self.max_transit_s, extra_s=self.extra_s)
 
+    def feasible_starts(self, env, rects):
+        """Hard separation: for each rectangle the shortest hold (SEP_HOLDS) whose flight keeps d_safe from the
+        traffic; returns [(rect with hold, score)] of the feasible ones, or the least-conflicting one (flagged as a
+        violation) if none is feasible."""
+        out, best_bad = [], None
+        for r in rects:
+            for h in SEP_HOLDS:
+                q = replace(r, hold_s=h)
+                v = simulate(env, q, self.cycle_s, self.task, self.traffic, self.d_safe)
+                if v > -0.5:
+                    out.append((q, v))
+                    break
+                if best_bad is None or v > best_bad[1]:
+                    best_bad = (q, v)
+        if not out and best_bad is not None:
+            self.violations += 1
+            out = [best_bad]
+        return out
+
     def choose(self, env, acc) -> Rect | None:
         if not self.traffic:
             return acc.plan()
-        # planning-time separation: fly each peak's rectangle and keep the best conflict-free one
         rects = acc.peak_rects() or []
         if not rects:
             return acc.plan()
+        if self.hard_sep:
+            cands = self.feasible_starts(env, rects)
+            return max(cands, key=lambda x: x[1])[0]
+        # soft planning-time separation: fly each peak's rectangle and keep the best conflict-free one
         vals = [simulate(env, r, self.cycle_s, self.task, self.traffic, self.d_safe) for r in rects]
         return rects[int(np.argmax(vals))]
 
@@ -540,13 +571,14 @@ class AccordionPlanner:
         if r is None:
             return False
         pts, self.follower = lanes(env, r, self.cycle_s, search_s=self.search_s)
+        self.hold_until = env.t + r.hold_s
         self.log.append(dict(t_min=round(env.t/60, 1), ell=r.ell, wid=r.wid,
                              theta_deg=round(np.rad2deg(r.theta)), approx=round(r.approx, 4)))
         self.rects.append((env.t, r, np.array([r.cx, r.cy]) + pts @ _rot(r.theta).T))
         if self.search_s is not None:
             tr = start_transit(env, r, self.cycle_s, self.search_s)
-            self.tasks.append(dict(t0=env.t, transit=tr, t_cap=env.t + tr + self.search_s + self.extra_s, end=None, how=None,
-                                   lane_t=None))
+            self.tasks.append(dict(t0=env.t, transit=tr, t_cap=env.t + r.hold_s + tr + self.search_s + self.extra_s,
+                                   end=None, how=None, lane_t=None, hold=r.hold_s))
         return True
 
     def __call__(self, env) -> float:
@@ -574,4 +606,6 @@ class AccordionPlanner:
         if self.follower is None:
             from rl_search.patterns import lead_action
             return lead_action(env)
+        if env.t < self.hold_until - 1e-6:
+            return HOLD_ACTION
         return self.follower.action()

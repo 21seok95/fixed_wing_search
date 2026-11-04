@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from rl_search.accordion import HOLD_ACTION
 from rl_search.rl_env import RLSearchEnv
 
 
@@ -78,8 +79,10 @@ def future_factor(env, pol):
     skip, env.skip_cells = env.skip_cells, True
     laps0 = f.laps
     ts, xs = [env.t], [env.plant.pose[:2].copy()]
+    hold_until = getattr(pol, "hold_until", -np.inf)
     while env.t < t_end - 1e-6 and f.laps == laps0:
-        _, _, term, _, _ = env.step([f.action()])
+        a = HOLD_ACTION if env.t < hold_until - 1e-6 else f.action()
+        _, _, term, _, _ = env.step([a])
         ts.append(env.t)
         xs.append(env.plant.pose[:2].copy())
         if term:
@@ -89,6 +92,124 @@ def future_factor(env, pol):
     env.restore(snap)
     f.s, f.started, f.laps = fs
     return out, (np.array(ts), np.array(xs))
+
+
+def approach_track(env, horizon_s=300.0):
+    """Predicted track of a UAV with no committed lanes: lead pursuit of the remaining mass (state restored)."""
+    from rl_search.patterns import lead_action
+    snap = env.snapshot()
+    skip, env.skip_cells = env.skip_cells, True
+    ts, xs = [env.t], [env.plant.pose[:2].copy()]
+    t_end = env.t + horizon_s
+    while env.t < t_end - 1e-6:
+        _, _, term, _, _ = env.step([lead_action(env)])
+        ts.append(env.t)
+        xs.append(env.plant.pose[:2].copy())
+        if term:
+            break
+    env.skip_cells = skip
+    env.restore(snap)
+    return np.array(ts), np.array(xs)
+
+
+def run_team_launch(envs, planners, options, launch_gap_s=60.0, actions=None, log_plans=None, deconflict=False,
+                    hard=False):
+    """Fly N UAVs launched ``launch_gap_s`` apart from the common launch point (each env flies its own pre-handover
+    transit from its launch time, ``t_launch_s``), stepping each env when it is the furthest behind in time.
+    ``deconflict``: the planner gets the traffic: the other UAVs' committed lanes (until their tasks end), their
+    predicted approach (lead pursuit, 5 min) when nothing is committed, and their launch transits. ``hard``:
+    separation as a constraint (holds tried, ``pol.violations`` counts plans with no feasible candidate)."""
+    n = len(envs)
+    for u, e in enumerate(envs):
+        e.reset(options=dict(options, t_launch_s=u*launch_gap_s))
+    if planners is not None:
+        for p in planners:
+            p.hard_sep = hard
+    s0 = [e.surv.copy() for e in envs]
+    replay = actions is not None
+    acts = actions if replay else [[] for _ in range(n)]
+    it = [iter(a) for a in acts] if replay else None
+    alive = [True]*n
+    xy = [[np.array(p[1:]) for p in e.launch_track] for e in envs]
+    tt = [[p[0] for p in e.launch_track] for e in envs]
+    launch = [np.array([p[0] for p in e.launch_track]) for e in envs]
+    launch_xy = [np.array([p[1:] for p in e.launch_track]) for e in envs]
+    t_log, pos_log = [], []
+    while any(alive):
+        T = min(envs[u].t for u in range(n) if alive[u])
+        todo = [u for u in range(n) if alive[u] and envs[u].t <= T + 1e-6]
+        planning = [] if replay else [u for u in todo if due(planners[u], envs[u])]
+        fut, trk = {}, {}
+        if planning:
+            for v in range(n):
+                if not alive[v] or v in planning:
+                    continue
+                if envs[v].t <= T + 1e-6:
+                    fut[v], trk[v] = future_factor(envs[v], planners[v])
+                    if trk[v] is None and deconflict:
+                        trk[v] = approach_track(envs[v])
+        for u in todo:
+            e = envs[u]
+            if replay:
+                a = next(it[u], None)
+                if a is None:
+                    alive[u] = False
+                    continue
+            elif u in planning:
+                S = np.prod([x.surv for x in envs], axis=0)
+                others = np.prod([f for v, f in fut.items() if v != u], axis=0) if fut else 1.0
+                own = e.belief.w.copy()
+                e.belief.w[:] = np.where(own > 0, S*others, 0.0)
+                if deconflict:
+                    traffic = [x for v, x in trk.items() if v != u and x is not None]
+                    traffic += [(launch[v], launch_xy[v]) for v in range(n) if v != u and launch[v][-1] > e.t]
+                    planners[u].traffic = traffic
+                a = float(planners[u](e))
+                planners[u].traffic = None
+                e.belief.w[:] = own
+                fut[u], trk[u] = future_factor(e, planners[u])
+                if log_plans is not None:
+                    log_plans.append((e.t, u))
+            else:
+                a = float(planners[u](e))
+            if not replay:
+                acts[u].append(a)
+            _, _, term, _, _ = e.step([a])
+            xy[u].append(e.plant.pose[:2].copy())
+            tt[u].append(e.t)
+            if term:
+                alive[u] = False
+        S = np.prod([x.surv/s for x, s in zip(envs, s0)], axis=0)
+        t_log.append(T + 5.0)
+        pos_log.append(float((1 - S).sum()/envs[0].belief.n))
+    return dict(t=np.array(t_log), pos=np.array(pos_log), actions=acts, xy=[np.array(x) for x in xy],
+                tt=[np.array(x) for x in tt])
+
+
+def separation_pairs(res, d_safe=300.0, early_s=900.0):
+    """Like ``separation`` but each pair over the time both are airborne (from the later launch, launch transits
+    included). Returns (min distance, seconds below d_safe, encounters, seconds below d_safe within early_s of
+    the later launch)."""
+    xy, tt = res["xy"], res["tt"]
+    n = len(xy)
+    if n < 2:
+        return np.inf, 0.0, 0, 0.0
+    dmin, below, enc, early = np.inf, 0.0, 0, 0.0
+    for a in range(n):
+        for b in range(a + 1, n):
+            t0, t1 = max(tt[a][0], tt[b][0]), min(tt[a][-1], tt[b][-1])
+            if t1 <= t0:
+                continue
+            g = np.arange(t0, t1, 5.0)
+            pa = np.stack([np.interp(g, tt[a], xy[a][:, 0]), np.interp(g, tt[a], xy[a][:, 1])], 1)
+            pb = np.stack([np.interp(g, tt[b], xy[b][:, 0]), np.interp(g, tt[b], xy[b][:, 1])], 1)
+            d = np.hypot(*(pa - pb).T)
+            dmin = min(dmin, d.min())
+            close = d < d_safe
+            below += close.sum()*5.0
+            early += close[g < t0 + early_s].sum()*5.0
+            enc += int(np.sum(np.diff(close.astype(int)) == 1) + close[0])
+    return dmin, below, enc, early
 
 
 def run_team(envs, planners, options, actions=None, log_plans=None, stagger_s=0.0, deconflict=False):

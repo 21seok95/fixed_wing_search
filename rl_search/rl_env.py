@@ -146,15 +146,19 @@ class RLSearchEnv:
             self.belief.update_exits(self.t)
             self._observe_now()
         else:
-            self.t = 0.0
+            t_launch = float(options.get("t_launch_s", 0.0))    # multi-UAV: staggered launch (default 0)
+            self.t = t_launch
             self.plant.reset((*scen.start, np.deg2rad(scen.start_heading_deg)))
             self.energy = self.power.budget
+            self.belief.update_exits(self.t)
             self._observe_now()
             t_plan = self.preset.handover.t_plan_s
-            while self.t < t_plan - 1e-9:
+            self.launch_track = [(self.t, *self.plant.pose[:2])]
+            while self.t < t_launch + t_plan - 1e-9:
                 bearing = np.arctan2(scen.lkp[1] - self.plant.pose[1], scen.lkp[0] - self.plant.pose[0])
                 self.chi_tgt = self.plant.pose[2] + wrap(bearing - self.plant.pose[2])
                 out = self._interval()
+                self.launch_track.append((self.t, *self.plant.pose[:2]))
                 if out["terminated"]:
                     break
         self.chi_tgt = float(self.plant.pose[2])
