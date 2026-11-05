@@ -172,9 +172,82 @@ def summarize(res, x) -> str:
     return "\n".join(L)
 
 
+def sweep_key(r) -> tuple:
+    return (r["seed"], r["config"], r["n"]) + ((float(r["x"]), float(r["w"])) if r["config"] == "score" else ())
+
+
+def summarize_sweep(res) -> str:
+    """Per UAV count: the baseline and every (x, w) against it, paired by scenario. A is scored at the run's own x."""
+    seeds = sorted({r["seed"] for r in res})
+    by = {sweep_key(r): r for r in res}
+    combos = sorted({k[3:] for k in by if len(k) == 5})
+    L = [f"Open-ground centre scenarios {seeds[0]}-{seeds[-1]}, SAROPS, no separation constraint, total score A + w POS. "
+         "All values on held-out particles; A at the run's own x; differences are paired against POS only.", ""]
+    se = lambda d: d.std(ddof=1)/np.sqrt(len(d)) if len(d) > 1 else 0.0
+    for n in sorted({r["n"] for r in res}):
+        base = [by.get((s, "pos", n)) for s in seeds]
+        if not all(base):
+            continue
+        L += [f"## {n} UAV" + ("s" if n > 1 else ""), "",
+              "| x | w | POS | POS diff (se, higher in) | A | A diff (se, higher in) | c at 60 min | c at 60 min, baseline | inside at 45-60 min | baseline | pair < 300 m (s) | baseline | s/episode | runs |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for x, w in combos:
+            g = [by.get((s, "score", n, x, w)) for s in seeds]
+            k = [i for i, r in enumerate(g) if r]
+            if not k:
+                continue
+            sx = str(int(x))
+            run, ref = [g[i] for i in k], [base[i] for i in k]
+            dp = np.array([a["pos"] - b["pos"] for a, b in zip(run, ref)])
+            da = np.array([a["scores"][sx]["A"] - b["scores"][sx]["A"] for a, b in zip(run, ref)])
+            L.append(f"| {x:.0f} | {w:g} | {np.mean([r['pos'] for r in run]):.3f} | {dp.mean():+.3f} ({se(dp):.3f}, {int((dp > 0).sum())}/{len(k)}) | "
+                     f"{np.mean([r['scores'][sx]['A'] for r in run]):.3f} | {da.mean():+.3f} ({se(da):.3f}, {int((da > 0).sum())}/{len(k)}) | "
+                     f"{np.mean([r['scores'][sx]['c'][-1] for r in run]):.3f} | {np.mean([r['scores'][sx]['c'][-1] for r in ref]):.3f} | "
+                     f"{np.mean([r['scores'][sx]['inside']['45'] for r in run]):.0%} | {np.mean([r['scores'][sx]['inside']['45'] for r in ref]):.0%} | "
+                     f"{np.mean([r['below'] for r in run]):.0f} | {np.mean([r['below'] for r in ref]):.0f} | {np.mean([r['sec'] for r in run]):.0f} | {len(k)} |")
+        L += ["", f"Baseline POS only: POS {np.mean([r['pos'] for r in base]):.3f}, s/episode {np.mean([r['sec'] for r in base]):.0f}.", ""]
+    return "\n".join(L)
+
+
+def run_sweep(args):
+    """Grid of x and w. Baselines first, then w = 1, 0.5, 2 so partial results are useful. Runs from the first check are
+    reused. Actions are not kept, to keep the file small (paths stay, for figures and rescoring)."""
+    out = args.output if args.output != OUT else Path("rl_search/data/center_open/sweep")
+    out.mkdir(parents=True, exist_ok=True)
+    path = out/"results.jsonl"
+    if not path.exists() and (OUT/"results.jsonl").exists():
+        with open(path, "w") as f:
+            for line in (OUT/"results.jsonl").read_text().splitlines():
+                r = json.loads(line)
+                if r["config"] in ("pos", "score"):
+                    r.pop("actions", None)
+                    f.write(json.dumps(r) + "\n")
+    done = {sweep_key(json.loads(line)) for line in path.read_text().splitlines()} if path.exists() else set()
+    seeds = range(args.seed0, args.seed0 + args.n_scen)
+    jobs = [(s, "pos", n, 70.0, 1.0) for n in args.n for s in seeds]
+    jobs += [(s, "score", n, float(x), float(w)) for w in args.ws for x in args.xs for n in args.n for s in seeds]
+    key = lambda j: (j[0], j[1], j[2]) + ((j[3], j[4]) if j[1] == "score" else ())
+    jobs = [j for j in jobs if key(j) not in done]
+    print(f"{len(jobs)} jobs, {args.workers} workers", flush=True)
+    t0 = time.perf_counter()
+    with Pool(args.workers) as pool:
+        for r in pool.imap_unordered(run_job, jobs, chunksize=1):
+            r.pop("actions", None)
+            with open(path, "a") as f:
+                f.write(json.dumps(r) + "\n")
+    print(f"done in {(time.perf_counter() - t0)/60:.1f} min", flush=True)
+    res = [json.loads(line) for line in path.read_text().splitlines()]
+    txt = summarize_sweep(res)
+    (out/"table.md").write_text(txt + "\n")
+    print(txt)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--sweep", action="store_true", help="grid of --xs and --ws for every --n")
+    ap.add_argument("--xs", type=float, nargs="+", default=[70.0, 50.0, 85.0])
+    ap.add_argument("--ws", type=float, nargs="+", default=[1.0, 0.5, 2.0])
     ap.add_argument("--smoke", action="store_true", help="one scenario, one UAV, all configurations")
     ap.add_argument("--n", type=int, nargs="+", default=[3])
     ap.add_argument("--x", type=float, default=70.0)
@@ -186,6 +259,9 @@ def main():
     args = ap.parse_args()
     if args.check:
         check()
+        return
+    if args.sweep:
+        run_sweep(args)
         return
     args.output.mkdir(parents=True, exist_ok=True)
     if args.smoke:

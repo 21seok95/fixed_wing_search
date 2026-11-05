@@ -202,6 +202,30 @@ def plot(res, out):
     fig.savefig(out/"scenarios.png", dpi=95)
     plt.close(fig)
 
+    old_c, open_c = muted, "#2a78d6"
+    mean = lambda kind, f: np.mean([f(r) for r in res[kind]], axis=0)
+    fig, axs = plt.subplots(1, 4, figsize=(15.5, 4.6), constrained_layout=True)
+    tm = (10, 20, 30, 40, 50, 60)
+    panels = ((axs[0], "85% region area", "km²", lambda r: [r["area"][85][t] for t in tm], tm, 75, "Minutes after the LKP report"),
+              (axs[1], "Particles that have come near no-go terrain", "Share of particles", lambda r: [r["near_by"][t] for t in (5, 10, 20, 30, 60)], (5, 10, 20, 30, 60), 1, "Minutes after the LKP report"),
+              (axs[2], "Mean distance from the LKP", "km", lambda r: [r[f"dist{t}"] for t in (15, 30, 60)], (15, 30, 60), 11, "Minutes after the LKP report"),
+              (axs[3], "30-min region still inside the 60-min region", "Share of the 30-min region", lambda r: [r["kept_30"][x] for x in XS], XS, 1, "Region x%"))
+    for ax, title, yl, f, xs, top, xl in panels:
+        for kind, c in (("old", old_c), ("open", open_c)):
+            ax.plot(xs, mean(kind, f), color=c, lw=1.8, marker="o", ms=5.5, mec=surface)
+        ax.set(ylim=(0, top), xticks=xs, xlabel=xl, ylabel=yl)
+        ax.set_title(title)
+        ax.grid(axis="y", color="#e1e0d9", lw=.8)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(length=0)
+    fig.legend(handles=[Line2D([], [], color=old_c, lw=1.8, marker="o", ms=6, mec=surface, label="Old centre scenarios 400-409"),
+                        Line2D([], [], color=open_c, lw=1.8, marker="o", ms=6, mec=surface, label=f"Open-ground scenarios {g[0]['seed']}-{g[-1]['seed']}")],
+               loc="outside lower center", ncol=2)
+    fig.suptitle("The open-ground scenarios meet terrain later, and the region moves instead of only growing", x=.01, ha="left", fontsize=12)
+    fig.savefig(out/"check.png", dpi=115)
+    plt.close(fig)
+
 
 def main():
     ap = argparse.ArgumentParser()
