@@ -14,3 +14,6 @@ source envs/activate_train.sh   # or activate_gz.sh
 
 단일 무인기 강화학습 설계·구현 진행 상황은
 **[RL TODO 체크리스트](docs/single_uav_rl_todo.md)**에서 관리합니다.
+
+최신 진행 상황과 다음 단계는
+**[SAROPS 검토 문서의 2026-11-05 인계](docs/sarops_approach_todo.md)**에서 시작하세요.
