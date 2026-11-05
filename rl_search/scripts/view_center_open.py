@@ -172,7 +172,8 @@ def main():
     ap.add_argument("--snapshot", type=Path, default=None, help="save a PNG and exit")
     ap.add_argument("--check", action="store_true", help="drive every control without a window")
     args = ap.parse_args()
-    run_dir = export(args.seed, args.n, args.x, args.w, args.source)
+    out = OUT if args.source == SWEEP else OUT.parent/f"view_{args.source.name}"     # runs with other settings stay apart
+    run_dir = export(args.seed, args.n, args.x, args.w, args.source, out)
     run = load_run(run_dir)
     missions = find_missions(run_dir)
     names = [p.parent.name.removeprefix("search_") for p in missions]

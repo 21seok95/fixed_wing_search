@@ -17,9 +17,10 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, maximum_filter
 
 from rl_search import multi
+from rl_search.accordion import Rect
 from rl_search.multi import TrackedEnv
 from rl_search.patterns_v2 import Cluster
-from rl_search.sarops import SaropsPlanner
+from rl_search.sarops import SaropsPlanner, refine
 
 WINDOW_S = 300.0
 N_WINDOWS = 12
@@ -241,6 +242,94 @@ class AreaSaropsPlanner(SaropsPlanner):
         finally:
             a.planning = False
             a.rollback(cp)
+
+
+def rects_conflict(a, b, margin: float = 0.0) -> bool:
+    """Separating axis test of two rectangles, ``b`` grown by ``margin`` on every side."""
+    d = np.array([b.cx - a.cx, b.cy - a.cy])
+    ca, sa, cb, sb = np.cos(a.theta), np.sin(a.theta), np.cos(b.theta), np.sin(b.theta)
+    ua, va, ub, vb = np.array([ca, sa]), np.array([-sa, ca]), np.array([cb, sb]), np.array([-sb, cb])
+    ax, ay, bx, by = a.ell/2, a.wid/2, b.ell/2 + margin, b.wid/2 + margin
+    for n in (ua, va, ub, vb):
+        ra = ax*abs(ua @ n) + ay*abs(va @ n)
+        rb = bx*abs(ub @ n) + by*abs(vb @ n)
+        if abs(d @ n) > ra + rb:
+            return False
+    return True
+
+
+def inside_rect(q, r, margin: float = 0.0) -> np.ndarray:
+    """Points q (..., 2) inside rectangle r grown by ``margin``."""
+    c, s = np.cos(r.theta), np.sin(r.theta)
+    dx, dy = q[..., 0] - r.cx, q[..., 1] - r.cy
+    return (np.abs(dx*c + dy*s) <= r.ell/2 + margin) & (np.abs(-dx*s + dy*c) <= r.wid/2 + margin)
+
+
+class NoOverlapMixin:
+    """A new rectangle must keep ``d_safe`` from every other UAV's current rectangle (requested 2026-11-05). This comes on
+    top of the planner and its separation check: start peaks ignore the other rectangles, the accordion may not grow
+    into them, and a rotation that breaks the rule is searched again without rotating. A rectangle may be reused once
+    its UAV has finished it. If no clear rectangle exists the normal choice is flown and ``overlap_forced`` counts it."""
+    team = None            # all the planners of the team
+    overlap_forced = 0
+
+    def _others(self):
+        return [p.rects[-1][1] for p in (self.team or ()) if p is not self and p.rects and p.tasks and p.tasks[-1]["end"] is None]
+
+    def choose(self, env, acc):
+        others = self._others()
+        if not others:
+            return super().choose(env, acc)
+        m = self.d_safe
+        base_approx, base_peaks = acc.approx, acc.peaks
+
+        def clear(q):
+            return not any(rects_conflict(q, o, m) for o in others)
+
+        def approx(G, i0, i1, j0, j1):
+            mid = np.array([(G["ex"][i0] + G["ex"][i1])/2, (G["ey"][j0] + G["ey"][j1])/2]) @ G["R"].T
+            q = Rect(float(mid[0]), float(mid[1]), float((i1 - i0)*acc.g), float((j1 - j0)*acc.gy), float(G["theta"]), 0.0)
+            return base_approx(G, i0, i1, j0, j1) if clear(q) else -1.0
+
+        def peaks():
+            b = env.belief
+            pts = b.positions(env.t + acc.T/2)
+            keep = b.w.copy()
+            for o in others:
+                b.w[inside_rect(pts, o, m)] = 0.0
+            try:
+                found = base_peaks()
+            finally:
+                b.w[:] = keep
+            return [c for c in found if not any(inside_rect(c.peak, o, m) for o in others)]
+
+        acc.approx, acc.peaks = approx, peaks
+        rects = acc.peak_rects() or []
+        acc.approx, acc.peaks = base_approx, base_peaks
+        if not rects:
+            self.overlap_forced += 1
+            return super().choose(env, acc)
+        if self.traffic and self.hard_sep:
+            rects = [q for q, _ in self.feasible_starts(env, rects)]
+        args = (acc.gamma, self.cycle_s, self.time_s, self.task, self.traffic, self.d_safe)
+        res = []
+        for r in rects:
+            out = refine(env, r, self.moves, *args)
+            if not clear(out[0]):
+                out = refine(env, r, tuple(k for k in self.moves if k != "rotate"), *args)
+            res.append(out)
+        picked = int(np.argmax([q[1] for q in res]))
+        self.search_log.append(res[picked][2] | dict(evals=sum(q[2]["evals"] for q in res), sec=sum(q[2]["sec"] for q in res),
+                                                     starts=len(res), picked=picked, gain_first=res[0][1]))
+        return res[picked][0]
+
+
+class NoOverlapSarops(NoOverlapMixin, SaropsPlanner):
+    pass
+
+
+class NoOverlapAreaSarops(NoOverlapMixin, AreaSaropsPlanner):
+    pass
 
 
 def score_flight(terr, h, track, dt, x, half_width, xy, tt) -> dict:

@@ -190,7 +190,7 @@ def maps(res, out, n, x, w, seeds=None, minutes=(15, 30, 45, 60)):
                 Patch(color=(.55, .55, .55), label="No-go"), Patch(color=(.70, .82, .95), label="Water"), Patch(color=(.80, .90, .78), label="Forest")]
         fig.legend(handles=keys, loc="outside lower center", ncol=6)
         pa, pb = data["pos"]["r"], data["score"]["r"]
-        fig.suptitle(f"Scenario {seed}, {n} UAV{'s' if n > 1 else ''}, x {x:g}, w {w:g}: A {pa['scores'][sx]['A']:.3f} to {pb['scores'][sx]['A']:.3f}, POS {pa['pos']:.3f} to {pb['pos']:.3f}. "
+        fig.suptitle(f"Scenario {seed}, {n} UAV{'s' if n > 1 else ''}, x {x:g}, w {w:g}{', separation constraint on' if pa.get('sep') else ''}{', rectangle rule on' if pa.get('no_overlap') else ''}: A {pa['scores'][sx]['A']:.3f} to {pb['scores'][sx]['A']:.3f}, POS {pa['pos']:.3f} to {pb['pos']:.3f}. "
                      "Each column uses one scale.", x=.01, ha="left", fontsize=12)
         f = out/f"map_s{seed}_n{n}_x{x:g}_w{w:g}.png"
         fig.savefig(f, dpi=95)
@@ -247,6 +247,109 @@ def sweep_tradeoff(res, out):
     plt.close(fig)
 
 
+def sep_overview(res, ref, out):
+    """Separation constraint off (hollow) and on (filled) for each configuration, and when and how close pairs get."""
+    seeds = sorted({r["seed"] for r in res})
+    key = lambda r: (r["seed"], r["config"], r["n"]) + ((r["x"], r["w"]) if r["config"] == "score" else ())
+    on, off = {key(r): r for r in res}, {key(r): r for r in ref}
+    cfgs = (("POS only", ("pos",), "#2a78d6"), ("A + POS, x 70", ("score", 70.0, 1.0), "#eb6834"), ("A + POS, x 85", ("score", 85.0, 1.0), "#1baf7a"))     # validated, all pairs
+    get = lambda d, s, n, c: d[(s, c[0], n) + tuple(c[1:])]
+    fig, axs = plt.subplots(2, 3, figsize=(14.5, 8.8), height_ratios=[1, 1.1], constrained_layout=True)
+    rows = [(3, c) for c in cfgs] + [(5, c) for c in cfgs]
+    ypos = [0, 1, 2, 3.6, 4.6, 5.6]
+    labels = [f"{n} UAVs, {c[0]}" for n, c in rows]
+    panels = ((axs[0, 0], "POS at end of flight", lambda r: r["pos"], (.5, .8), "{:.3f}"),
+              (axs[0, 1], "A at x 70 (one yardstick for all rows)", lambda r: r["scores"]["70"]["A"], (.15, .4), "{:.3f}"),
+              (axs[0, 2], "Seconds with a pair closer than 300 m", lambda r: r["below"], (0, 300), "{:.0f} s"))
+    for ax, title, f, lim, fmt in panels:
+        for y, (n, c) in zip(ypos, rows):
+            a = np.mean([f(get(off, s, n, c[1])) for s in seeds])
+            b = np.mean([f(get(on, s, n, c[1])) for s in seeds])
+            ax.plot([a, b], [y, y], color=AXIS, lw=1.6, zorder=2)
+            ax.scatter(a, y, s=58, facecolor=SURFACE, edgecolor=c[2], lw=1.6, zorder=3)
+            ax.scatter(b, y, s=58, color=c[2], edgecolor=SURFACE, lw=1.2, zorder=4)
+            ax.annotate(fmt.format(b), (max(a, b), y), xytext=(9, 0), textcoords="offset points", va="center", color=SEC, fontsize=9)
+        ax.set(xlim=lim, ylim=(6.2, -.6), yticks=ypos, yticklabels=labels if ax is axs[0, 0] else [])
+        ax.set_title(title)
+        clean(ax, "x")
+    bins = ("0-15", "15-30", "30-45", "45-60")
+    for ax, n in ((axs[1, 0], 3), (axs[1, 1], 5)):
+        for name, c, col in cfgs:
+            v = np.mean([get(on, s, n, c)["close_by15"][:4] for s in seeds], axis=0)
+            ax.plot(range(4), v, color=col, lw=1.8, marker="o", ms=6, mec=SURFACE)
+        ax.set(xticks=range(4), xticklabels=bins, xlabel="Minutes after the LKP report", ylabel="Seconds below 300 m, constraint on", ylim=(0, 160))
+        ax.set_title(f"{n} UAVs: when pairs get close")
+        clean(ax)
+    ax = axs[1, 2]
+    for k, (name, c, col) in enumerate(cfgs):
+        v = [max(get(on, s, 5, c)["dmin"], 1.0) for s in seeds]
+        ax.scatter(v, np.arange(len(seeds)) + (k - 1)*.22, s=44, color=col, edgecolor=SURFACE, lw=1, zorder=3)
+    ax.axvline(300, color=CLOSE, lw=1.2)
+    ax.annotate("300 m", (300, -.45), xytext=(5, 0), textcoords="offset points", color=SEC, fontsize=9, va="center")
+    ax.set(xscale="log", xlim=(.8, 1200), ylim=(len(seeds) - .5, -.7), yticks=range(len(seeds)), yticklabels=seeds, xlabel="Closest pair in the flight, m (log scale)", ylabel="Scenario")
+    ax.set_title("5 UAVs, constraint on: closest pair per scenario")
+    clean(ax, "x")
+    keys = [Line2D([], [], marker="o", ls="", color=c[2], ms=7, label=c[0]) for c in cfgs]
+    keys += [Line2D([], [], marker="o", ls="", mfc=SURFACE, mec=MUTED, mew=1.4, ms=7, label="Constraint off"), Line2D([], [], marker="o", ls="", color=MUTED, ms=7, label="Constraint on")]
+    fig.legend(handles=keys, loc="outside lower center", ncol=5)
+    fig.suptitle("Separation constraint, SAROPS, scenarios 500-509: costs about 0.02 POS, cuts close time most with A + POS, but pairs still come within a few metres in the first 30 min",
+                 x=.01, ha="left", fontsize=11.5)
+    fig.savefig(out/"overview.png", dpi=125)
+    plt.close(fig)
+
+
+def rule_overview(base, out):
+    """No constraint (hollow), time rule (light), time + rectangle rule (solid), and when and how close pairs get."""
+    load = lambda name: {(r["seed"], r["config"], r["n"]) + ((r["x"], r["w"]) if r["config"] == "score" else ()): r
+                         for r in map(json.loads, (base/name/"results.jsonl").read_text().splitlines())}
+    off, tim, rule = load("sweep"), load("sep"), load("no_overlap")
+    seeds = sorted({k[0] for k in rule})
+    cfgs = (("POS only", ("pos",), "#2a78d6"), ("A + POS, x 70", ("score", 70.0, 1.0), "#eb6834"), ("A + POS, x 85", ("score", 85.0, 1.0), "#1baf7a"))     # validated, all pairs
+    get = lambda d, s, n, c: d[(s, c[0], n) + tuple(c[1:])]
+    fig, axs = plt.subplots(2, 3, figsize=(14.5, 8.8), height_ratios=[1, 1.1], constrained_layout=True)
+    rows = [(3, c) for c in cfgs] + [(5, c) for c in cfgs]
+    ypos = [0, 1, 2, 3.6, 4.6, 5.6]
+    panels = ((axs[0, 0], "POS at end of flight", lambda r: r["pos"], (.55, .78), "{:.3f}"),
+              (axs[0, 1], "A at x 70 (one yardstick for all rows)", lambda r: r["scores"]["70"]["A"], (.18, .38), "{:.3f}"),
+              (axs[0, 2], "Seconds with a pair closer than 300 m", lambda r: r["below"], (0, 300), "{:.0f} s"))
+    for ax, title, f, lim, fmt in panels:
+        for y, (n, c) in zip(ypos, rows):
+            a, b, d = (np.mean([f(get(t, s, n, c[1])) for s in seeds]) for t in (off, tim, rule))
+            ax.plot([min(a, b, d), max(a, b, d)], [y, y], color=AXIS, lw=1.6, zorder=2)
+            ax.scatter(a, y, s=58, facecolor=SURFACE, edgecolor=c[2], lw=1.6, zorder=3)
+            ax.scatter(b, y, s=58, color=c[2], alpha=.4, linewidths=0, zorder=4)
+            ax.scatter(d, y, s=58, color=c[2], edgecolor=SURFACE, lw=1.2, zorder=5)
+            ax.annotate(fmt.format(d), (max(a, b, d), y), xytext=(9, 0), textcoords="offset points", va="center", color=SEC, fontsize=9)
+        ax.set(xlim=lim, ylim=(6.2, -.6), yticks=ypos, yticklabels=[f"{n} UAVs, {c[0]}" for n, c in rows] if ax is axs[0, 0] else [])
+        ax.set_title(title)
+        clean(ax, "x")
+    bins = ("0-15", "15-30", "30-45", "45-60")
+    for ax, n in ((axs[1, 0], 3), (axs[1, 1], 5)):
+        for name, c, col in cfgs:
+            v = np.mean([get(rule, s, n, c)["close_by15"][:4] for s in seeds], axis=0)
+            ax.plot(range(4), v, color=col, lw=1.8, marker="o", ms=6, mec=SURFACE)
+        ax.set(xticks=range(4), xticklabels=bins, xlabel="Minutes after the LKP report", ylabel="Seconds below 300 m, both rules on", ylim=(0, 160))
+        ax.set_title(f"{n} UAVs: when pairs get close")
+        clean(ax)
+    ax = axs[1, 2]
+    for k, (name, c, col) in enumerate(cfgs):
+        v = [max(get(rule, s, 5, c)["dmin"], 1.0) for s in seeds]
+        ax.scatter(v, np.arange(len(seeds)) + (k - 1)*.22, s=44, color=col, edgecolor=SURFACE, lw=1, zorder=3)
+    ax.axvline(300, color=CLOSE, lw=1.2)
+    ax.annotate("300 m", (300, -.45), xytext=(5, 0), textcoords="offset points", color=SEC, fontsize=9, va="center")
+    ax.set(xscale="log", xlim=(.8, 1200), ylim=(len(seeds) - .5, -.7), yticks=range(len(seeds)), yticklabels=seeds, xlabel="Closest pair in the flight, m (log scale)", ylabel="Scenario")
+    ax.set_title("5 UAVs, both rules on: closest pair per scenario")
+    clean(ax, "x")
+    keys = [Line2D([], [], marker="o", ls="", color=c[2], ms=7, label=c[0]) for c in cfgs]
+    keys += [Line2D([], [], marker="o", ls="", mfc=SURFACE, mec=MUTED, mew=1.4, ms=7, label="No constraint"), Line2D([], [], marker="o", ls="", color=MUTED, alpha=.4, ms=7, label="Time rule"),
+             Line2D([], [], marker="o", ls="", color=MUTED, ms=7, label="Time + rectangle rule")]
+    fig.legend(handles=keys, loc="outside lower center", ncol=6)
+    fig.suptitle("Adding the rectangle rule, SAROPS, scenarios 500-509: POS holds and close time falls further, but a few scenarios still bring pairs within metres in the first 30 min",
+                 x=.01, ha="left", fontsize=11.5)
+    fig.savefig(out/"overview.png", dpi=125)
+    plt.close(fig)
+
+
 def main():
     warnings.filterwarnings("ignore")
     ap = argparse.ArgumentParser()
@@ -256,9 +359,17 @@ def main():
     ap.add_argument("--w", type=float, default=1.0)
     ap.add_argument("--seeds", type=int, nargs="*", default=None, help="map scenarios; default the largest and smallest gain in A")
     ap.add_argument("--tradeoff", action="store_true", help="only the x and w overview of a sweep")
+    ap.add_argument("--sep-overview", action="store_true", help="only the constraint on and off overview (--input is the sep folder)")
+    ap.add_argument("--rule-overview", action="store_true", help="only the three rule levels (--input is the no_overlap folder)")
     args = ap.parse_args()
     style()
+    if args.rule_overview:
+        rule_overview(args.input.parent, args.input)
+        return
     res = [json.loads(line) for line in (args.input/"results.jsonl").read_text().splitlines()]
+    if args.sep_overview:
+        sep_overview(res, [json.loads(line) for line in (args.input.parent/"sweep"/"results.jsonl").read_text().splitlines()], args.input)
+        return
     if args.tradeoff:
         sweep_tradeoff(res, args.input)
         return
