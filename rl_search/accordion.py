@@ -32,6 +32,9 @@ HOLD_ACTION = 1.0     # multi-UAV hold: full right turn every decision (a circle
 SEP_HOLDS = (0.0, 60.0, 120.0, 180.0, 300.0)   # holds tried when every candidate breaks the separation constraint
 TASK_FILL = 0.8       # task mode: the lanes must use at least this share of the budget (SAROPS: the pattern fills the
                       # available path length), else the rectangle is too small for the search time
+LANE_TOL = 0.0        # lanes whose reversal is within this share of the turn diameter are flown as neighbours. 0 keeps
+                      # the strict rule of the earlier runs, where spacing 286 m < 2 R = 286.5 m made every rectangle skip
+                      # lanes although fixed_lane_time assumes neighbours (found 2026-11-06); 0.05 matches fixed_lane_time
 
 
 @dataclass
@@ -102,10 +105,15 @@ class Accordion:
         # transit, rectangles farther than max_transit_s are not admissible, the score is POS per minute of
         # (transit + search); otherwise the fixed cycle: transit and search share cycle_s
         self.search_s, self.max_transit_s = search_s, max_transit_s
-        if peak_timing not in ("now", "arrival"):
+        if peak_timing not in ("now", "arrival", "intercept"):
             raise ValueError(peak_timing)
-        self.peak_timing = peak_timing   # "arrival": start peaks from the distribution at each peak's own arrival
+        # "arrival": start peaks from the distribution at each peak's own arrival (only peaks whose transit matches a
+        # 2 min offset within 1 min; with none it falls back to "now", which happens when the mass moves away, 2026-11-06)
+        # "intercept": the peaks T/2 after the transit to the top peak, iterated until that transit settles (2026-11-06)
+        self.peak_timing = peak_timing
+        self.t_read = None   # time the start peaks were read at (set by peaks)
         self.T = search_s if search_s is not None else cycle_s
+        self.mask = None     # optional t -> particles to leave out when looking for start peaks
         if pod_model not in ("exp", "lanes"):
             raise ValueError(pod_model)
         self.pod_model = pod_model
@@ -252,16 +260,42 @@ class Accordion:
         its own straight-line transit is within 1 min of tau (so a far peak is taken where the targets will be when
         the UAV gets there), then the heaviest n_starts at least start_sep_m apart."""
         env, kw = self.env, dict(smooth=max(self.start_smooth_m, 250.0), sep=self.start_sep_m)
+
+        def clusters(t):
+            """find_clusters at t, without the particles ``self.mask(t)`` marks (set by a caller, e.g. the rectangle rule)."""
+            if self.mask is None:
+                return find_clusters(env, t, k=self.n_starts, **kw)
+            b = env.belief
+            keep = b.w.copy()
+            b.w[self.mask(t)] = 0.0
+            try:
+                return find_clusters(env, t, k=self.n_starts, **kw)
+            finally:
+                b.w[:] = keep
+        self.t_read = env.t + self.T/2
         if self.peak_timing == "now" or self.search_s is None:
-            return find_clusters(env, env.t + self.T/2, k=self.n_starts, **kw)
+            return clusters(self.t_read)
         x = env.plant.pose[:2]
+        if self.peak_timing == "intercept":
+            tau = 0.0
+            for _ in range(5):
+                cl = clusters(env.t + tau + self.T/2)
+                if not cl:
+                    break
+                new = min(float(np.hypot(*(cl[0].peak - x)))/env.v, 2*self.max_transit_s)
+                done = abs(new - tau) < 30.0
+                tau = new
+                if done:
+                    break
+            self.t_read = env.t + tau + self.T/2
+            return clusters(self.t_read)
         cand = []
         for tau in np.arange(0.0, self.max_transit_s + 1.0, 120.0):
-            for cl in find_clusters(env, env.t + tau + self.T/2, k=self.n_starts, **kw):
+            for cl in clusters(env.t + tau + self.T/2):
                 if abs(np.hypot(*(cl.peak - x))/env.v - tau) <= 60.0:
                     cand.append(cl)
         if not cand:
-            return find_clusters(env, env.t + self.T/2, k=self.n_starts, **kw)
+            return clusters(env.t + self.T/2)
         out = []
         for cl in sorted(cand, key=lambda c: -c.mass):
             if all(np.hypot(*(cl.peak - o.peak)) >= self.start_sep_m for o in out):
@@ -361,14 +395,18 @@ class Accordion:
         return max(self.approx(G, i0, i1, j0, j1), 0.0)
 
 
-@lru_cache(maxsize=65536)
 def fit_lanes(ell: float, wid: float, budget_m: float, r_turn: float, gamma: float) -> tuple[int, float]:
+    return _fit_lanes(ell, wid, budget_m, r_turn, gamma, LANE_TOL)
+
+
+@lru_cache(maxsize=65536)
+def _fit_lanes(ell: float, wid: float, budget_m: float, r_turn: float, gamma: float, tol: float) -> tuple[int, float]:
     """Task mode: most lanes whose actual polyline (lanes + lane changes, ``parallel_pts``) fits ``budget_m``,
     with track spacing >= gamma. Returns (lanes, polyline length); (0, 0) if not even one lane fits."""
     n_max = max(1, int(wid//max(gamma, 1e-6)))
     for n in range(n_max, 0, -1):
         s = wid/n
-        pts = parallel_pts(max(ell - s, 100.0), n, s, r_turn)
+        pts = parallel_pts(max(ell - s, 100.0), n, s, r_turn, tol)
         length = float(np.hypot(*np.diff(pts, axis=0).T).sum())
         if length <= budget_m:
             return n, length
@@ -382,7 +420,7 @@ def fixed_lane_time(ell: float, n: int, s: float, r_turn: float, v: float) -> fl
     if s >= 0.95*2*r_turn:                       # within 5 %: the pursuit makes the half turn
         change = np.pi*min(r_turn, s/2) + max(s - 2*r_turn, 0.0)
         return (n*(ell - s) + (n - 1)*change)/v
-    pts = parallel_pts(max(ell - s, 100.0), n, s, r_turn)
+    pts = parallel_pts(max(ell - s, 100.0), n, s, r_turn, LANE_TOL)
     return TASK_FLOWN*float(np.hypot(*np.diff(pts, axis=0).T).sum())/v
 
 
@@ -422,7 +460,7 @@ def lane_plan(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None):
     R = _rot(r.theta)
     n = lane_count(env, r, cycle_s, effort, search_s)
     s = r.wid/n
-    pts = parallel_pts(max(r.ell - s, 100.0), n, s, r_turn)
+    pts = parallel_pts(max(r.ell - s, 100.0), n, s, r_turn, LANE_TOL)
     if r.corner is not None:
         return pts*np.array(r.corner), r.corner
     best = None

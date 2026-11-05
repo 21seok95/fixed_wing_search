@@ -226,7 +226,21 @@ class AreaSaropsPlanner(SaropsPlanner):
 
         def peaks():
             own = base()
-            extra = area_peaks(env, env.t + acc.T/2, min(acc.n_starts, 3), acc.start_sep_m)   # 3 extra starts at most
+            k = min(acc.n_starts, 3)                                                            # 3 extra starts at most
+            if acc.peak_timing == "arrival" and acc.search_s is not None:
+                # as Accordion.peaks: the region read T/2 after each arrival offset, kept where that offset is the transit
+                x, cand = env.plant.pose[:2], []
+                for tau in np.arange(0.0, acc.max_transit_s + 1.0, 120.0):
+                    cand += [c for c in area_peaks(env, env.t + tau + acc.T/2, k, acc.start_sep_m)
+                             if abs(np.hypot(*(c.peak - x))/env.v - tau) <= 60.0]
+                extra = []
+                for c in sorted(cand, key=lambda c: -c.mass):
+                    if all(np.hypot(*(c.peak - o.peak)) >= acc.start_sep_m for o in extra):
+                        extra.append(c)
+                    if len(extra) == k:
+                        break
+            else:      # "now", or "intercept" at the time the own peaks were read
+                extra = area_peaks(env, acc.t_read if acc.t_read is not None else env.t + acc.T/2, k, acc.start_sep_m)
             return own + [c for c in extra if all(np.hypot(*(c.peak - o.peak)) >= acc.start_sep_m for o in own)]
         acc.peaks = peaks
 
@@ -292,15 +306,14 @@ class NoOverlapMixin:
             return base_approx(G, i0, i1, j0, j1) if clear(q) else -1.0
 
         def peaks():
+            # particles inside the others' rectangles are left out at the time each start peak is read
+            # (acc.T/2 ahead with peak_timing "now", as before; at each arrival offset with "arrival")
             b = env.belief
-            pts = b.positions(env.t + acc.T/2)
-            keep = b.w.copy()
-            for o in others:
-                b.w[inside_rect(pts, o, m)] = 0.0
+            acc.mask = lambda t: np.any([inside_rect(b.positions(t), o, m) for o in others], axis=0)
             try:
                 found = base_peaks()
             finally:
-                b.w[:] = keep
+                acc.mask = None
             return [c for c in found if not any(inside_rect(c.peak, o, m) for o in others)]
 
         acc.approx, acc.peaks = approx, peaks

@@ -27,10 +27,12 @@ def lane_order(n: int, k: int) -> list[int]:
     return [i for r in range(k) for i in range(r, n, k)]
 
 
-def parallel_pts(leg: float, n: int, spacing: float, r_turn: float) -> np.ndarray:
-    """Lanes along x, stacked along y, centred on the origin; skip lanes to respect the turn radius."""
+def parallel_pts(leg: float, n: int, spacing: float, r_turn: float, tol: float = 0.0) -> np.ndarray:
+    """Lanes along x, stacked along y, centred on the origin; skip lanes to respect the turn radius. ``tol``: lanes
+    whose reversal is within this share of the turn diameter are still flown as neighbours (the pursuit makes the
+    turn); 0 keeps the strict rule."""
     n = max(int(n), 1)
-    k = max(1, int(np.ceil(2*r_turn/spacing))) if n > 1 else 1
+    k = max(1, int(np.ceil(2*r_turn*(1 - tol)/spacing))) if n > 1 else 1
     ys = (np.arange(n) - (n - 1)/2)*spacing
     pts, d = [], 1.0
     for i in lane_order(n, k):
