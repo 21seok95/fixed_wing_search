@@ -48,7 +48,8 @@ def make_envs(n, seed, area_env=False):
 
 
 def run_job(job):
-    seed, config, n, x, w = job
+    seed, config, n, x, w, *rest = job
+    sep = bool(rest and rest[0])      # 300 m separation constraint (holds 0-5 min, 5 peaks, as compare_center "5 sep")
     warnings.filterwarnings("ignore")
     from rl_search.accordion import sweep_width
     from rl_search.area_score import AreaSaropsPlanner, AreaScore, score_flight
@@ -56,12 +57,13 @@ def run_job(job):
     from rl_search.sarops import SaropsPlanner
     from rl_search.scripts.center_open import open_scenario
     from rl_search.scripts.check_sarops import holdout_scenario
+    from rl_search.scripts.plot_center_terrain import close_with_time
     t0 = time.perf_counter()
     probe = make_envs(1, seed)[0]
     scen = open_scenario(probe.sampler, seed)
     hold_scen = holdout_scenario(probe, scen, seed + 10**6)
     W = sweep_width(probe)
-    kw = dict(W=W, n_starts=3, big_jump=True, search_s=600.0, max_transit_s=600.0, lane_mode="cover")
+    kw = dict(W=W, n_starts=5 if sep else 3, big_jump=True, search_s=600.0, max_transit_s=600.0, lane_mode="cover")
     if config == "pos":
         envs = make_envs(n, seed)
         pols = [SaropsPlanner(**kw) for _ in range(n)]
@@ -71,8 +73,11 @@ def run_job(job):
         for e in envs:
             e.area, e.pos_w, e.area_w = area, (w if config == "score" else 1.0), (1.0 if config == "score" else 0.0)
         pols = [AreaSaropsPlanner(**kw) for _ in range(n)]
-    res = run_team_launch(envs, pols, dict(scenario=scen, stage=3), 60.0, deconflict=False, hard=False)
+    res = run_team_launch(envs, pols, dict(scenario=scen, stage=3), 60.0, deconflict=sep, hard=sep)
     h = run_team_launch(make_envs(n, seed), None, dict(scenario=hold_scen, stage=3), 60.0, actions=res["actions"])
+    holds = [k["hold"] for p in pols for k in p.tasks if k.get("hold", 0) > 0]
+    close = close_with_time(res["xy"], res["tt"])
+    close_by15 = np.histogram(close[:, 0], bins=[0, 900, 1800, 2700, 3600, 7200])[0]*5.0
     drift = max(float(np.hypot(*(a[-1] - b[-1]))) for a, b in zip(res["xy"], h["xy"]))
     if drift > 1e-6:
         raise RuntimeError(f"replay left the planned path by {drift} m")
@@ -82,7 +87,8 @@ def run_job(job):
     out = dict(seed=seed, config=config, n=n, x=x, w=w, pos=float(h["pos"][-1]),
                pos_t=[float(np.interp(m*60, h["t"] - h["t"][0], h["pos"])) for m in range(0, 61, 5)], scores=scores,
                dmin=float(dmin) if np.isfinite(dmin) else None, below=float(below), enc=int(enc),
-               plans=int(sum(len(p.rects) for p in pols)), lkp=scen.lkp.tolist(), start=scen.start.tolist(),
+               plans=int(sum(len(p.rects) for p in pols)), sep=sep, violations=int(sum(p.violations for p in pols)),
+               n_holds=len(holds), hold_s=float(sum(holds)), close_by15=close_by15.tolist(), lkp=scen.lkp.tolist(), start=scen.start.tolist(),
                heading=scen.heading_deg, speed_kmh=scen.speed_mps*3.6,
                xy=[p[::2].round(0).tolist() for p in res["xy"]], tt=[t[::2].tolist() for t in res["tt"]],
                rects=[[(tp, r.cx, r.cy, r.ell, r.wid, r.theta, r.hold_s) for tp, r, _ in p.rects] for p in pols],
@@ -209,13 +215,40 @@ def summarize_sweep(res) -> str:
     return "\n".join(L)
 
 
+def summarize_sep(res, ref) -> str:
+    """Each configuration with the separation constraint against the same one without it (``ref``: the sweep results)."""
+    seeds = sorted({r["seed"] for r in res})
+    a = {sweep_key(r): r for r in res}
+    b = {sweep_key(r): r for r in ref}
+    se = lambda d: d.std(ddof=1)/np.sqrt(len(d)) if len(d) > 1 else 0.0
+    L = [f"Separation constraint on and off, SAROPS, scenarios {seeds[0]}-{seeds[-1]}. A at x 70 for every row, so rows compare. Differences are constraint on minus off, paired by scenario.", "",
+         "| UAVs | config | POS off / on | POS diff (se, higher in) | A x 70 off / on | A diff (se) | pair < 300 m off / on (s) | closest pair on (min, m) | close time on, 0-15 / 15-30 / 30-45 / 45-60 / after (s) | holds per flight (min of holding) | plans with no feasible option | s/episode on |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    keys = sorted({k[1:] for k in a}, key=lambda k: (k[1], k[0] != "pos", k[2:]))
+    for k in keys:
+        run = [a[(s,) + k] for s in seeds if (s,) + k in a and (s,) + k in b]
+        base = [b[(s,) + k] for s in seeds if (s,) + k in a and (s,) + k in b]
+        if not run:
+            continue
+        name = "POS only" if k[0] == "pos" else f"A + {k[3]:g} POS, x {k[2]:g}"
+        dp = np.array([p["pos"] - q["pos"] for p, q in zip(run, base)])
+        da = np.array([p["scores"]["70"]["A"] - q["scores"]["70"]["A"] for p, q in zip(run, base)])
+        L.append(f"| {k[1]} | {name} | {np.mean([q['pos'] for q in base]):.3f} / {np.mean([p['pos'] for p in run]):.3f} | {dp.mean():+.3f} ({se(dp):.3f}, {int((dp > 0).sum())}/{len(dp)}) | "
+                 f"{np.mean([q['scores']['70']['A'] for q in base]):.3f} / {np.mean([p['scores']['70']['A'] for p in run]):.3f} | {da.mean():+.3f} ({se(da):.3f}) | "
+                 f"{np.mean([q['below'] for q in base]):.0f} / {np.mean([p['below'] for p in run]):.0f} | {min(p['dmin'] for p in run):.0f} | "
+                 + " / ".join(f"{v:.0f}" for v in np.mean([p["close_by15"] for p in run], axis=0))
+                 + f" | {np.mean([p['n_holds'] for p in run]):.1f} ({np.mean([p['hold_s'] for p in run])/60:.1f}) | {sum(p['violations'] for p in run)} | {np.mean([p['sec'] for p in run]):.0f} |")
+    return "\n".join(L)
+
+
 def run_sweep(args):
     """Grid of x and w. Baselines first, then w = 1, 0.5, 2 so partial results are useful. Runs from the first check are
-    reused. Actions are not kept, to keep the file small (paths stay, for figures and rescoring)."""
-    out = args.output if args.output != OUT else Path("rl_search/data/center_open/sweep")
+    reused. Actions are not kept, to keep the file small (paths stay, for figures and rescoring). ``--sep``: with the
+    separation constraint, in its own folder, compared with the sweep without it."""
+    out = args.output if args.output != OUT else Path("rl_search/data/center_open/" + ("sep" if args.sep else "sweep"))
     out.mkdir(parents=True, exist_ok=True)
     path = out/"results.jsonl"
-    if not path.exists() and (OUT/"results.jsonl").exists():
+    if not args.sep and not path.exists() and (OUT/"results.jsonl").exists():
         with open(path, "w") as f:
             for line in (OUT/"results.jsonl").read_text().splitlines():
                 r = json.loads(line)
@@ -224,8 +257,8 @@ def run_sweep(args):
                     f.write(json.dumps(r) + "\n")
     done = {sweep_key(json.loads(line)) for line in path.read_text().splitlines()} if path.exists() else set()
     seeds = range(args.seed0, args.seed0 + args.n_scen)
-    jobs = [(s, "pos", n, 70.0, 1.0) for n in args.n for s in seeds]
-    jobs += [(s, "score", n, float(x), float(w)) for w in args.ws for x in args.xs for n in args.n for s in seeds]
+    jobs = [(s, "pos", n, 70.0, 1.0, args.sep) for n in args.n for s in seeds]
+    jobs += [(s, "score", n, float(x), float(w), args.sep) for w in args.ws for x in args.xs for n in args.n for s in seeds]
     key = lambda j: (j[0], j[1], j[2]) + ((j[3], j[4]) if j[1] == "score" else ())
     jobs = [j for j in jobs if key(j) not in done]
     print(f"{len(jobs)} jobs, {args.workers} workers", flush=True)
@@ -238,6 +271,8 @@ def run_sweep(args):
     print(f"done in {(time.perf_counter() - t0)/60:.1f} min", flush=True)
     res = [json.loads(line) for line in path.read_text().splitlines()]
     txt = summarize_sweep(res)
+    if args.sep:
+        txt = summarize_sep(res, [json.loads(line) for line in Path("rl_search/data/center_open/sweep/results.jsonl").read_text().splitlines()])
     (out/"table.md").write_text(txt + "\n")
     print(txt)
 
@@ -246,6 +281,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--sweep", action="store_true", help="grid of --xs and --ws for every --n")
+    ap.add_argument("--sep", action="store_true", help="with --sweep: separation constraint on")
     ap.add_argument("--xs", type=float, nargs="+", default=[70.0, 50.0, 85.0])
     ap.add_argument("--ws", type=float, nargs="+", default=[1.0, 0.5, 2.0])
     ap.add_argument("--smoke", action="store_true", help="one scenario, one UAV, all configurations")

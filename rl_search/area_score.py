@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.ndimage import gaussian_filter, maximum_filter
 
+from rl_search import multi
 from rl_search.multi import TrackedEnv
 from rl_search.patterns_v2 import Cluster
 from rl_search.sarops import SaropsPlanner
@@ -159,6 +160,25 @@ class AreaEnv(TrackedEnv):
                 self.area.committed[self.uav_id] = undone
 
 
+_approach_track = multi.approach_track
+
+
+def approach_track(env, horizon_s=300.0):
+    """multi.approach_track, except that a predicted approach is not a commitment: its swept cells stay out of
+    ``AreaScore.committed``, as its detections stay out of the belief shared with the other UAVs."""
+    a = getattr(env, "area", None)
+    if a is None:
+        return _approach_track(env, horizon_s)
+    a.planning = True
+    try:
+        return _approach_track(env, horizon_s)
+    finally:
+        a.planning = False
+
+
+multi.approach_track = approach_track
+
+
 def area_peaks(env, t_mid: float, k: int, sep: float = 1500.0, block: int = 8, smooth: float = 250.0,
                radius: float = 2000.0) -> list[Cluster]:
     """Peaks of the unswept part of the region at t_mid, as start points for rectangles (main axis from the cells)."""
@@ -205,7 +225,7 @@ class AreaSaropsPlanner(SaropsPlanner):
 
         def peaks():
             own = base()
-            extra = area_peaks(env, env.t + acc.T/2, acc.n_starts, acc.start_sep_m)
+            extra = area_peaks(env, env.t + acc.T/2, min(acc.n_starts, 3), acc.start_sep_m)   # 3 extra starts at most
             return own + [c for c in extra if all(np.hypot(*(c.peak - o.peak)) >= acc.start_sep_m for o in own)]
         acc.peaks = peaks
 

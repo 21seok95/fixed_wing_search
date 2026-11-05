@@ -198,6 +198,55 @@ def maps(res, out, n, x, w, seeds=None, minutes=(15, 30, 45, 60)):
         print("wrote", f, flush=True)
 
 
+def sweep_tradeoff(res, out):
+    """What each (x, w) gains in A and costs in POS against POS only, paired by scenario, and how long pairs stay close."""
+    seeds = sorted({r["seed"] for r in res})
+    by = {(r["seed"], r["config"], r["n"]) + ((r["x"], r["w"]) if r["config"] == "score" else ()): r for r in res}
+    xs, ws = (50.0, 70.0, 85.0), (0.5, 1.0, 2.0)
+    col = {50.0: "#2a78d6", 70.0: "#eb6834", 85.0: "#1baf7a"}     # first three slots, validated all-pairs
+    mark = {0.5: "^", 1.0: "o", 2.0: "s"}
+    ns = (1, 3, 5)
+    fig, axs = plt.subplots(2, 3, figsize=(14, 8.6), height_ratios=[1.25, 1], constrained_layout=True)
+    se = lambda d: d.std(ddof=1)/np.sqrt(len(d))
+    for j, n in enumerate(ns):
+        ax = axs[0, j]
+        ax.axhline(0, color=SEC, lw=1)
+        ax.axvline(0, color=SEC, lw=1)
+        for x in xs:
+            sx = str(int(x))
+            for w in ws:
+                run = [by[(s, "score", n, x, w)] for s in seeds]
+                base = [by[(s, "pos", n)] for s in seeds]
+                dp = np.array([a["pos"] - b["pos"] for a, b in zip(run, base)])
+                da = np.array([a["scores"][sx]["A"] - b["scores"][sx]["A"] for a, b in zip(run, base)])
+                ax.errorbar(dp.mean(), da.mean(), xerr=se(dp), yerr=se(da), color=col[x], lw=.8, alpha=.5, zorder=2)
+                ax.scatter(dp.mean(), da.mean(), s=62, marker=mark[w], color=col[x], edgecolor=SURFACE, lw=1.2, zorder=3)
+                if x == 70.0 and w == 1.0:
+                    ax.annotate("x 70, w 1", (dp.mean(), da.mean()), xytext=(8, 7), textcoords="offset points", color=SEC, fontsize=9)
+        base_pos = np.mean([by[(s, "pos", n)]["pos"] for s in seeds])
+        ax.set(xlim=(-.032, .032), ylim=(-.005, .112), xlabel="POS change from POS only", ylabel="A change from POS only (at the run's own x)")
+        ax.set_title(f"{n} UAV{'s' if n > 1 else ''} (POS only: POS {base_pos:.3f}). Upper right is better")
+        clean(ax)
+        ax.grid(axis="x", color=GRID, lw=.8)
+        ax = axs[1, j]
+        base = np.mean([by[(s, "pos", n)]["below"] for s in seeds])
+        for i, x in enumerate(xs):
+            for k, w in enumerate(ws):
+                v = np.mean([by[(s, "score", n, x, w)]["below"] for s in seeds])
+                ax.scatter(i + (k - 1)*.2, v, s=62, marker=mark[w], color=col[x], edgecolor=SURFACE, lw=1.2, zorder=3)
+        ax.axhline(base, color=SEC, lw=1)
+        ax.set(xlim=(-.5, 2.5), ylim=(0, 400), xticks=range(3), xticklabels=[f"x {x:.0f}" for x in xs], ylabel="Seconds with a pair closer than 300 m")
+        ax.set_title(f"Time close together, no constraint (line: POS only, {base:.0f} s)" if n > 1 else "One UAV has no pairs")
+        clean(ax)
+    keys = [Line2D([], [], marker="o", ls="", color=col[x], ms=7, label=f"x {x:.0f}") for x in xs]
+    keys += [Line2D([], [], marker=mark[w], ls="", color=MUTED, ms=7, label=f"w {w:g}") for w in ws]
+    keys.append(Line2D([], [], color=MUTED, lw=.8, label="1 standard error"))
+    fig.legend(handles=keys, loc="outside lower center", ncol=7)
+    fig.suptitle("SAROPS with A + w POS, scenarios 500-509: x 70 or 85 with w 1 gain A without losing POS; w 0.5 gains a little more A but loses POS with 3 or 5 UAVs", x=.01, ha="left", fontsize=12)
+    fig.savefig(out/"tradeoff.png", dpi=125)
+    plt.close(fig)
+
+
 def main():
     warnings.filterwarnings("ignore")
     ap = argparse.ArgumentParser()
@@ -206,9 +255,13 @@ def main():
     ap.add_argument("--x", type=float, default=70.0)
     ap.add_argument("--w", type=float, default=1.0)
     ap.add_argument("--seeds", type=int, nargs="*", default=None, help="map scenarios; default the largest and smallest gain in A")
+    ap.add_argument("--tradeoff", action="store_true", help="only the x and w overview of a sweep")
     args = ap.parse_args()
     style()
     res = [json.loads(line) for line in (args.input/"results.jsonl").read_text().splitlines()]
+    if args.tradeoff:
+        sweep_tradeoff(res, args.input)
+        return
     res = [r for r in res if r["n"] == args.n and (r["config"] != "score" or (r["x"] == args.x and r["w"] == args.w))]
     summary(res, args.input, args.n, args.x, args.w)
     maps(res, args.input, args.n, args.x, args.w, args.seeds)
