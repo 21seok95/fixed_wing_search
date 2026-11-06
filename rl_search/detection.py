@@ -20,6 +20,10 @@ Design agreed with the user on 2026-11-06 (docs/real_map_todo.md, "POD 설계 �
 - ``Gimbal``: a roll / pitch gimbal that takes out the UAV attitude at once (within its roll / depression range)
   and turns its line of sight toward a command (forward 45 deg, or a ground point) at a limited slew rate.
 - ``PassCap``: one pass over a particle finds at most ``pass_pod_max`` = 0.7.
+- Resolution: pixels across a 3 m target at the slant range give a Johnson-type factor (50 % at 12 px),
+  normalised to 1 at the nominal 45 deg view centre, so it only matters when the gimbal looks farther out.
+- Oblique occlusion: partial cover A < 1 (forest, village, shrub) becomes A ** (sin 45 deg / sin depression), so a
+  shallow view sees less under canopy (Beer-Lambert path length). Terrain masking by hills is not modelled.
 - Expected POD (no noise) for planning and belief updates; ``noisy=True`` adds attitude-rate noise,
   pointing error and eps for "true" detections in evaluation.
 
@@ -62,6 +66,10 @@ class DetectionConfig:
     image_px: int = 1920                # image width in pixels (for pixels on target only)
     target_m: float = 3.0
     pass_pod_max: float = 0.7           # most one pass can find (user 2026-11-06, as the earlier SAROPS sensor)
+    res_n50_px: float = 12.0            # resolution factor: pixels across the target at which detection halves ...
+    res_exp: float = 3.0                # ... (Johnson-type curve); normalised to 1 at the 45 deg image centre
+    use_resolution: bool = True
+    oblique_occlusion: bool = True      # partial cover (A < 1) grows with the path through it: A ** (sin 45 / sin dep)
     pass_gap_s: float = 2.0             # a pass ends after this long out of every image
     dt_s: float = 1.0
     # noise, evaluation only
@@ -75,6 +83,17 @@ class DetectionConfig:
             return np.where(x <= self.edge_plateau, 1.0,
                             1 - (1 - self.edge_value)*(x - self.edge_plateau)/max(1 - self.edge_plateau, 1e-9))
         return h(u)*h(v)
+
+    def resolution_factor(self, slant_m):
+        """Detection factor of the pixels across the target at this slant range, 1 at the nominal view centre."""
+        ifov = np.radians(self.hfov_deg)/self.image_px
+
+        def curve(r):
+            n = self.target_m/(np.maximum(r, 1.0)*ifov)
+            x = (n/self.res_n50_px)**self.res_exp
+            return x/(1 + x)
+        ref = curve(self.alt_m/np.sin(np.radians(self.depression_deg)))
+        return np.minimum(curve(slant_m)/ref, 1.0)
 
     def rate_factor(self, omega_dps):
         w = np.abs(np.asarray(omega_dps, float))
@@ -207,9 +226,21 @@ class Detector:
         inside = front & (np.abs(uu) <= 1) & (np.abs(vv) <= 1)             # (M, N)
         self.last_inside = inside.any(axis=0)
         g = np.where(inside, cfg.edge_factor(uu, vv), 0.0)
+        if cfg.use_resolution:
+            slant = np.sqrt((px[None, :] - x[:, None])**2 + (py[None, :] - y[:, None])**2 + cfg.alt_m**2)
+            g = g*np.where(inside, cfg.resolution_factor(slant), 0.0)
         rate = cfg.rate_factor(omega)                                      # (M,)
         expo = (g*rate[:, None]).sum(axis=0)                               # several UAVs add their rates
-        lam = cfg.lam0*self.visibility(px, py)*expo
+        A = self.visibility(px, py)
+        if cfg.oblique_occlusion:
+            # line of sight through canopy / buildings: transmission scales with the slant path, Beer-Lambert style
+            slant = np.sqrt((px[None, :] - x[:, None])**2 + (py[None, :] - y[:, None])**2 + cfg.alt_m**2)
+            k = np.sin(np.radians(cfg.depression_deg))/(cfg.alt_m/slant)          # (M, N), 1 at the nominal angle
+            Ak = np.where(A[None, :] < 1, A[None, :]**k, 1.0)
+            expo = (g*rate[:, None]*Ak).sum(axis=0)
+            lam = cfg.lam0*expo
+        else:
+            lam = cfg.lam0*A*expo
         if eps is not None:
             lam = lam*eps
         return 1 - np.exp(-lam*cfg.dt_s)
