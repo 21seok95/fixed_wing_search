@@ -24,7 +24,9 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
-from matplotlib.colors import LightSource
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.colors import LightSource, to_rgba
+from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.widgets import Button, CheckButtons, RadioButtons, Slider
 
@@ -93,6 +95,21 @@ def background(ax, net):
     ax.set_xlabel("동쪽 (km)"); ax.set_ylabel("북쪽 (km)")
 
 
+def map_image(net, px: int = 2000):
+    """Terrain and roads drawn once off-screen into one RGBA image (redrawing 27 k road lines was half
+    of every frame); returns the image and its extent in km."""
+    fig = Figure(figsize=(px/100, px/100), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes([0, 0, 1, 1])
+    background(ax, net)
+    for col, lw in zip(ax.collections, (.6, .6, 1.0)):
+        col.set_linewidth(lw)
+    ax.set_axis_off()
+    fig.canvas.draw()
+    img = np.asarray(fig.canvas.buffer_rgba()).copy()
+    return img, (*ax.get_xlim(), *ax.get_ylim())
+
+
 def summarize(res):
     st = res.state
     shares = np.stack([(st == s).mean(axis=1) for s in range(len(STATE_NAMES))], axis=1)
@@ -145,7 +162,12 @@ class Tuner:
         self.ax_share = self.fig.add_axes([0.58, 0.72, 0.33, 0.24])
         self.ax_dist = self.fig.add_axes([0.58, 0.45, 0.33, 0.20])
         self.ax_speed = self.fig.add_axes([0.58, 0.30, 0.33, 0.10])
-        background(self.ax_map, net)
+        img, ext = map_image(net)
+        self.ax_map.imshow(img, extent=ext, origin="upper", interpolation="antialiased")
+        a = net.terr.axis/1000
+        self.ax_map.set_xlim(a[0], a[-1]); self.ax_map.set_ylim(a[0], a[-1]); self.ax_map.set_aspect("equal")
+        self.ax_map.set_xlabel("동쪽 (km)"); self.ax_map.set_ylabel("북쪽 (km)")
+        self.colors = np.array([to_rgba(STATE_COLORS[s]) for s in range(len(STATE_NAMES))])
         self.scat = self.ax_map.scatter([], [], s=4, lw=0, zorder=5)
         self.lkp_mark, = self.ax_map.plot([], [], marker="*", ms=15, mfc="yellow", mec="black", zorder=6)
         self.arrow = None
@@ -155,7 +177,18 @@ class Tuner:
 
         ax_t = self.fig.add_axes([0.06, 0.255, 0.45, 0.025])
         self.s_time = Slider(ax_t, "시간 (분)", 0, cfg.duration_s/60, valinit=min(30, cfg.duration_s/60), valstep=1/6)
+        self.s_time.drawon = False                                 # redrawn by blitting in draw_time
         self.s_time.on_changed(lambda _: self.draw_time())
+        self.speed_bins = np.arange(0, 102.5, 2.5)
+        self.stairs = {s_: self.ax_speed.stairs(np.zeros(len(self.speed_bins) - 1), self.speed_bins, color=STATE_COLORS[s_],
+                                                lw=1.8) for s_ in (FAST, SLOW, OFF)}
+        self.ax_speed.set_yticks([]); self.ax_speed.set_xlabel("속도 (km/h)", fontsize=8)
+        self.speed_title = self.ax_speed.set_title("", fontsize=9)
+        self.bg, self.anim = None, []
+        self.fig.canvas.mpl_connect("draw_event", self.on_draw)
+        self.param_timer = self.fig.canvas.new_timer(interval=400)  # run once the slider stops moving
+        self.param_timer.single_shot = True
+        self.param_timer.add_callback(self.run)
 
         self.radio = RadioButtons(self.fig.add_axes([0.01, 0.03, 0.09, 0.15]), list(GROUPS), active=0)
         self.radio.on_clicked(self.show_group)
@@ -175,13 +208,13 @@ class Tuner:
         self.b_run.on_clicked(lambda _: self.run())
         self.b_save = Button(self.fig.add_axes([0.92, 0.25, 0.07, 0.04]), "저장")
         self.b_save.on_clicked(lambda _: self.save())
-        self.b_play = Button(self.fig.add_axes([0.53, 0.25, 0.04, 0.035]), "재생")
+        self.b_play = Button(self.fig.add_axes([0.545, 0.25, 0.035, 0.035]), "재생")
         self.b_play.on_clicked(lambda _: self.toggle_play())
         self.playing = False
         self.timer = self.fig.canvas.new_timer(interval=120)
         self.timer.add_callback(self.tick)
         self.fig.canvas.mpl_connect("key_press_event", self.on_key)
-        self.status = self.fig.text(0.58, 0.97, "", fontsize=10)
+        self.status = self.fig.text(0.58, 0.985, "", fontsize=10)
         self.show_group(list(GROUPS)[0])
         self.run()
 
@@ -219,7 +252,8 @@ class Tuner:
 
     def on_param(self, name):
         if self.checks.get_status()[0]:
-            self.run()
+            self.param_timer.stop()
+            self.param_timer.start()
 
     def on_check(self, label):
         if label != "자동 실행" and self.checks.get_status()[0]:
@@ -259,28 +293,61 @@ class Tuner:
         ax.plot(self.tmin, self.pct[:, 1], color="#4a6fa5", lw=2)
         ax.set_xlim(0, self.tmin[-1]); ax.set_title("LKP에서 거리 km (중앙값, 10–90%)", fontsize=10)
         self.vl_dist = ax.axvline(0, color="red", lw=1)
+        # speed histograms of every stored time, as particle shares per bin
+        n = self.cfg.particles
+        sp = self.res.speed_kmh.astype(float)
+        idx = np.clip(np.digitize(sp, self.speed_bins) - 1, 0, len(self.speed_bins) - 2)
+        self.hist = {}
+        for s_ in (FAST, SLOW, OFF):
+            m = self.res.state == s_
+            h = np.zeros((len(sp), len(self.speed_bins) - 1))
+            rows = np.broadcast_to(np.arange(len(sp))[:, None], sp.shape)
+            np.add.at(h, (rows[m], idx[m]), 1.0/n)
+            self.hist[s_] = h
+        top = max(h[1:].max() for h in self.hist.values())          # t = 0 holds every particle at 0 km/h
+        self.ax_speed.set_ylim(0, max(top, 1e-3)*1.05)
+        self.ax_speed.set_xlim(0, self.cfg.speed_cap_kmh + 5)
+        sl = self.s_time
+        self.anim = [self.scat, self.vl_share, self.vl_dist, *self.stairs.values(), self.speed_title,
+                     sl.poly, sl.valtext, *([sl._handle] if hasattr(sl, "_handle") else [])]
+        for art in self.anim:
+            art.set_animated(True)
         self.status.set_text(f"particle {self.cfg.particles}개, LKP ({lk[0]:.1f}, {lk[1]:.1f}) km, "
                              f"방향 {self.view['heading']:.0f}°, seed {self.view['seed']}")
-        self.draw_time()
+        self.set_time_artists()
+        self.bg = None
+        self.fig.canvas.draw_idle()
 
-    def draw_time(self):
+    def set_time_artists(self):
         k = min(int(round(self.s_time.val*60/self.cfg.save_dt_s)), len(self.res.state) - 1)
         st = self.res.state[k]
         self.scat.set_offsets(self.res.track[k]/1000)
-        self.scat.set_color([STATE_COLORS[s] for s in st])
+        self.scat.set_facecolor(self.colors[st])
         tm = self.s_time.val
         self.vl_share.set_xdata([tm, tm]); self.vl_dist.set_xdata([tm, tm])
-        ax = self.ax_speed
-        ax.clear()
-        bins = np.arange(0, self.cfg.speed_cap_kmh + 5, 2.5)
-        for s_ in (FAST, SLOW, OFF):
-            m = st == s_
-            if m.any():
-                ax.hist(self.res.speed_kmh[k, m].astype(float), bins=bins, color=STATE_COLORS[s_], alpha=.7)
-        ax.set_title(f"{tm:.1f}분 속도 분포 (km/h): " + ", ".join(
-            f"{STATE_NAMES[s]} {(st == s).mean():.0%}" for s in range(len(STATE_NAMES))), fontsize=9)
-        ax.set_yticks([])
-        self.fig.canvas.draw_idle()
+        for s_, art in self.stairs.items():
+            art.set_data(self.hist[s_][k])
+        self.speed_title.set_text(f"{tm:.1f}분 속도 분포: " + ", ".join(
+            f"{STATE_NAMES[s]} {(st == s).mean():.0%}" for s in range(len(STATE_NAMES))))
+
+    def on_draw(self, _ev):
+        """After a full redraw: keep the static picture and draw the moving artists on top."""
+        c = self.fig.canvas
+        self.bg = c.copy_from_bbox(self.fig.bbox)
+        for art in self.anim:
+            self.fig.draw_artist(art)
+
+    def draw_time(self):
+        self.set_time_artists()
+        c = self.fig.canvas
+        if self.bg is None or not getattr(c, "supports_blit", False):
+            c.draw_idle()
+            return
+        c.restore_region(self.bg)
+        for art in self.anim:
+            self.fig.draw_artist(art)
+        c.blit(self.fig.bbox)
+        c.flush_events()
 
     def toggle_play(self):
         self.playing = not self.playing
