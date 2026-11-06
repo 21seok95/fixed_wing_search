@@ -17,8 +17,9 @@ Design agreed with the user on 2026-11-06 (docs/real_map_todo.md, "POD 설계 �
   edge (1.5 m against a ~190 m footprint) and pixels on target (27-34 px at 1920 px across): both small.
 - Relative motion and the footprint sweep in turns are not factors: the footprint and the particles are
   moved every ``dt_s`` (1 s), so the dwell time follows from the geometry.
-- ``Gimbal``: a roll / pitch gimbal that follows a commanded line of sight (forward 45 deg, or a ground point)
-  within its roll / depression limits and slew rate; its slew rate is added to the turn rate for f.
+- ``Gimbal``: a roll / pitch gimbal that takes out the UAV attitude at once (within its roll / depression range)
+  and turns its line of sight toward a command (forward 45 deg, or a ground point) at a limited slew rate.
+- ``PassCap``: one pass over a particle finds at most ``pass_pod_max`` = 0.7.
 - Expected POD (no noise) for planning and belief updates; ``noisy=True`` adds attitude-rate noise,
   pointing error and eps for "true" detections in evaluation.
 
@@ -60,6 +61,8 @@ class DetectionConfig:
     edge_value: float = 0.5             # ... falling linearly to this at the image edge, per axis (corner 0.25)
     image_px: int = 1920                # image width in pixels (for pixels on target only)
     target_m: float = 3.0
+    pass_pod_max: float = 0.7           # most one pass can find (user 2026-11-06, as the earlier SAROPS sensor)
+    pass_gap_s: float = 2.0             # a pass ends after this long out of every image
     dt_s: float = 1.0
     # noise, evaluation only
     att_rate_std_dps: float = 3.0
@@ -202,6 +205,7 @@ class Detector:
             frame = camera_frame(yaw, roll, cfg, az_world, pe)
         uu, vv, front = image_coords(px, py, x, y, frame, cfg)
         inside = front & (np.abs(uu) <= 1) & (np.abs(vv) <= 1)             # (M, N)
+        self.last_inside = inside.any(axis=0)
         g = np.where(inside, cfg.edge_factor(uu, vv), 0.0)
         rate = cfg.rate_factor(omega)                                      # (M,)
         expo = (g*rate[:, None]).sum(axis=0)                               # several UAVs add their rates
@@ -237,51 +241,92 @@ def _rz(a):
 
 
 class Gimbal:
-    """Roll / pitch gimbal that follows a commanded line of sight within its limits and slew rate.
+    """Roll / pitch gimbal: fast attitude stabilisation, slow pointing.
 
-    Body frame: x forward, y left, z up; the UAV roll (positive = left wing down) is R_x(-roll), so
-    world = R_z(yaw) R_x(-roll) body. Gimbal: outer roll gamma about body x, inner depression theta from body x;
-    boresight in the body frame = R_x(gamma) (cos theta, 0, -sin theta). Holding the forward 45 deg view needs
-    gamma = UAV roll; beyond ``roll_lim_deg`` the view tilts, as in ``camera_frame``.
+    The pointing state is a line of sight in the world frame. Each step it turns toward the commanded line of
+    sight by at most ``slew_dps`` (commanded re-pointing is slow). The UAV attitude is taken out at once
+    (inertial stabilisation and the autopilot's feed-forward of planned turns are fast compared with the 1 s
+    step), limited only by the mechanical range: roll ``roll_lim_deg``, depression ``dep_min_deg`` to
+    ``dep_max_deg``. Beyond the range the view is clipped (forward 45 deg view at a roll above the limit tilts
+    as in ``camera_frame``).
+
+    Body frame: x forward, y left, z up; world = R_z(yaw) R_x(-roll) body (roll positive = left wing down).
+    Gimbal: outer roll gamma about body x, inner depression theta from body x; boresight = R_x(gamma) (cos theta, 0,
+    -sin theta). The image rate for the stability factor is max(UAV turn rate, line-of-sight rate in the world):
+    the forward view in a turn turns with the heading (both equal), a ground-point stare in a turn moves little
+    but still has the body motion, a re-point on a straight line moves the scene through the image.
     """
 
-    def __init__(self, n_uav: int, dcfg: DetectionConfig, gcfg: GimbalConfig | None = None):
+    def __init__(self, n_uav: int, dcfg: DetectionConfig, gcfg: GimbalConfig | None = None, yaw0=0.0):
         self.d, self.g = dcfg, gcfg or GimbalConfig()
+        self.los = self.los_forward(np.full(n_uav, yaw0, float))
         self.gam = np.zeros(n_uav)
         self.th = np.full(n_uav, np.radians(dcfg.depression_deg))
 
     def los_forward(self, yaw):
         dep = np.radians(self.d.depression_deg)
-        yaw = np.atleast_1d(yaw)
+        yaw = np.atleast_1d(np.asarray(yaw, float))
         return np.stack([np.cos(dep)*np.cos(yaw), np.cos(dep)*np.sin(yaw), -np.full_like(yaw, np.sin(dep))], 1)
 
     def los_point(self, x, y, tx, ty):
-        d = np.stack([np.atleast_1d(tx) - np.atleast_1d(x), np.atleast_1d(ty) - np.atleast_1d(y),
-                      np.full(len(np.atleast_1d(x)), -self.d.alt_m)], 1)
+        x = np.atleast_1d(np.asarray(x, float))
+        d = np.stack([np.broadcast_to(tx, x.shape) - x, np.broadcast_to(ty, x.shape) - np.atleast_1d(y),
+                      np.full(len(x), -self.d.alt_m)], 1)
         return d/np.linalg.norm(d, axis=1, keepdims=True)
 
-    def step(self, yaw, roll, los_world, dt):
-        """Move toward the commanded line of sight; return the camera frame (f, r, u) and the slew rate (deg/s)."""
+    def reset(self, yaw):
+        self.los = self.los_forward(yaw)
+
+    def step(self, yaw, roll, los_cmd, dt):
+        """Turn toward ``los_cmd``; return the camera frame (f, r, u) and the line-of-sight rate (deg/s)."""
         yaw, roll = np.atleast_1d(yaw).astype(float), np.atleast_1d(roll).astype(float)
-        body = np.einsum("mij,mj->mi", _rx(roll), np.einsum("mij,mj->mi", _rz(-yaw), los_world))
-        th_c = np.arccos(np.clip(body[:, 0], -1, 1))
-        ga_c = np.arctan2(body[:, 1], -body[:, 2])
+        old = self.los
+        cosang = np.clip((old*los_cmd).sum(1), -1, 1)
+        ang = np.arccos(cosang)
+        step = np.radians(self.g.slew_dps)*dt
+        frac = np.where(ang > 1e-9, np.minimum(1.0, step/np.maximum(ang, 1e-12)), 1.0)
+        perp = los_cmd - old*cosang[:, None]
+        nrm = np.linalg.norm(perp, axis=1, keepdims=True)
+        perp = np.where(nrm > 1e-12, perp/np.maximum(nrm, 1e-12), 0.0)
+        a = (ang*frac)[:, None]
+        self.los = old*np.cos(a) + perp*np.sin(a)
+        los_rate = np.degrees(ang*frac)/max(dt, 1e-9)
+        # attitude taken out at once, within the mechanical range
+        body = np.einsum("mij,mj->mi", _rx(roll), np.einsum("mij,mj->mi", _rz(-yaw), self.los))
         g = self.g
-        th_c = np.clip(th_c, np.radians(g.dep_min_deg), np.radians(g.dep_max_deg))
-        ga_c = np.clip(ga_c, -np.radians(g.roll_lim_deg), np.radians(g.roll_lim_deg))
-        step = np.radians(g.slew_dps)*dt
-        dth = np.clip(th_c - self.th, -step, step)
-        dga = np.clip(ga_c - self.gam, -step, step)
-        self.th += dth
-        self.gam += dga
-        slew = np.degrees(np.maximum(np.abs(dth), np.abs(dga)))/max(dt, 1e-9)
+        self.th = np.clip(np.arccos(np.clip(body[:, 0], -1, 1)), np.radians(g.dep_min_deg), np.radians(g.dep_max_deg))
+        self.gam = np.clip(np.arctan2(body[:, 1], -body[:, 2]), -np.radians(g.roll_lim_deg), np.radians(g.roll_lim_deg))
         th = self.th
         f = np.stack([np.cos(th), np.zeros_like(th), -np.sin(th)], 1)
         r = np.stack([np.zeros_like(th), -np.ones_like(th), np.zeros_like(th)], 1)
         u = np.stack([np.sin(th), np.zeros_like(th), np.cos(th)], 1)
         to_world = np.einsum("mij,mjk->mik", _rz(yaw), np.einsum("mij,mjk->mik", _rx(-roll), _rx(self.gam)))
         frame = tuple(np.einsum("mij,mj->mi", to_world, v) for v in (f, r, u))
-        return frame, slew
+        return frame, los_rate
+
+
+class PassCap:
+    """Caps the probability one pass can add (``pass_pod_max``, 0.7 as in the earlier SAROPS sensor, S.11).
+
+    A pass is a run of slices in which a particle is in an image; it ends when the particle has been out of
+    every image for more than ``pass_gap_s``. Hazard beyond -ln(1 - cap) within a pass is dropped.
+    """
+
+    def __init__(self, n: int, cfg: DetectionConfig):
+        self.cfg = cfg
+        self.acc = np.zeros(n)
+        self.out = np.full(n, np.inf)
+        self.hmax = -np.log(1 - cfg.pass_pod_max) if cfg.pass_pod_max < 1 else np.inf
+
+    def apply(self, p, inside):
+        """Capped probability of this slice from the uncapped one ``p`` and the in-image mask (N,)."""
+        dt = self.cfg.dt_s
+        self.out = np.where(inside, 0.0, self.out + dt)
+        self.acc[self.out > self.cfg.pass_gap_s] = 0.0
+        h = -np.log1p(-np.minimum(p, 1 - 1e-12))
+        h = np.minimum(h, np.maximum(self.hmax - self.acc, 0.0))
+        self.acc += h
+        return -np.expm1(-h)
 
 
 def load_landcover(region: str = "chungju", cell_m: float = 25.0) -> np.ndarray:
