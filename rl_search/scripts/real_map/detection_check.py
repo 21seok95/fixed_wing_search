@@ -112,10 +112,11 @@ def main():
     cols = ["#2a4d7a", "#c0392b"]
     pod2, dwell2, _ = res[list(res)[0]]
     v = [pod2[first & np.isclose(A, val)].mean() for val, _ in cls]
-    theory = [1 - np.exp(-val*dwell2[first].mean()) for val, _ in cls]
+    lam0 = DetectionConfig().lam0
+    theory = [1 - np.exp(-lam0*val*dwell2[first].mean()) for val, _ in cls]
     xs = np.arange(len(cls))
     ax.bar(xs - .19, v, width=.36, color=cols[0], label="2축, 시뮬레이션 (지형 칸별 평균)")
-    ax.bar(xs + .19, theory, width=.36, color="#bbbbbb", label=f"이론 1 − exp(−A × {dwell2[first].mean():.1f}초)")
+    ax.bar(xs + .19, theory, width=.36, color="#bbbbbb", label=f"이론 1 − exp(−λ₀ A × {dwell2[first].mean():.1f}초), 화면 위치 배율 없음")
     for xx, vv in zip(xs - .19, v):
         ax.text(xx, vv + .02, f"{vv:.2f}", ha="center", fontsize=9)
     ax.set_xticks(range(len(cls)), [f"{n}\n(A {val})" for val, n in cls]); ax.set_ylim(0, 1.1)
@@ -130,7 +131,7 @@ def main():
                 label=f"{name}: 열린 땅 평균 POD {pod[open_].mean():.2f}, 머문 시간 중앙값 {np.median(dwell[open_]):.1f}초")
     ax.set_xlabel("U턴 구역에서 발자국 안에 머문 시간 (초)"); ax.set_ylabel("땅 칸 비율")
     ax.set_title(f"U턴 구역 (롤 {ROLL:.0f}°, 반경 {R:.0f} m)", fontsize=11); ax.legend(fontsize=9)
-    fig.suptitle(f"충주 남서부 농경지, 33 m/s · 고도 500 m · 45° 아래 앞쪽 보기, λ₀ = 1/s, 1초 단위 적분", fontsize=14)
+    fig.suptitle(f"충주 남서부 농경지, 33 m/s · 고도 500 m · 45° 아래 앞쪽 보기, λ₀ = {DetectionConfig().lam0}/s, 1초 단위 적분", fontsize=14)
     fig.savefig(DATA/"chungju"/"detection_check.png", dpi=105)
     plt.close(fig)
 

@@ -17,6 +17,8 @@ Design agreed with the user on 2026-11-06 (docs/real_map_todo.md, "POD 설계 �
   edge (1.5 m against a ~190 m footprint) and pixels on target (27-34 px at 1920 px across): both small.
 - Relative motion and the footprint sweep in turns are not factors: the footprint and the particles are
   moved every ``dt_s`` (1 s), so the dwell time follows from the geometry.
+- ``Gimbal``: a roll / pitch gimbal that follows a commanded line of sight (forward 45 deg, or a ground point)
+  within its roll / depression limits and slew rate; its slew rate is added to the turn rate for f.
 - Expected POD (no noise) for planning and belief updates; ``noisy=True`` adds attitude-rate noise,
   pointing error and eps for "true" detections in evaluation.
 
@@ -43,7 +45,7 @@ class DetectionConfig:
     look: str = "forward"               # forward / left / right (2-axis: relative to the heading)
     gimbal: str = "2axis"               # 2axis (roll, pitch) or 3axis (azimuth held on the ground)
     gimbal_roll_deg: float = 45.0
-    lam0: float = 1.0                   # detection rate (1/s) in full view
+    lam0: float = 0.5                   # detection rate (1/s) in full view (user 2026-11-06: 1.0 was too optimistic)
     vis_open: float = 1.0               # road, crop land, bare ground, water
     vis_shrub: float = 0.85             # shrub, grass, wetland, moss
     vis_village: float = 0.5            # built-up land outside the large-city zones (and the zones)
@@ -54,8 +56,8 @@ class DetectionConfig:
     rate_ok_dps: float = 5.0            # image-stability factor: 1 up to this turn rate
     rate_floor_dps: float = 20.0        # ... falling linearly to rate_floor at this rate
     rate_floor: float = 0.2
-    edge_plateau: float = 0.6           # image-position factor g: 1 for |u|, |v| up to this ...
-    edge_value: float = 0.7             # ... falling linearly to this at the image edge, per axis (corner 0.49)
+    edge_plateau: float = 0.5           # image-position factor g: 1 for |u|, |v| up to this ...
+    edge_value: float = 0.5             # ... falling linearly to this at the image edge, per axis (corner 0.25)
     image_px: int = 1920                # image width in pixels (for pixels on target only)
     target_m: float = 3.0
     dt_s: float = 1.0
@@ -183,11 +185,12 @@ class Detector:
         c = np.clip(np.rint((px - t.axis[0])/t.cell).astype(int), 0, n - 1)
         return self.A[r, c]
 
-    def slice_pod(self, px, py, x, y, yaw, roll, omega_dps, rng=None, az_world=None, eps=None):
+    def slice_pod(self, px, py, x, y, yaw, roll, omega_dps, rng=None, az_world=None, eps=None, frame=None):
         """Detection probability of each particle in one time slice of ``cfg.dt_s`` under M UAVs: (N,).
 
-        omega_dps: turn rate of each UAV (deg/s). With ``rng`` the noise model is used (attitude-rate noise,
-        pointing error; ``eps`` per particle, drawn by the caller once per pass).
+        omega_dps: turn rate of each UAV (deg/s); with a ``Gimbal`` pass its frame and add its slew rate.
+        With ``rng`` the noise model is used (attitude-rate noise, pointing error; ``eps`` per particle,
+        drawn by the caller once per pass).
         """
         cfg = self.cfg
         x, y, yaw, roll, omega = (np.atleast_1d(np.asarray(v, float)) for v in (x, y, yaw, roll, omega_dps))
@@ -195,7 +198,9 @@ class Detector:
         if rng is not None:
             omega = np.abs(omega) + np.abs(rng.normal(0, cfg.att_rate_std_dps, len(x)))
             pe = rng.normal(0, np.radians(cfg.point_err_deg), (len(x), 2))
-        uu, vv, front = image_coords(px, py, x, y, camera_frame(yaw, roll, cfg, az_world, pe), cfg)
+        if frame is None:
+            frame = camera_frame(yaw, roll, cfg, az_world, pe)
+        uu, vv, front = image_coords(px, py, x, y, frame, cfg)
         inside = front & (np.abs(uu) <= 1) & (np.abs(vv) <= 1)             # (M, N)
         g = np.where(inside, cfg.edge_factor(uu, vv), 0.0)
         rate = cfg.rate_factor(omega)                                      # (M,)
@@ -208,6 +213,75 @@ class Detector:
     def draw_eps(self, n, rng):
         s = self.cfg.eps_log_std
         return np.exp(rng.normal(-s*s/2, s, n))                           # mean 1
+
+
+@dataclass
+class GimbalConfig:
+    """2-axis roll / pitch gimbal limits (assumed small stabilised gimbal, user 2026-11-06: pitch 0-90 is too much)."""
+    roll_lim_deg: float = 45.0           # outer roll about the body x axis
+    dep_min_deg: float = 20.0            # inner pitch: depression from the body x axis
+    dep_max_deg: float = 70.0
+    slew_dps: float = 40.0               # rate limit of each axis
+
+
+def _rx(a):
+    c, s = np.cos(a), np.sin(a)
+    o, z = np.ones_like(a), np.zeros_like(a)
+    return np.stack([np.stack([o, z, z], -1), np.stack([z, c, -s], -1), np.stack([z, s, c], -1)], -2)
+
+
+def _rz(a):
+    c, s = np.cos(a), np.sin(a)
+    o, z = np.ones_like(a), np.zeros_like(a)
+    return np.stack([np.stack([c, -s, z], -1), np.stack([s, c, z], -1), np.stack([z, z, o], -1)], -2)
+
+
+class Gimbal:
+    """Roll / pitch gimbal that follows a commanded line of sight within its limits and slew rate.
+
+    Body frame: x forward, y left, z up; the UAV roll (positive = left wing down) is R_x(-roll), so
+    world = R_z(yaw) R_x(-roll) body. Gimbal: outer roll gamma about body x, inner depression theta from body x;
+    boresight in the body frame = R_x(gamma) (cos theta, 0, -sin theta). Holding the forward 45 deg view needs
+    gamma = UAV roll; beyond ``roll_lim_deg`` the view tilts, as in ``camera_frame``.
+    """
+
+    def __init__(self, n_uav: int, dcfg: DetectionConfig, gcfg: GimbalConfig | None = None):
+        self.d, self.g = dcfg, gcfg or GimbalConfig()
+        self.gam = np.zeros(n_uav)
+        self.th = np.full(n_uav, np.radians(dcfg.depression_deg))
+
+    def los_forward(self, yaw):
+        dep = np.radians(self.d.depression_deg)
+        yaw = np.atleast_1d(yaw)
+        return np.stack([np.cos(dep)*np.cos(yaw), np.cos(dep)*np.sin(yaw), -np.full_like(yaw, np.sin(dep))], 1)
+
+    def los_point(self, x, y, tx, ty):
+        d = np.stack([np.atleast_1d(tx) - np.atleast_1d(x), np.atleast_1d(ty) - np.atleast_1d(y),
+                      np.full(len(np.atleast_1d(x)), -self.d.alt_m)], 1)
+        return d/np.linalg.norm(d, axis=1, keepdims=True)
+
+    def step(self, yaw, roll, los_world, dt):
+        """Move toward the commanded line of sight; return the camera frame (f, r, u) and the slew rate (deg/s)."""
+        yaw, roll = np.atleast_1d(yaw).astype(float), np.atleast_1d(roll).astype(float)
+        body = np.einsum("mij,mj->mi", _rx(roll), np.einsum("mij,mj->mi", _rz(-yaw), los_world))
+        th_c = np.arccos(np.clip(body[:, 0], -1, 1))
+        ga_c = np.arctan2(body[:, 1], -body[:, 2])
+        g = self.g
+        th_c = np.clip(th_c, np.radians(g.dep_min_deg), np.radians(g.dep_max_deg))
+        ga_c = np.clip(ga_c, -np.radians(g.roll_lim_deg), np.radians(g.roll_lim_deg))
+        step = np.radians(g.slew_dps)*dt
+        dth = np.clip(th_c - self.th, -step, step)
+        dga = np.clip(ga_c - self.gam, -step, step)
+        self.th += dth
+        self.gam += dga
+        slew = np.degrees(np.maximum(np.abs(dth), np.abs(dga)))/max(dt, 1e-9)
+        th = self.th
+        f = np.stack([np.cos(th), np.zeros_like(th), -np.sin(th)], 1)
+        r = np.stack([np.zeros_like(th), -np.ones_like(th), np.zeros_like(th)], 1)
+        u = np.stack([np.sin(th), np.zeros_like(th), np.cos(th)], 1)
+        to_world = np.einsum("mij,mjk->mik", _rz(yaw), np.einsum("mij,mjk->mik", _rx(-roll), _rx(self.gam)))
+        frame = tuple(np.einsum("mij,mj->mi", to_world, v) for v in (f, r, u))
+        return frame, slew
 
 
 def load_landcover(region: str = "chungju", cell_m: float = 25.0) -> np.ndarray:
