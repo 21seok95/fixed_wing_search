@@ -20,6 +20,19 @@
  "bridge_groups": 158,
  "surface_fast": 0.042644174539535125,
  "surface_slow": 0.05524469270334671,
+ "cell_m": 50.0,
+ "land_parts_km2": {
+  "bridges_open": [
+   3505.2,
+   0.1,
+   0.1
+  ],
+  "bridges_closed": [
+   1954.5,
+   1547.6,
+   1.1
+  ]
+ },
  "graph_nodes": 23573,
  "graph_edges": 27452,
  "road_km_fast": 3455.176513671875,

@@ -4,8 +4,9 @@ Run from the repository root:
     python -m rl_search.scripts.make_real_terrain --region chungju
 
 Raw downloads are cached in rl_search/data/real/<region>/raw (use --refresh to fetch again).
-Outputs: rl_search/data/terrain_real_<region>_60km.npz, rl_search/data/real/<region>/road_graph.npz
-and figures in rl_search/data/real/<region>/.
+Outputs: rl_search/data/terrain_real_<region>_60km[_<cell>m].npz (no suffix for 50 m),
+rl_search/data/real/<region>/road_graph.npz and figures / stats in rl_search/data/real/<region>/
+(file names end in _<cell>m for cells other than 50 m).
 """
 from __future__ import annotations
 
@@ -60,16 +61,18 @@ def legend_extra():
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--region", default="chungju", choices=sorted(REGIONS))
+    ap.add_argument("--cell", type=float, default=50.0, help="Grid cell size in metres")
     ap.add_argument("--refresh", action="store_true", help="Download the raw data again")
     args = ap.parse_args()
     region = REGIONS[args.region]
     out_dir = DATA/region.key
+    sfx = "" if args.cell == 50 else f"_{args.cell:g}m"
     raw = fetch_raw(region, refresh=args.refresh)
-    terr, g, lc = build_real_terrain(region, raw)
+    terr, g, lc = build_real_terrain(region, raw, cell_m=args.cell)
 
-    path = Path("rl_search/data")/f"terrain_real_{region.key}_60km.npz"
+    path = Path("rl_search/data")/f"terrain_real_{region.key}_60km{sfx}.npz"
     save_terrain(path, terr)
-    np.savez_compressed(out_dir/"road_graph.npz", **g)
+    np.savez_compressed(out_dir/f"road_graph{sfx}.npz", **g)
     loaded = load_terrain(path)
     same = all(np.array_equal(getattr(terr, k), getattr(loaded, k))
                for k in BASE_LAYERS + EXTRA_LAYERS + ("forbidden", "cover", "slope_deg"))
@@ -78,6 +81,13 @@ def main():
 
     e = g["edges"]
     land = ~(terr.water | terr.fords)
+    # River check: with bridges closed the big rivers must split the land; with them open it is one piece
+    eight = np.ones((3, 3), bool)
+    parts = {}
+    for nm, blk in (("bridges_open", terr.water), ("bridges_closed", terr.water | terr.fords)):
+        lab, _ = label(~blk, eight)
+        a = np.sort(np.bincount(lab.ravel())[1:])[::-1]*terr.cell**2/1e6
+        parts[nm] = [round(float(v), 1) for v in a[:3]]
     stats = {
         "region": region.key, "name": region.name_ko, "centre": [region.lat, region.lon],
         "elevation_m_p1_p99": [float(np.percentile(terr.z, 1)), float(np.percentile(terr.z, 99))],
@@ -88,13 +98,14 @@ def main():
         "city_zones": int(label(terr.city)[1]), "bridge_cells": int(terr.fords.sum()),
         "bridge_groups": int(label(terr.fords)[1]),
         "surface_fast": float((terr.surface == 2).mean()), "surface_slow": float((terr.surface == 1).mean()),
+        "cell_m": float(terr.cell), "land_parts_km2": parts,
         "graph_nodes": int(len(g["node_xy"])), "graph_edges": int(len(e)),
         "road_km_fast": float(e["length_m"][e["tier"] == 2].sum()/1000),
         "road_km_slow": float(e["length_m"][e["tier"] == 1].sum()/1000),
         "road_km_by_highway": {h: float(e["length_m"][e["highway"] == i].sum()/1000)
                                for i, h in enumerate(HIGHWAY_CODES)},
     }
-    (out_dir/"terrain_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=1))
+    (out_dir/f"terrain_stats{sfx}.json").write_text(json.dumps(stats, ensure_ascii=False, indent=1))
     print(f"Saved {path} ({path.stat().st_size/1e6:.1f} MB), road graph {len(g['node_xy'])} nodes / {len(e)} edges")
     for k, v in stats.items():
         if k != "road_km_by_highway":
@@ -107,10 +118,11 @@ def main():
     ax.contourf(a, a, terr.built.astype(float), levels=[.5, 2], colors=["#c9a0a6"], alpha=.8, zorder=6)
     draw_roads(ax, g)
     draw_city(ax, terr)
-    ax.set_title(f"실제 지형 {region.name_ko}: 60 km × 60 km, 중심 {region.lat:.2f}°N {region.lon:.2f}°E, 50 m 격자\n"
+    ax.set_title(f"실제 지형 {region.name_ko}: 60 km × 60 km, 중심 {region.lat:.2f}°N {region.lon:.2f}°E, "
+                 f"{terr.cell:g} m 격자\n"
                  f"숲 {stats['forest']:.0%}, 물 {stats['water']:.1%}, 급경사 통과 불가 {stats['steep_nogo']:.1%}, "
                  f"큰 도시 {stats['city']:.1%}, 다리 {stats['bridge_groups']}곳")
-    fig.savefig(out_dir/"terrain_overview.png", dpi=130)
+    fig.savefig(out_dir/f"terrain_overview{sfx}.png", dpi=130)
     plt.close(fig)
 
     # --------------------------------------------------------- figure 2: layer panels
@@ -150,8 +162,8 @@ def main():
         ax.set_title(ttl, fontsize=11)
         ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3])
         ax.set_aspect("equal"); ax.set_xlabel("동쪽 (km)"); ax.set_ylabel("북쪽 (km)")
-    fig.suptitle(f"{region.name_ko} 지형 레이어 (terrain_real_{region.key}_60km.npz)", fontsize=14)
-    fig.savefig(out_dir/"terrain_layers.png", dpi=110)
+    fig.suptitle(f"{region.name_ko} 지형 레이어 ({path.name})", fontsize=14)
+    fig.savefig(out_dir/f"terrain_layers{sfx}.png", dpi=110)
     plt.close(fig)
 
     # --------------------------------------------------------- figure 3: river crossings close-up
@@ -165,7 +177,7 @@ def main():
         draw_city(ax, terr)
         ax.set_title(f"{nm}: 주황 마름모 = 다리 칸 (물이지만 건널 수 있음)")
         ax.set_xlabel("동쪽 (km)"); ax.set_ylabel("북쪽 (km)")
-    fig.savefig(out_dir/"terrain_crossings.png", dpi=120)
+    fig.savefig(out_dir/f"terrain_crossings{sfx}.png", dpi=120)
     plt.close(fig)
     print(f"Figures in {out_dir}")
 
