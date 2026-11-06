@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>차량 도주 particle 조절</title>
+<style>
+  :root { --bg:#f6f5f1; --panel:#ffffff; --ink:#222; --muted:#666; --line:#d9d6cf; --accent:#2a4d7a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:13px -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  header { padding:8px 14px; display:flex; gap:16px; align-items:center; border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  #status { color:var(--muted); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #status.err { color:#b00020; }
+  main { display:grid; grid-template-columns:minmax(420px, 1fr) 520px; gap:12px; padding:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
+  #mapwrap { position:relative; }
+  #map { width:100%; aspect-ratio:1/1; display:block; border-radius:6px; cursor:crosshair; background:#e9e6de; }
+  #legend { position:absolute; left:18px; top:18px; background:rgba(255,255,255,.88); border-radius:6px; padding:6px 8px; font-size:12px; line-height:1.6; pointer-events:none; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  #timebar { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  #time { flex:1; }
+  #tlabel { width:70px; text-align:right; font-variant-numeric:tabular-nums; }
+  button { font:inherit; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  .chart { width:100%; display:block; }
+  .tabs { display:flex; gap:4px; margin-bottom:8px; }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .param { display:grid; grid-template-columns:150px 1fr 62px; gap:8px; align-items:center; margin:5px 0; }
+  .param input[type=range] { width:100%; }
+  .param .v { text-align:right; font-variant-numeric:tabular-nums; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  h3 { font-size:13px; margin:0 0 6px; font-weight:600; }
+  @media (max-width: 1000px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>차량 도주 particle 조절</h1>
+  <div id="status">불러오는 중 ...</div>
+</header>
+<main>
+  <section class="card" id="mapwrap">
+    <canvas id="map"></canvas>
+    <div id="legend"></div>
+    <div id="timebar">
+      <button id="play">재생</button>
+      <select id="pspeed" title="재생 속도 (화면 1초당 시뮬레이션 분)">
+        <option value="1">1분/초</option><option value="3" selected>3분/초</option><option value="6">6분/초</option><option value="12">12분/초</option>
+      </select>
+      <input type="range" id="time" min="0" max="0" value="0" step="1">
+      <span id="tlabel">0.0분</span>
+    </div>
+    <div class="hint">지도 클릭: LKP 이동 후 실행 · 휠: 확대/축소 · 끌기: 이동 · 더블클릭: 전체 보기 · 스페이스: 재생/정지 · ←/→: 1분 이동</div>
+  </section>
+  <section>
+    <div class="card"><h3>상태별 비율</h3><canvas id="c_share" class="chart" height="170"></canvas></div>
+    <div class="card" style="margin-top:10px"><h3>LKP에서 직선거리 (km, 중앙값과 10–90%, 지도 밖 제외)</h3><canvas id="c_dist" class="chart" height="150"></canvas></div>
+    <div class="card" style="margin-top:10px"><h3 id="speedtitle">속도 분포</h3><canvas id="c_speed" class="chart" height="110"></canvas></div>
+    <div class="card" style="margin-top:10px">
+      <div class="tabs" id="tabs"></div>
+      <div id="params"></div>
+      <div class="row">
+        <label><input type="checkbox" id="auto" checked> 자동 실행</label>
+        <label><input type="checkbox" id="oneway"> 일방통행 지킴</label>
+        <button class="primary" id="run">실행</button>
+        <button id="save">저장</button>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let META = null, RES = null, VALUES = {}, LKP = [0, 0], busy = false, pending = false;
+let frame = 0, playing = false, lastTs = 0, acc = 0;
+const view = { cx: 0, cy: 0, scale: 0 };          // map centre (km) and pixels per km (0 = not fitted yet)
+const mapImg = new Image();
+
+function status(msg, err) { const s = $("status"); s.textContent = msg; s.className = err ? "err" : ""; }
+function decode(b64, Type) {
+  const bin = atob(b64), buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Type(buf.buffer);
+}
+function fmt(v, step) { const d = step >= 1 ? 0 : step >= .1 ? 1 : step >= .01 ? 2 : 3; return Number(v).toFixed(d); }
+
+// ---------------------------------------------------------------- parameters
+function buildParams() {
+  const tabs = $("tabs"), box = $("params");
+  Object.entries(META.groups).forEach(([g, items], gi) => {
+    const b = document.createElement("button"); b.textContent = g; b.dataset.g = g;
+    b.onclick = () => showGroup(g); tabs.appendChild(b);
+    const div = document.createElement("div"); div.dataset.g = g;
+    items.forEach(p => {
+      const row = document.createElement("div"); row.className = "param";
+      const val = VALUES[p.name] ?? p.min;
+      row.innerHTML = `<span>${p.label}</span><input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${val}"><span class="v">${fmt(val, p.step)}</span>`;
+      const inp = row.querySelector("input"), out = row.querySelector(".v");
+      inp.oninput = () => { out.textContent = fmt(inp.value, p.step); VALUES[p.name] = Number(inp.value); };
+      inp.onchange = () => { VALUES[p.name] = Number(inp.value); if ($("auto").checked) run(); };
+      div.appendChild(row);
+    });
+    box.appendChild(div);
+  });
+  showGroup(Object.keys(META.groups)[0]);
+  $("oneway").checked = !!VALUES.respect_oneway;
+  $("oneway").onchange = () => { VALUES.respect_oneway = $("oneway").checked; if ($("auto").checked) run(); };
+}
+function showGroup(g) {
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.g === g));
+  document.querySelectorAll("#params > div").forEach(d => d.style.display = d.dataset.g === g ? "" : "none");
+}
+function payload() { return { ...VALUES, lkp: LKP }; }
+
+// ---------------------------------------------------------------- server calls
+async function run() {
+  if (busy) { pending = true; return; }
+  busy = true; $("run").disabled = true; status("실행 중 ...");
+  try {
+    const r = await fetch("/api/run", { method: "POST", body: JSON.stringify(payload()) });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    const keepMin = RES ? frame*RES.dt_s/60 : 30;
+    RES = d;
+    RES.posArr = decode(d.pos, Int16Array);
+    RES.stateArr = decode(d.state, Uint8Array);
+    RES.speedArr = decode(d.speed, Uint8Array);
+    $("time").max = d.T - 1;
+    setFrame(Math.min(d.T - 1, Math.round(keepMin*60/d.dt_s)));
+    drawCharts();
+    status(`particle ${d.N}개 · LKP (${(d.lkp_road[0]/1000).toFixed(1)}, ${(d.lkp_road[1]/1000).toFixed(1)}) km · 방향 ${d.heading.toFixed(0)}° · seed ${VALUES.seed} · 계산 ${d.sim_s}초`);
+  } catch (e) { status("오류: " + e.message, true); }
+  busy = false; $("run").disabled = false;
+  if (pending) { pending = false; run(); }
+}
+async function save() {
+  const r = await fetch("/api/save", { method: "POST", body: JSON.stringify(payload()) });
+  const d = await r.json();
+  status(d.error ? "오류: " + d.error : "저장: " + d.saved, !!d.error);
+}
+
+// ---------------------------------------------------------------- map
+const cv = $("map"), ctx = cv.getContext("2d");
+function fitView() {
+  const [x0, x1, y0, y1] = META.extent;
+  view.cx = (x0 + x1)/2; view.cy = (y0 + y1)/2;
+  view.scale = cv.width/(x1 - x0);
+}
+function resize() {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth;
+  const keep = view.scale ? view.scale/cv.width : null;
+  cv.width = Math.round(w*dpr); cv.height = Math.round(w*dpr);
+  if (keep) view.scale = keep*cv.width; else fitView();
+  document.querySelectorAll(".chart").forEach(c => { c.width = Math.round(c.clientWidth*dpr); c.height = Math.round(Number(c.getAttribute("height"))*dpr); c.style.height = c.getAttribute("height") + "px"; });
+  drawMap(); drawCharts();
+}
+const toPx = (x, y) => [cv.width/2 + (x - view.cx)*view.scale, cv.height/2 - (y - view.cy)*view.scale];
+const toKm = (px, py) => [view.cx + (px - cv.width/2)/view.scale, view.cy - (py - cv.height/2)/view.scale];
+
+function drawMap() {
+  if (!META) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#e9e6de"; ctx.fillRect(0, 0, cv.width, cv.height);
+  const [x0, x1, y0, y1] = META.extent;
+  const [ax, ay] = toPx(x0, y1), [bx, by] = toPx(x1, y0);
+  ctx.imageSmoothingEnabled = view.scale*(x1 - x0) < mapImg.width;
+  if (mapImg.complete) ctx.drawImage(mapImg, ax, ay, bx - ax, by - ay);
+  if (!RES) return;
+  const N = RES.N, k = frame, u = RES.pos_unit_m/1000, P = RES.posArr, S = RES.stateArr;
+  const r = Math.max(1.5, Math.min(4, view.scale*0.12))*(window.devicePixelRatio || 1)/1.5;
+  for (let s = 0; s < META.states.length; s++) {
+    ctx.fillStyle = META.colors[s];
+    for (let i = 0; i < N; i++) {
+      if (S[k*N + i] !== s) continue;
+      const j = (k*N + i)*2;
+      const [px, py] = toPx(P[j]*u, P[j + 1]*u);
+      ctx.fillRect(px - r, py - r, 2*r, 2*r);
+    }
+  }
+  const [lx, ly] = toPx(RES.lkp_road[0]/1000, RES.lkp_road[1]/1000);
+  const h = RES.heading*Math.PI/180, L = 40*(window.devicePixelRatio || 1);
+  ctx.strokeStyle = "#000"; ctx.lineWidth = 2.5; ctx.beginPath();
+  ctx.moveTo(lx, ly); ctx.lineTo(lx + L*Math.cos(h), ly - L*Math.sin(h)); ctx.stroke();
+  const ah = 9*(window.devicePixelRatio || 1);
+  ctx.beginPath();
+  ctx.moveTo(lx + L*Math.cos(h), ly - L*Math.sin(h));
+  ctx.lineTo(lx + L*Math.cos(h) - ah*Math.cos(h - .45), ly - L*Math.sin(h) + ah*Math.sin(h - .45));
+  ctx.moveTo(lx + L*Math.cos(h), ly - L*Math.sin(h));
+  ctx.lineTo(lx + L*Math.cos(h) - ah*Math.cos(h + .45), ly - L*Math.sin(h) + ah*Math.sin(h + .45));
+  ctx.stroke();
+  star(lx, ly, 11*(window.devicePixelRatio || 1));
+  scaleBar();
+}
+function scaleBar() {
+  const dpr = window.devicePixelRatio || 1, want = cv.width*0.18/view.scale;
+  const km = [0.5, 1, 2, 5, 10, 20].find(v => v >= want*0.6) || 20, w = km*view.scale;
+  const x = cv.width - w - 20*dpr, y = cv.height - 22*dpr;
+  ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.fillRect(x - 8*dpr, y - 18*dpr, w + 16*dpr, 28*dpr);
+  ctx.strokeStyle = "#222"; ctx.lineWidth = 2*dpr; ctx.beginPath();
+  ctx.moveTo(x, y - 5*dpr); ctx.lineTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y - 5*dpr); ctx.stroke();
+  ctx.fillStyle = "#222"; ctx.font = `${12*dpr}px sans-serif`; ctx.textAlign = "center"; ctx.fillText(km + " km", x + w/2, y - 6*dpr);
+}
+function star(x, y, R) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI/2 + i*Math.PI/5, rr = i % 2 ? R*.45 : R;
+    ctx.lineTo(x + rr*Math.cos(a), y + rr*Math.sin(a));
+  }
+  ctx.closePath(); ctx.fillStyle = "#ffd400"; ctx.fill(); ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+// pan / zoom / click
+let drag = null;
+cv.addEventListener("mousedown", e => { drag = { x: e.offsetX, y: e.offsetY, cx: view.cx, cy: view.cy, moved: false }; });
+window.addEventListener("mousemove", e => {
+  if (!drag) return;
+  const dpr = window.devicePixelRatio || 1, rect = cv.getBoundingClientRect();
+  const dx = (e.clientX - rect.left - drag.x)*dpr, dy = (e.clientY - rect.top - drag.y)*dpr;
+  if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+  if (drag.moved) { view.cx = drag.cx - dx/view.scale; view.cy = drag.cy + dy/view.scale; drawMap(); }
+});
+window.addEventListener("mouseup", e => {
+  if (drag && !drag.moved && e.target === cv) {
+    const dpr = window.devicePixelRatio || 1, [x, y] = toKm(e.offsetX*dpr, e.offsetY*dpr);
+    LKP = [x*1000, y*1000]; run();
+  }
+  drag = null;
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const dpr = window.devicePixelRatio || 1, px = e.offsetX*dpr, py = e.offsetY*dpr;
+  const [x, y] = toKm(px, py), f = Math.exp(-e.deltaY*0.0015);
+  view.scale = Math.min(Math.max(view.scale*f, cv.width/120), cv.width/0.5);
+  view.cx = x - (px - cv.width/2)/view.scale; view.cy = y + (py - cv.height/2)/view.scale;
+  drawMap();
+}, { passive: false });
+cv.addEventListener("dblclick", () => { fitView(); drawMap(); });
+
+// ---------------------------------------------------------------- time and playback
+function setFrame(k) {
+  if (!RES) return;
+  frame = Math.max(0, Math.min(RES.T - 1, k));
+  $("time").value = frame;
+  $("tlabel").textContent = (frame*RES.dt_s/60).toFixed(1) + "분";
+  drawMap(); drawCursor(); drawSpeed();
+}
+$("time").oninput = () => setFrame(Number($("time").value));
+function togglePlay() { playing = !playing; $("play").textContent = playing ? "정지" : "재생"; lastTs = 0; acc = 0; if (playing) requestAnimationFrame(tick); }
+$("play").onclick = togglePlay;
+function tick(ts) {
+  if (!playing || !RES) return;
+  if (lastTs) {
+    acc += (ts - lastTs)/1000*Number($("pspeed").value)*60/RES.dt_s;
+    const steps = Math.floor(acc);
+    if (steps > 0) { acc -= steps; setFrame(frame + steps >= RES.T ? 0 : frame + steps); }
+  }
+  lastTs = ts; requestAnimationFrame(tick);
+}
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") return;
+  if (e.key === " ") { e.preventDefault(); togglePlay(); }
+  else if (RES && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { e.preventDefault(); setFrame(frame + (e.key === "ArrowRight" ? 1 : -1)*Math.round(60/RES.dt_s)); }
+});
+
+// ---------------------------------------------------------------- charts
+function axes(c, ymax, xmax, ylab, xunit = "분") {
+  const g = c.getContext("2d"), dpr = window.devicePixelRatio || 1;
+  const m = { l: 34*dpr, r: 8*dpr, t: 6*dpr, b: 18*dpr }, W = c.width - m.l - m.r, H = c.height - m.t - m.b;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, c.width, c.height);
+  g.font = `${11*dpr}px sans-serif`; g.fillStyle = "#666"; g.strokeStyle = "#e4e1da"; g.lineWidth = 1;
+  const X = x => m.l + x/xmax*W, Y = y => m.t + H - y/ymax*H;
+  for (let i = 0; i <= 4; i++) {
+    const y = ymax*i/4; g.beginPath(); g.moveTo(m.l, Y(y)); g.lineTo(m.l + W, Y(y)); g.stroke();
+    g.textAlign = "right"; g.fillText(ylab(y), m.l - 4*dpr, Y(y) + 4*dpr);
+  }
+  const step = xmax > 60 ? 20 : 10;
+  for (let x = 0; x <= xmax + 1e-9; x += step) { g.textAlign = "center"; g.fillText(x + (x === 0 ? xunit : ""), X(x), m.t + H + 14*dpr); }
+  return { g, X, Y, m, W, H, dpr };
+}
+let shareAx = null, distAx = null;
+function drawCharts() {
+  if (!RES) return;
+  const tmax = (RES.T - 1)*RES.dt_s/60, tm = k => k*RES.dt_s/60;
+  // stacked shares
+  let a = axes($("c_share"), 1, tmax, v => Math.round(v*100) + "%");
+  const cum = new Float64Array(RES.T);
+  for (let s = 0; s < META.states.length; s++) {
+    a.g.beginPath();
+    for (let k = 0; k < RES.T; k++) a.g.lineTo(a.X(tm(k)), a.Y(cum[k] + RES.shares[k][s]));
+    for (let k = RES.T - 1; k >= 0; k--) a.g.lineTo(a.X(tm(k)), a.Y(cum[k]));
+    a.g.closePath(); a.g.fillStyle = META.colors[s]; a.g.globalAlpha = .85; a.g.fill(); a.g.globalAlpha = 1;
+    for (let k = 0; k < RES.T; k++) cum[k] += RES.shares[k][s];
+  }
+  shareAx = { ...a, snap: a.g.getImageData(0, 0, $("c_share").width, $("c_share").height) };
+  // distance band
+  let ymax = 1; RES.pct.forEach(p => { if (p[2] > ymax) ymax = p[2]; });
+  const tick = [1, 2, 2.5, 5, 10, 20].find(t => 4*t >= ymax) || 10; ymax = 4*tick;
+  a = axes($("c_dist"), ymax, tmax, v => v.toFixed(0));
+  a.g.beginPath();
+  RES.pct.forEach((p, k) => { if (p[0] >= 0) a.g.lineTo(a.X(tm(k)), a.Y(p[2])); });
+  for (let k = RES.T - 1; k >= 0; k--) if (RES.pct[k][0] >= 0) a.g.lineTo(a.X(tm(k)), a.Y(RES.pct[k][0]));
+  a.g.closePath(); a.g.fillStyle = "rgba(74,111,165,.25)"; a.g.fill();
+  a.g.beginPath(); RES.pct.forEach((p, k) => { if (p[1] >= 0) a.g.lineTo(a.X(tm(k)), a.Y(p[1])); });
+  a.g.strokeStyle = "#4a6fa5"; a.g.lineWidth = 2*a.dpr; a.g.stroke();
+  distAx = { ...a, snap: a.g.getImageData(0, 0, $("c_dist").width, $("c_dist").height) };
+  drawCursor(); drawSpeed();
+}
+function drawCursor() {
+  if (!RES || !shareAx) return;
+  const t = frame*RES.dt_s/60;
+  [shareAx, distAx].forEach(a => {
+    a.g.putImageData(a.snap, 0, 0);
+    a.g.strokeStyle = "#d00"; a.g.lineWidth = 1.5*a.dpr; a.g.beginPath();
+    a.g.moveTo(a.X(t), a.m.t); a.g.lineTo(a.X(t), a.m.t + a.H); a.g.stroke();
+  });
+}
+function drawSpeed() {
+  if (!RES) return;
+  const N = RES.N, k = frame, cap = RES.speed_cap_kmh, bw = 2.5, nb = Math.ceil((cap + 5)/bw);
+  const hist = [0, 1, 2].map(() => new Float64Array(nb));
+  for (let i = 0; i < N; i++) {
+    const s = RES.stateArr[k*N + i]; if (s > 2) continue;
+    hist[s][Math.min(nb - 1, Math.floor(RES.speedArr[k*N + i]/bw))] += 1/N;
+  }
+  let ymax = 0.01; hist.forEach(h => h.forEach(v => { if (v > ymax) ymax = v; }));
+  const a = axes($("c_speed"), ymax*1.1, nb*bw, v => Math.round(v*100) + "%", " km/h");
+  hist.forEach((h, s) => {
+    a.g.beginPath(); a.g.strokeStyle = META.colors[s]; a.g.lineWidth = 1.8*a.dpr;
+    for (let b = 0; b < nb; b++) { a.g.lineTo(a.X(b*bw), a.Y(h[b])); a.g.lineTo(a.X((b + 1)*bw), a.Y(h[b])); }
+    a.g.stroke();
+  });
+  const sh = META.states.map((n, s) => { let c = 0; for (let i = 0; i < N; i++) if (RES.stateArr[k*N + i] === s) c++; return `${n} ${Math.round(c/N*100)}%`; });
+  $("speedtitle").textContent = `속도 분포 (km/h, ${(k*RES.dt_s/60).toFixed(1)}분): ` + sh.join(", ");
+}
+
+// ---------------------------------------------------------------- start
+(async () => {
+  META = await (await fetch("/api/meta")).json();
+  VALUES = { ...META.values }; LKP = META.lkp;
+  $("legend").innerHTML = META.states.map((n, s) => `<div><span class="sw" style="background:${META.colors[s]}"></span>${n}</div>`).join("");
+  buildParams();
+  $("run").onclick = run; $("save").onclick = save;
+  mapImg.onload = () => { resize(); run(); };
+  mapImg.src = "/map.png";
+  window.addEventListener("resize", resize);
+})();
+</script>
+</body>
+</html>

@@ -15,6 +15,22 @@ SAROPS 방식 탐색([SAROPS 방식 적용 검토 TODO](sarops_approach_todo.md)
 - **도시 인계 상태(`CITY`)와 `city_handoff` 옵션은 없앴다.** 상태는 빠른 길, 느린 길, 논밭, 정지, 지도 밖 다섯 가지다.
 - **쓰는 도로망이 길이 기준 92.6%에서 89.0%로 줄었다.** 도시 도로를 빼면서 떨어져 나간 작은 조각까지 함께 빠졌다.
 
+**조절 화면을 웹으로 바꿈** (사용자 요청: matplotlib 창이 버벅임, 오프라인)
+- 실행: `python -m rl_search.scripts.real_map.vehicle_web`을 켜고 브라우저에서 `http://127.0.0.1:8000`을 연다.
+  - 서버는 표준 라이브러리 `http.server`만 쓴다. 화면은 `vehicle_web.html` 한 장이며 캔버스로 직접 그린다. 외부 라이브러리와 인터넷 연결이 필요 없다.
+  - 시뮬레이션은 `vehicle.py` 그대로다. 브라우저는 그리기와 재생만 한다.
+  - 설정은 matplotlib 뷰어와 같은 `vehicle_params.json`에 저장한다.
+- 기능:
+  - 지도 클릭으로 LKP 이동, 휠로 확대, 끌어서 이동, 축척 막대.
+  - 재생 속도 1~12분/초, 스페이스와 ←/→ 키.
+  - 상태 비율, 거리, 속도 분포 그래프.
+  - 슬라이더를 놓으면 다시 계산한다(particle 2,000개에 약 1.5초, 응답 6.8 MB).
+- 확인:
+  - 헤드리스 크롬으로 화면을 찍어 확인했다(`rl_search/data/real/chungju/vehicle_web.png`).
+  - 지도를 처음 열 때 배율이 잘못 잡히는 버그를 고쳤다.
+  - 클릭과 재생 같은 상호작용은 사용자가 직접 확인할 일이다.
+- matplotlib 뷰어(`vehicle_tuner`)는 `--snapshot` 그림용으로 남긴다. 그쪽도 미리 그린 배경, blitting, 슬라이더 지연 실행으로 빠르게 고쳐 두었다.
+
 **결과** (방향 45°, particle 2,000개, 기본값; `vehicle_check.png`, `vehicle_default.png`)
 
 | LKP | 30분 p10 / 50 / 90 (km) | 60분 p10 / 50 / 90 (km) | 70분 지도 밖 |
