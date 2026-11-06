@@ -8,6 +8,7 @@ Window:
 - Left: the map with the particles coloured by state at the time on the time slider.
   Left-click on the map moves the LKP (snapped to the nearest road) and runs again.
 - Right: state shares over time, distance from the LKP over time, speed histogram at the slider time.
+- "재생" (or the space key) plays the time slider; the left / right keys step one minute.
 - Bottom: parameter sliders in three groups (speed / per-minute rates / route and start). With
   "자동 실행" on, every slider change runs the particles again; otherwise press "실행".
   "저장" writes the settings to rl_search/data/real/vehicle_params.json (loaded at start if present).
@@ -174,6 +175,12 @@ class Tuner:
         self.b_run.on_clicked(lambda _: self.run())
         self.b_save = Button(self.fig.add_axes([0.92, 0.25, 0.07, 0.04]), "저장")
         self.b_save.on_clicked(lambda _: self.save())
+        self.b_play = Button(self.fig.add_axes([0.53, 0.25, 0.04, 0.035]), "재생")
+        self.b_play.on_clicked(lambda _: self.toggle_play())
+        self.playing = False
+        self.timer = self.fig.canvas.new_timer(interval=120)
+        self.timer.add_callback(self.tick)
+        self.fig.canvas.mpl_connect("key_press_event", self.on_key)
         self.status = self.fig.text(0.58, 0.97, "", fontsize=10)
         self.show_group(list(GROUPS)[0])
         self.run()
@@ -275,6 +282,24 @@ class Tuner:
         ax.set_yticks([])
         self.fig.canvas.draw_idle()
 
+    def toggle_play(self):
+        self.playing = not self.playing
+        self.b_play.label.set_text("정지" if self.playing else "재생")
+        (self.timer.start if self.playing else self.timer.stop)()
+        self.fig.canvas.draw_idle()
+
+    def tick(self):
+        s = self.s_time
+        nxt = s.val + 0.5                                       # 30 s of simulated time per frame
+        s.set_val(s.valmin if nxt > s.valmax + 1e-9 else nxt)
+
+    def on_key(self, ev):
+        s = self.s_time
+        if ev.key in ("right", "left"):
+            s.set_val(float(np.clip(s.val + (1 if ev.key == "right" else -1), s.valmin, s.valmax)))
+        elif ev.key == " ":
+            self.toggle_play()
+
     def save(self):
         PARAMS.write_text(json.dumps({"config": asdict(self.cfg), "view": self.view}, ensure_ascii=False, indent=1))
         self.status.set_text(f"저장: {PARAMS}")
@@ -293,8 +318,9 @@ def main():
         snapshot(net, replace(cfg, particles=max(cfg.particles, 2000)), view, args.snapshot)
         print(f"Saved {args.snapshot}")
         return
-    Tuner(net, cfg, view)
+    tuner = Tuner(net, cfg, view)   # keep a reference: matplotlib holds widget callbacks only weakly
     plt.show()
+    return tuner
 
 
 if __name__ == "__main__":
