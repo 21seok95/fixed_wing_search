@@ -383,6 +383,15 @@ def road_graph(region: Region, ways, city, axis):
                 highway_codes=np.array(HIGHWAY_CODES))
 
 
+def landcover_grid(region: Region, raw_dir: Path, map_m: float = 60000.0, cell_m: float = 50.0) -> np.ndarray:
+    """ESA WorldCover classes on the terrain grid (row 0 = south), from the cached raw data."""
+    n = int(round(map_m/cell_m)) + 1
+    axis = np.linspace(-map_m/2, map_m/2, n)
+    kx, ky = scale(region.lat)
+    d = np.load(raw_dir/"worldcover.npz")
+    return _sample_grid(d["lc"], d["lat"], d["lon"], region.lat + axis/ky, region.lon + axis/kx, order=0).astype(np.uint8)
+
+
 def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, cell_m: float = 50.0,
                        max_slope_deg: float = 32.0):
     """Terrain layers and road graph for the region from the cached raw data."""
@@ -393,8 +402,7 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, ce
 
     d = np.load(raw_dir/"dem.npz")
     z = _sample_grid(np.nan_to_num(d["z"].astype(float), nan=0.0), d["lat"], d["lon"], glat, glon, order=1)
-    d = np.load(raw_dir/"worldcover.npz")
-    lc = _sample_grid(d["lc"], d["lat"], d["lon"], glat, glon, order=0).astype(np.uint8)
+    lc = landcover_grid(region, raw_dir, map_m, cell_m)
     osm = json.loads((raw_dir/"osm_highways.json").read_text())
 
     built_all = lc == WC_BUILT

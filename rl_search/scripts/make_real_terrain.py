@@ -73,6 +73,7 @@ def main():
     path = Path("rl_search/data")/f"terrain_real_{region.key}_60km{sfx}.npz"
     save_terrain(path, terr)
     np.savez_compressed(out_dir/f"road_graph{sfx}.npz", **g)
+    np.savez_compressed(out_dir/f"landcover{sfx}.npz", lc=lc)          # WorldCover classes, for the detection model
     loaded = load_terrain(path)
     same = all(np.array_equal(getattr(terr, k), getattr(loaded, k))
                for k in BASE_LAYERS + EXTRA_LAYERS + ("forbidden", "cover", "slope_deg"))
