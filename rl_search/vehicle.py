@@ -5,6 +5,10 @@ Agreed with the user (2026-11-06, docs/real_map_todo.md):
 - On roads the particle drives along the road graph (fast / slow tier). It may leave the road with the
   car into open land (fields, grass, villages), where it drives slowly on the 25 m grid and is blocked
   by forest, water, steep ground and the city zones. Near a road it may return to it.
+- Large cities are avoided (user decision 2026-11-06, option b): roads that pass through a city zone are
+  removed from the graph, so routes go around the cities where a bypass exists, and off-road driving
+  cannot enter them. (The first version handed particles off when they reached a city; with a 45 deg
+  heading 84 % were gone after 60 min because the fastest routes ran through Chungju and Jecheon.)
 - All rates are per minute and converted to the step length: p_step = 1 - (1 - p_min)^(dt/60).
 - Junctions: each particle heads for the map edge in its escape direction (a goal sector of
   ``goal_sector_deg``) and picks the next road by the travel time to that goal, like a navigation
@@ -12,11 +16,9 @@ Agreed with the user (2026-11-06, docs/real_map_todo.md):
   heading drifts slowly, so the goal can change on the way. Choosing by the local road direction alone
   made particles circle in the mountain valleys (60 min: median 4 km from the LKP), and a softmax on the
   extra travel time (60 s temperature) did the same because junctions are only ~270 m apart.
-- Large-city zones are hand-off areas: a particle that reaches one stops there and its time is recorded,
-  like a particle that leaves the map.
 
 States (stored every ``save_dt_s``): FAST, SLOW (on the graph), OFF (off-road), STOP (stopped, on or
-off the road), CITY (handed off), EXIT (left the map).
+off the road), EXIT (left the map; frozen at the first outside position, like the walking model).
 """
 from __future__ import annotations
 
@@ -30,8 +32,8 @@ from scipy.ndimage import distance_transform_edt
 
 from rl_search.terrain import Terrain
 
-FAST, SLOW, OFF, STOP, CITY, EXIT = range(6)
-STATE_NAMES = ("빠른 길", "느린 길", "논밭", "정지", "도시 인계", "지도 밖")
+FAST, SLOW, OFF, STOP, EXIT = range(5)
+STATE_NAMES = ("빠른 길", "느린 길", "논밭", "정지", "지도 밖")
 KMH = 1/3.6
 
 
@@ -67,7 +69,6 @@ class VehicleConfig:
     respect_oneway: bool = True
     w_off_heading: float = 1.0         # off-road: pull towards the escape heading
     w_off_keep: float = 2.0            # off-road: keep the current driving direction
-    city_handoff: bool = True
 
     @property
     def save_every(self) -> int:
@@ -127,24 +128,10 @@ class RoadNet:
         self.de_dir = np.empty((2*ne, 2))
         self.de_dir[0::2] = dfw/np.maximum(np.hypot(*dfw.T), 1e-6)[:, None]
         self.de_dir[1::2] = dbw/np.maximum(np.hypot(*dbw.T), 1e-6)[:, None]
-        # keep only the largest connected road network: dropping village streets left ~670 pieces, the
-        # largest holds 93 % of the length (99 % of the fast roads); particles never enter the others
-        from scipy.sparse import csr_matrix
-        from scipy.sparse.csgraph import connected_components
-        nn = len(self.node_xy)
-        g = csr_matrix((np.ones(ne), (e["u"], e["v"])), shape=(nn, nn))
-        _, lab = connected_components(g, directed=False)
-        km = np.bincount(lab[e["u"]], weights=self.edge_len, minlength=lab.max() + 1)
-        self.edge_main = lab[e["u"]] == np.argmax(km)
-        self.main_share = float(self.edge_len[self.edge_main].sum()/self.edge_len.sum())
-        self.de_main = np.repeat(self.edge_main, 2)
-        self.set_oneway(True)
-        self._goal_cache = {}
-
-        # snapping grid: road cells hold an edge id and the distance along it
+        # points every half cell along every edge: city test and snapping grid
         n, cell, lo = len(terr.axis), terr.cell, terr.axis[0]
-        pts_e, pts_s, pts_xy = [], [], []
-        for k in np.flatnonzero(self.edge_main):
+        pts_e, pts_s = [], []
+        for k in range(ne):
             L = self.edge_len[k]
             s = np.linspace(0, L, max(2, int(L/(cell/2)) + 1))
             pts_e.append(np.full(len(s), k)); pts_s.append(s)
@@ -152,6 +139,28 @@ class RoadNet:
         xy = self._point_at(pe, ps)
         r = np.rint((xy[:, 1] - lo)/cell).astype(int); c = np.rint((xy[:, 0] - lo)/cell).astype(int)
         ok = (r >= 0) & (r < n) & (c >= 0) & (c < n)
+        in_city = np.zeros(len(pe), bool)
+        in_city[ok] = terr.city[r[ok], c[ok]]
+        self.edge_city = np.bincount(pe[in_city], minlength=ne) > 0
+        # keep only the largest connected road network without the city roads: dropping village streets
+        # left ~670 pieces (the largest holds 93 % of the length, 99 % of the fast roads); particles never
+        # enter the others
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import connected_components
+        nn = len(self.node_xy)
+        keep = ~self.edge_city
+        g = csr_matrix((np.ones(keep.sum()), (e["u"][keep], e["v"][keep])), shape=(nn, nn))
+        _, lab = connected_components(g, directed=False)
+        km = np.bincount(lab[e["u"][keep]], weights=self.edge_len[keep], minlength=lab.max() + 1)
+        self.edge_main = keep & (lab[e["u"]] == np.argmax(km))
+        self.main_share = float(self.edge_len[self.edge_main].sum()/self.edge_len.sum())
+        self.city_share = float(self.edge_len[self.edge_city].sum()/self.edge_len.sum())
+        self.de_main = np.repeat(self.edge_main, 2)
+        self.set_oneway(True)
+        self._goal_cache = {}
+
+        # snapping grid: road cells hold an edge id and the distance along it
+        ok &= self.edge_main[pe]
         self.cell_edge = np.full((n, n), -1, np.int32)
         self.cell_s = np.zeros((n, n), np.float32)
         self.cell_edge[r[ok], c[ok]] = pe[ok]
@@ -281,7 +290,7 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
     """Particle tracks of a vehicle evader from the LKP (snapped to the nearest road).
 
     Returns a namespace with ``track`` (T, N, 2) float32, ``state`` (T, N) uint8, ``speed_kmh`` (T, N)
-    float16, ``exit_step`` and ``city_step`` (N,) int16 (first stored index, -1 = never) and ``lkp_road``.
+    float16, ``exit_step`` (N,) int16 (first stored index outside the map, -1 = never) and ``lkp_road``.
     """
     if net.respect != cfg.respect_oneway:
         net.set_oneway(cfg.respect_oneway)
@@ -296,7 +305,7 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
     lkp_road = pos[0].copy()
     mode = np.where(net.edge_tier[de >> 1] == 2, FAST, SLOW).astype(np.uint8)   # FAST / SLOW / OFF
     stopped = np.zeros(n, bool)
-    done = np.zeros(n, np.uint8)                                                 # 0, CITY, EXIT
+    done = np.zeros(n, np.uint8)                                                 # 0 or EXIT
     psi = np.arctan2(*net.direction(de, s)[:, ::-1].T)                           # off-road driving direction
 
     p_leave = {FAST: cfg.p_step(cfg.p_leave_fast_min), SLOW: cfg.p_step(cfg.p_leave_slow_min)}
@@ -315,7 +324,6 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
     state = np.empty((T, n), np.uint8)
     speed_rec = np.zeros((T, n), np.float16)
     exit_step = np.full(n, -1, np.int16)
-    city_step = np.full(n, -1, np.int16)
 
     def record(k, v):
         track[k] = pos
@@ -374,15 +382,6 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
                 a = np.flatnonzero(arr)
                 left = cur_s[a] - L[a]
                 node = net.de_to[cur_de[a]]
-                if cfg.city_handoff:
-                    cty = net.node_city[node]
-                    if cty.any():
-                        g = i[a[cty]]
-                        done[g] = CITY
-                        cur_s[a[cty]] = np.maximum(L[a[cty]] - 1e-3, 0)
-                        a, left, node = a[~cty], left[~cty], node[~cty]
-                if not len(a):
-                    continue
                 cand = net.out[node]                                       # (k, max_deg)
                 twin = cur_de[a] ^ 1
                 valid = (cand >= 0) & (cand != twin[:, None])
@@ -448,20 +447,16 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
                 newp[stuck] = pos[i[stuck]]
                 psi[i] = np.where(stuck, psi[i] + np.pi + rng.normal(0, .5, len(i)), ang[sel, k])
                 pos[i] = newp
-                if cfg.city_handoff:
-                    r2, c2 = net.cell_of(pos[i])
-                    done[i[terr.city[r2, c2]]] = CITY
 
         # ---------------- bookkeeping
         out = (done == 0) & ~terr.inside(pos[:, 0], pos[:, 1])
         done[out] = EXIT
         k = -(-(t + 1)//every)
         exit_step[out & (exit_step < 0)] = k
-        city_step[(done == CITY) & (city_step < 0)] = k
         if (t + 1) % every == 0:
             record((t + 1)//every, v)
     return SimpleNamespace(track=track, state=state, speed_kmh=speed_rec, exit_step=exit_step,
-                           city_step=city_step, lkp_road=lkp_road, cfg=cfg, heading_deg=heading_deg)
+                           lkp_road=lkp_road, cfg=cfg, heading_deg=heading_deg)
 
 
 def load_net(region: str = "chungju", cell_m: float = 25.0):

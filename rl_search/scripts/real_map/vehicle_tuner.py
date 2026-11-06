@@ -27,14 +27,14 @@ from matplotlib.colors import LightSource
 from matplotlib.lines import Line2D
 from matplotlib.widgets import Button, CheckButtons, RadioButtons, Slider
 
-from rl_search.vehicle import (CITY, EXIT, FAST, OFF, SLOW, STATE_NAMES, STOP, VehicleConfig, load_net,
+from rl_search.vehicle import (EXIT, FAST, OFF, SLOW, STATE_NAMES, STOP, VehicleConfig, load_net,
                                simulate_vehicle)
 
 plt.rcParams["font.family"] = ["AppleGothic", "sans-serif"]
 plt.rcParams["axes.unicode_minus"] = False
 
 PARAMS = Path("rl_search/data/real/vehicle_params.json")
-STATE_COLORS = {FAST: "#111111", SLOW: "#c0702f", OFF: "#2a9d8f", STOP: "#7b2cbf", CITY: "#d1495b", EXIT: "#888888"}
+STATE_COLORS = {FAST: "#111111", SLOW: "#c0702f", OFF: "#2a9d8f", STOP: "#7b2cbf", EXIT: "#888888"}
 DEFAULT_LKP = (5000.0, 5000.0)
 DEFAULT_HEADING = 45.0
 
@@ -78,10 +78,14 @@ def background(ax, net):
     rgb *= (.75 + .25*hs)[..., None]
     h = t.cell/2000
     ax.imshow(rgb, origin="lower", extent=(a[0] - h, a[-1] + h, a[0] - h, a[-1] + h), interpolation="nearest")
-    segs_f, segs_s = [], []
+    segs_f, segs_s, segs_x = [], [], []
     for k in range(len(net.edge_len)):
         xy = net.poly[net.off[k]:net.off[k + 1]]/1000
-        (segs_f if net.edge_tier[k] == 2 else segs_s).append(xy)
+        if not net.edge_main[k]:
+            segs_x.append(xy)                                 # city roads and cut-off pieces: not driven
+        else:
+            (segs_f if net.edge_tier[k] == 2 else segs_s).append(xy)
+    ax.add_collection(LineCollection(segs_x, colors="#9a9a9a", linewidths=.3, alpha=.5, linestyles=":"))
     ax.add_collection(LineCollection(segs_s, colors="#b9905f", linewidths=.35, alpha=.7))
     ax.add_collection(LineCollection(segs_f, colors="#555555", linewidths=.6, alpha=.8))
     ax.set_xlim(a[0], a[-1]); ax.set_ylim(a[0], a[-1]); ax.set_aspect("equal")
@@ -90,9 +94,9 @@ def background(ax, net):
 
 def summarize(res):
     st = res.state
-    shares = np.stack([(st == s).mean(axis=1) for s in range(6)], axis=1)
+    shares = np.stack([(st == s).mean(axis=1) for s in range(len(STATE_NAMES))], axis=1)
     d = np.hypot(*(res.track - res.lkp_road).transpose(2, 0, 1))/1000
-    live = (st != CITY) & (st != EXIT)
+    live = st != EXIT
     pct = np.full((len(st), 3), np.nan)
     for k in range(len(st)):
         if live[k].any():
@@ -117,14 +121,14 @@ def snapshot(net, cfg, view, out: Path):
         ax.plot(*(res.lkp_road/1000), marker="*", ms=14, mfc="yellow", mec="black", zorder=6)
         ax.set_title(f"{tm}분 뒤", fontsize=12)
     ax = fig.add_subplot(gs[1, :2])
-    ax.stackplot(tmin, shares.T, colors=[STATE_COLORS[s] for s in range(6)], labels=STATE_NAMES, alpha=.85)
+    ax.stackplot(tmin, shares.T, colors=[STATE_COLORS[s] for s in range(len(STATE_NAMES))], labels=STATE_NAMES, alpha=.85)
     ax.set_xlim(0, tmin[-1]); ax.set_ylim(0, 1); ax.set_xlabel("시간 (분)"); ax.set_ylabel("particle 비율")
     ax.set_title("상태별 비율"); ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1), fontsize=9)
     ax = fig.add_subplot(gs[1, 2:])
     ax.fill_between(tmin, pct[:, 0], pct[:, 2], color="#4a6fa5", alpha=.25, label="10–90%")
     ax.plot(tmin, pct[:, 1], color="#4a6fa5", lw=2, label="중앙값")
     ax.set_xlim(0, tmin[-1]); ax.set_xlabel("시간 (분)"); ax.set_ylabel("LKP에서 직선거리 (km)")
-    ax.set_title("LKP에서 거리 (도시 인계·지도 밖 제외)"); ax.legend()
+    ax.set_title("LKP에서 거리 (지도 밖 제외)"); ax.legend()
     fig.suptitle(f"차량 도주 particle {cfg.particles}개, LKP ({view['lkp'][0]/1000:.1f}, {view['lkp'][1]/1000:.1f}) km, "
                  f"방향 {view['heading']:.0f}°, 기본 설정", fontsize=14)
     fig.savefig(out, dpi=110)
@@ -145,7 +149,7 @@ class Tuner:
         self.lkp_mark, = self.ax_map.plot([], [], marker="*", ms=15, mfc="yellow", mec="black", zorder=6)
         self.arrow = None
         self.ax_map.legend(handles=[Line2D([], [], marker="o", ls="", color=STATE_COLORS[s], label=STATE_NAMES[s])
-                                    for s in range(6)], loc="upper left", fontsize=8, framealpha=.9)
+                                    for s in range(len(STATE_NAMES))], loc="upper left", fontsize=8, framealpha=.9)
         self.fig.canvas.mpl_connect("button_press_event", self.on_click)
 
         ax_t = self.fig.add_axes([0.06, 0.255, 0.45, 0.025])
@@ -163,8 +167,8 @@ class Tuner:
                 s = Slider(ax, label, lo, hi, valinit=float(np.clip(val, lo, hi)), valstep=step)
                 s.on_changed(lambda _, n=name: self.on_param(n))
                 self.sliders[name], self.slider_axes[name] = s, (g, ax)
-        self.checks = CheckButtons(self.fig.add_axes([0.89, 0.06, 0.10, 0.12]), ["자동 실행", "일방통행 지킴", "도시 인계"],
-                                   [True, cfg.respect_oneway, cfg.city_handoff])
+        self.checks = CheckButtons(self.fig.add_axes([0.89, 0.06, 0.10, 0.12]), ["자동 실행", "일방통행 지킴"],
+                                   [True, cfg.respect_oneway])
         self.checks.on_clicked(self.on_check)
         self.b_run = Button(self.fig.add_axes([0.92, 0.20, 0.07, 0.04]), "실행")
         self.b_run.on_clicked(lambda _: self.run())
@@ -203,7 +207,7 @@ class Tuner:
             else:
                 kw[name] = float(v)
         on = self.checks.get_status()
-        kw["respect_oneway"], kw["city_handoff"] = on[1], on[2]
+        kw["respect_oneway"] = on[1]
         self.cfg = replace(self.cfg, **kw)
 
     def on_param(self, name):
@@ -239,7 +243,7 @@ class Tuner:
                                           arrowprops=dict(arrowstyle="->", lw=2, color="black"), zorder=6)
         ax = self.ax_share
         ax.clear()
-        ax.stackplot(self.tmin, self.shares.T, colors=[STATE_COLORS[s] for s in range(6)], alpha=.85)
+        ax.stackplot(self.tmin, self.shares.T, colors=[STATE_COLORS[s] for s in range(len(STATE_NAMES))], alpha=.85)
         ax.set_xlim(0, self.tmin[-1]); ax.set_ylim(0, 1); ax.set_title("상태별 비율", fontsize=10)
         self.vl_share = ax.axvline(0, color="red", lw=1)
         ax = self.ax_dist
@@ -267,7 +271,7 @@ class Tuner:
             if m.any():
                 ax.hist(self.res.speed_kmh[k, m].astype(float), bins=bins, color=STATE_COLORS[s_], alpha=.7)
         ax.set_title(f"{tm:.1f}분 속도 분포 (km/h): " + ", ".join(
-            f"{STATE_NAMES[s]} {(st == s).mean():.0%}" for s in range(6)), fontsize=9)
+            f"{STATE_NAMES[s]} {(st == s).mean():.0%}" for s in range(len(STATE_NAMES))), fontsize=9)
         ax.set_yticks([])
         self.fig.canvas.draw_idle()
 
