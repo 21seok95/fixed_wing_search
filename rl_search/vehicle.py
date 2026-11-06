@@ -70,6 +70,7 @@ class VehicleConfig:
     respect_oneway: bool = True
     w_off_heading: float = 1.0         # off-road: pull towards the escape heading
     w_off_keep: float = 2.0            # off-road: keep the current driving direction
+    w_off_road: float = 1.0            # off-road: pull towards the nearest road (fields boxed in by forest)
 
     @property
     def save_every(self) -> int:
@@ -161,6 +162,7 @@ class RoadNet:
         # map edge are not leaves: those roads continue outside the map.
         u, v = e["u"].astype(np.int64), e["v"].astype(np.int64)
         anchor = np.abs(self.node_xy).max(axis=1) >= -terr.axis[0] - 500.0
+        self.anchor = anchor
         alive = self.edge_main & (u != v)
         while True:
             deg = np.bincount(u[alive], minlength=nn) + np.bincount(v[alive], minlength=nn)
@@ -175,8 +177,9 @@ class RoadNet:
         self.set_oneway(True)
         self._goal_cache = {}
 
-        # snapping grid: road cells hold an edge id and the distance along it
-        ok &= self.edge_main[pe]
+        # snapping grid: road cells hold an edge id and the distance along it (only edges that can be driven)
+        drivable = self.allowed[0::2] | self.allowed[1::2]
+        ok &= drivable[pe]
         self.cell_edge = np.full((n, n), -1, np.int32)
         self.cell_s = np.zeros((n, n), np.float32)
         self.cell_edge[r[ok], c[ok]] = pe[ok]
@@ -187,8 +190,27 @@ class RoadNet:
         self.drive = None
 
     def set_oneway(self, respect: bool) -> None:
-        allowed = (self.de_oneway_ok if respect else np.ones_like(self.de_oneway_ok)) & self.de_main
+        """Out-edge lists of the drivable directed graph.
+
+        Only the strongly connected part is kept (every node can reach every other one), with all map-edge
+        nodes joined through a virtual outside node, since those roads continue outside the map. Without
+        this, removing the city roads left one-way traps: at the edge of Chungju 95 of 2000 particles drove
+        back and forth on one 277 m one-way piece for the whole hour.
+        """
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import connected_components
+        ok = (self.de_oneway_ok if respect else np.ones_like(self.de_oneway_ok)) & self.de_main
         nn = len(self.node_xy)
+        d = np.flatnonzero(ok)
+        anc = np.flatnonzero(self.anchor)
+        rows = np.concatenate([self.de_from[d], anc, np.full(len(anc), nn)])
+        cols = np.concatenate([self.de_to[d], np.full(len(anc), nn), anc])
+        g = csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(nn + 1, nn + 1))
+        _, lab = connected_components(g, directed=True, connection="strong")
+        big = lab[:nn] == lab[nn]
+        allowed = ok & big[self.de_from] & big[self.de_to]
+        self.allowed = allowed
+        self.scc_share = float(self.edge_len[allowed[0::2] | allowed[1::2]].sum()/self.edge_len[self.edge_main].sum())
         des = np.flatnonzero(allowed)
         order = np.argsort(self.de_from[des], kind="stable")
         des = des[order]
@@ -213,14 +235,14 @@ class RoadNet:
             return self._goal_cache[key]
         from scipy.sparse import csr_matrix
         from scipy.sparse.csgraph import dijkstra
-        allowed = (self.de_oneway_ok if self.respect else np.ones_like(self.de_oneway_ok)) & self.de_main
+        allowed = self.allowed
         des = np.flatnonzero(allowed)
         w = self.edge_time(cfg)[des >> 1]
         nn = len(self.node_xy)
         rev = csr_matrix((w + 1e-6, (self.de_to[des], self.de_from[des])), shape=(nn, nn))   # reversed: goal -> node
         half = -self.terr.axis[0]
         main_node = np.zeros(nn, bool)
-        main_node[self.de_from[self.de_main]] = True
+        main_node[self.de_from[allowed]] = True
         edge_nodes = np.flatnonzero((np.abs(self.node_xy).max(axis=1) >= half - 500.0) & main_node)
         ang = np.arctan2(*(self.node_xy[edge_nodes] - np.asarray(lkp, float))[:, ::-1].T)
         K = int(round(360/cfg.goal_sector_deg))
@@ -285,7 +307,7 @@ class RoadNet:
         fw, bw = 2*e, 2*e + 1
         h = np.stack([np.cos(heading), np.sin(heading)], 1)
         dfw = self.direction(fw, s); dbw = self.direction(bw, self.edge_len[e] - s)
-        ok_f = self.de_oneway_ok[fw] | ~self.respect; ok_b = self.de_oneway_ok[bw] | ~self.respect
+        ok_f = self.allowed[fw]; ok_b = self.allowed[bw]
         score_f = np.where(ok_f, (dfw*h).sum(1), -9); score_b = np.where(ok_b, (dbw*h).sum(1), -9)
         use_f = score_f >= score_b
         return np.where(use_f, fw, bw), np.where(use_f, s, self.edge_len[e] - s)
@@ -457,8 +479,12 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
                 ny = pos[i, 1, None] + dist[:, None]*np.sin(ang)
                 rr, cc = net.cell_of(np.stack([nx.ravel(), ny.ravel()], 1))
                 okc = net.drive[rr, cc].reshape(nx.shape) | ~terr.inside(nx, ny)
+                r0, c0 = net.cell_of(pos[i])
+                ax_ = terr.axis
+                to_road = np.arctan2(ax_[net.near_r[r0, c0]] - pos[i, 1], ax_[net.near_c[r0, c0]] - pos[i, 0])
                 score = (cfg.w_off_keep*np.cos(OFF_OFFSETS)[None, :]
-                         + cfg.w_off_heading*np.cos(ang - esc[i, None]))
+                         + cfg.w_off_heading*np.cos(ang - esc[i, None])
+                         + cfg.w_off_road*np.cos(ang - to_road[:, None]))
                 score = np.where(okc, score, -1e9)
                 stuck = ~okc.any(axis=1)
                 k = _softmax_pick(rng, score)
