@@ -1,0 +1,36 @@
+{
+ "region": "chungju",
+ "name": "충주·제천",
+ "centre": [
+  37.05,
+  128.05
+ ],
+ "elevation_m_p1_p99": [
+  56.8573575501036,
+  889.1651812116569
+ ],
+ "forest": 0.7466321778756393,
+ "built_outside_city": 0.03711034587469088,
+ "city": 0.01078895535984792,
+ "water": 0.027861877522270158,
+ "steep_nogo": 0.06959853743861798,
+ "forbidden": 0.0974624948263347,
+ "city_zones": 4,
+ "bridge_cells": 449,
+ "bridge_groups": 158,
+ "surface_fast": 0.042644174539535125,
+ "surface_slow": 0.05524469270334671,
+ "graph_nodes": 23573,
+ "graph_edges": 27452,
+ "road_km_fast": 3455.176513671875,
+ "road_km_slow": 3867.81396484375,
+ "road_km_by_highway": {
+  "motorway": 434.0200500488281,
+  "trunk": 575.6278686523438,
+  "primary": 265.81488037109375,
+  "secondary": 808.6503295898438,
+  "tertiary": 1371.063720703125,
+  "unclassified": 1105.1920166015625,
+  "track": 2762.6220703125
+ }
+}

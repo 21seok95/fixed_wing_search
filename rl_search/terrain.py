@@ -7,6 +7,11 @@ and steep slopes are impassable for the target, as in battlefield_infiltrator_de
 A ``surface`` layer is reserved for the vehicle target model (0 = off-road,
 1 = unpaved road, 2 = paved road; all off-road for now).
 
+Real-region terrain (``rl_search.real_terrain``) uses the same format: ``surface`` holds the road
+tiers (1 = slow road, 2 = fast road), ``fords`` holds bridge cells over water, ``mountain`` is empty
+and two optional layers are added: ``city`` (large built-up areas, hand-off to ground units) and
+``built`` (other built-up land, which counts as cover like forest). Files without them load as zeros.
+
 Only the base layers are stored; slopes, cover, clearance and gradients are derived on load.
 """
 from __future__ import annotations
@@ -39,6 +44,9 @@ class TerrainConfig:
     lake_depth_m: float = 80.0            # deeper filled depressions are lakes, shallower ones plains
     lake_min_km2: float = 3.0
     hydro_cell_m: float = 200.0           # grid of the drainage computation
+    source: str = "synthetic"             # "synthetic" or the real region key
+    origin_lat: float | None = None       # real regions: map centre (x = east, y = north, metres)
+    origin_lon: float | None = None
 
 
 @dataclass
@@ -65,6 +73,8 @@ class Terrain:
     z_gy: np.ndarray
     cell: float
     mountain_z_m: float
+    city: np.ndarray | None = None
+    built: np.ndarray | None = None
     _float_cache: dict = field(default_factory=dict, repr=False)
 
     def sample(self, fld: np.ndarray, x, y) -> np.ndarray:
@@ -263,13 +273,17 @@ def make_terrain(cfg: TerrainConfig) -> Terrain:
     return build_terrain(cfg, axis, z, water, fords, mountain, forest, stream, surface)
 
 
-def build_terrain(cfg: TerrainConfig, axis, z, water, fords, mountain, forest, stream, surface) -> Terrain:
+def build_terrain(cfg: TerrainConfig, axis, z, water, fords, mountain, forest, stream, surface,
+                  city=None, built=None) -> Terrain:
     """Derive cover, slope, no-go mask, clearance and gradients from the base layers."""
     cell = float(axis[1] - axis[0])
+    city = np.zeros(z.shape, bool) if city is None else city.astype(bool)
+    built = np.zeros(z.shape, bool) if built is None else built.astype(bool)
+    hide = forest | built
     tpi = z - gaussian_filter(z, 500/cell)
-    cover = gaussian_filter(forest.astype(float), 40/cell)
+    cover = gaussian_filter(hide.astype(float), 40/cell)
     # Wide-scale cover field so agents far from forest still sense where it is
-    cover_far = gaussian_filter(forest.astype(float), 320/cell)
+    cover_far = gaussian_filter(hide.astype(float), 320/cell)
     cgy_c, cgx_c = np.gradient(cover_far, cell, cell)
     dzdy, dzdx = np.gradient(z, cell, cell)
     slope_deg = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
@@ -278,19 +292,22 @@ def build_terrain(cfg: TerrainConfig, axis, z, water, fords, mountain, forest, s
     cgy, cgx = np.gradient(clearance, cell, cell)
     mountain_z = float(z[mountain].min()) if mountain.any() else float("inf")
     return Terrain(cfg, axis, z, water, fords, mountain, forest, stream, surface, cover, cgx_c, cgy_c,
-                   tpi, forbidden, slope_deg, clearance, cgx, cgy, dzdx, dzdy, cell, mountain_z)
+                   tpi, forbidden, slope_deg, clearance, cgx, cgy, dzdx, dzdy, cell, mountain_z, city, built)
 
 
 BASE_LAYERS = ("z", "water", "fords", "mountain", "forest", "stream", "surface")
+EXTRA_LAYERS = ("city", "built")   # optional; saved only when any cell is set
 
 
 def save_terrain(path: Path, terr: Terrain) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    extra = {k: getattr(terr, k) for k in EXTRA_LAYERS if getattr(terr, k) is not None and getattr(terr, k).any()}
     np.savez_compressed(path, config=json.dumps(asdict(terr.cfg)), axis=terr.axis,
-                        **{k: getattr(terr, k) for k in BASE_LAYERS})
+                        **{k: getattr(terr, k) for k in BASE_LAYERS}, **extra)
 
 
 def load_terrain(path: Path) -> Terrain:
     d = np.load(path)
     cfg = TerrainConfig(**json.loads(str(d["config"])))
-    return build_terrain(cfg, d["axis"], *(d[k] for k in BASE_LAYERS))
+    return build_terrain(cfg, d["axis"], *(d[k] for k in BASE_LAYERS),
+                         **{k: d[k] for k in EXTRA_LAYERS if k in d.files})

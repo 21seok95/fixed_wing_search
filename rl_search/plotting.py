@@ -34,7 +34,8 @@ def draw_terrain(ax, terr: Terrain, legend_extra=(), window=None, legend=True):
 
     rgb = LightSource(azdeg=315, altdeg=45).shade(
         z, cmap=RELIEF, blend_mode="soft", vert_exag=2, dx=terr.cell, dy=terr.cell,
-        vmin=float(np.quantile(terr.z, .01)), vmax=1.15*terr.mountain_z_m)
+        vmin=float(np.quantile(terr.z, .01)),
+        vmax=1.15*terr.mountain_z_m if np.isfinite(terr.mountain_z_m) else float(np.quantile(terr.z, .995)))
     ax.imshow(rgb, origin="lower", extent=extent, interpolation="bilinear", zorder=0)
     ax.contour(ax_, ay_, z, levels=np.arange(100, 2000, 100), colors="#5d4037", linewidths=.25,
                alpha=.35, zorder=1)
@@ -58,8 +59,8 @@ def draw_terrain(ax, terr: Terrain, legend_extra=(), window=None, legend=True):
                    color=FORD, edgecolor="white", linewidth=.7, zorder=6)
 
     if legend:
-        handles = [Patch(facecolor=NO_GO, alpha=.35, hatch="////", edgecolor=NO_GO,
-                         label=f"Mountain no-go (≥{terr.mountain_z_m:.0f} m)"),
+        handles = [*([Patch(facecolor=NO_GO, alpha=.35, hatch="////", edgecolor=NO_GO,
+                            label=f"Mountain no-go (≥{terr.mountain_z_m:.0f} m)")] if terr.mountain.any() else []),
                    Patch(color=RIVER, label="River (impassable)"),
                    Line2D([], [], color=STREAM, lw=1.5, label="Stream"),
                    Line2D([], [], marker="D", color=FORD, markeredgecolor="white", ls="", markersize=6,

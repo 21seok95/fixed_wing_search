@@ -1,3 +1,6 @@
 numpy>=2.0
 scipy>=1.13
 matplotlib>=3.9
+tifffile>=2024.1
+imagecodecs>=2024.1
+requests>=2.31
