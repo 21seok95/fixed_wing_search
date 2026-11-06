@@ -66,6 +66,7 @@ class VehicleConfig:
     reorient_std_deg_min: float = 3.0  # random walk of a particle's escape heading (deg per sqrt(min))
     goal_sector_deg: float = 5.0       # width of the map-edge goal sectors seen from the LKP
     p_detour: float = 0.05             # per junction: take another road than the fastest one to the goal
+    avoid_deadend: bool = True         # detours never turn into a dead-end branch (no way out but back)
     respect_oneway: bool = True
     w_off_heading: float = 1.0         # off-road: pull towards the escape heading
     w_off_keep: float = 2.0            # off-road: keep the current driving direction
@@ -156,6 +157,21 @@ class RoadNet:
         self.main_share = float(self.edge_len[self.edge_main].sum()/self.edge_len.sum())
         self.city_share = float(self.edge_len[self.edge_city].sum()/self.edge_len.sum())
         self.de_main = np.repeat(self.edge_main, 2)
+        # dead-end branches: main edges outside the 2-core (iterated removal of leaf nodes). Nodes near the
+        # map edge are not leaves: those roads continue outside the map.
+        u, v = e["u"].astype(np.int64), e["v"].astype(np.int64)
+        anchor = np.abs(self.node_xy).max(axis=1) >= -terr.axis[0] - 500.0
+        alive = self.edge_main & (u != v)
+        while True:
+            deg = np.bincount(u[alive], minlength=nn) + np.bincount(v[alive], minlength=nn)
+            leaf = (deg == 1) & ~anchor
+            drop = alive & (leaf[u] | leaf[v])
+            if not drop.any():
+                break
+            alive &= ~drop
+        self.edge_core = alive | (self.edge_main & (u == v))
+        self.deadend_share = float(self.edge_len[self.edge_main & ~self.edge_core].sum()
+                                   / self.edge_len[self.edge_main].sum())
         self.set_oneway(True)
         self._goal_cache = {}
 
@@ -323,6 +339,7 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
     track = np.empty((T, n, 2), np.float32)
     state = np.empty((T, n), np.uint8)
     speed_rec = np.zeros((T, n), np.float16)
+    edge_rec = np.full((T, n), -1, np.int32)                                      # road edge, -1 off-road
     exit_step = np.full(n, -1, np.int16)
 
     def record(k, v):
@@ -332,6 +349,7 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
         st[done > 0] = done[done > 0]
         state[k] = st
         speed_rec[k] = v/KMH
+        edge_rec[k] = np.where(mode != OFF, de >> 1, -1)
 
     record(0, np.zeros(n))
     rows = np.arange(n)
@@ -401,6 +419,8 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
                 choice = np.argmax(score, axis=1)
                 others = valid.copy()
                 others[np.arange(len(a)), choice] = False
+                if cfg.avoid_deadend:
+                    others &= net.edge_core[cand0 >> 1]
                 detour = others.any(axis=1) & (rng.random(len(a)) < cfg.p_detour)
                 if detour.any():
                     w = others[detour]*rng.random(others[detour].shape)
@@ -455,7 +475,7 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
         exit_step[out & (exit_step < 0)] = k
         if (t + 1) % every == 0:
             record((t + 1)//every, v)
-    return SimpleNamespace(track=track, state=state, speed_kmh=speed_rec, exit_step=exit_step,
+    return SimpleNamespace(track=track, state=state, speed_kmh=speed_rec, edge=edge_rec, exit_step=exit_step,
                            lkp_road=lkp_road, cfg=cfg, heading_deg=heading_deg)
 
 
