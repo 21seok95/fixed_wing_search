@@ -52,9 +52,9 @@ class VehicleScenarios:
     """Draws vehicle scenarios; the road network is loaded once."""
 
     def __init__(self, sampler, vcfg: VehicleConfig | None = None, region: str = "chungju", cell_m: float = 25.0,
-                 lkp_margin_m: float = 15000.0):
+                 lkp_margin_m: float = 15000.0, net=None):
         self.sampler = sampler                       # rl_search.scenario.ScenarioSampler (launch points, config)
-        self.net = load_net(region, cell_m)
+        self.net = load_net(region, cell_m) if net is None else net     # ``net``: a road network already loaded (shared)
         self.vcfg = vcfg or VehicleConfig()
         t = self.net.terr
         n = len(t.axis)

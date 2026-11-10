@@ -36,6 +36,22 @@ VEC_NAMES = ("roll", "turn_rate_state", "course_minus_heading", "energy_left", "
 STAGE_MIX = {1: {1: 1.0}, 2: {2: 0.75, 1: 0.25}, 3: {3: 0.7, 2: 0.15, 1: 0.15}}   # default start mix by curriculum stage
 
 
+_STATIC: dict = {}
+
+
+def preload(region: str = "amboy") -> dict:
+    """Road network, terrain (the network's own, so it is loaded once) and scenario sampler of a region, cached per process. The terrain
+    alone is about 0.5 GB; call this in the parent before starting the env workers with the "fork" start method, and the workers share
+    these read-only arrays instead of loading two terrain copies each."""
+    if region not in _STATIC:
+        from rl_search.real_scenario import chungju_preset
+        from rl_search.scenario import ScenarioSampler
+        from rl_search.vehicle import load_net
+        net = load_net(region)
+        _STATIC[region] = dict(net=net, terr=net.terr, sampler=ScenarioSampler(net.terr, chungju_preset().scenario))
+    return _STATIC[region]
+
+
 @dataclass
 class RealRLConfig:
     region: str = "amboy"
@@ -57,21 +73,20 @@ class RealRLEnv:
     ``RLSearchEnv.reset``."""
 
     def __init__(self, cfg: RealRLConfig | None = None, seed: int = 0, terr=None):
-        from rl_search.real_scenario import VehicleScenarios, chungju_preset, terrain_path
+        from rl_search.real_scenario import VehicleScenarios
         from rl_search.rl_eval_set import vehicle_config
-        from rl_search.scenario import ScenarioSampler
         from rl_search.scripts.real_map.web_optimize import team_env
         from rl_search.scripts.rl_eval.sarops_ref import settings
-        from rl_search.terrain import load_terrain
         self.cfg = cfg = cfg or RealRLConfig()
-        self.terr = load_terrain(terrain_path(cfg.region)) if terr is None else terr
+        st = preload(cfg.region)
+        self.terr = st["terr"] if terr is None else terr
         self.s = settings() | cfg.settings
         self.env = team_env(self.s, cfg.region, self.terr, seed, area=True)        # the SAROPS reference env (AreaEnv)
         self.env.pos_w, self.env.area_w = float(self.s["area_w"]), 1.0
         vc = vehicle_config()
         if cfg.particles is not None:
             vc = replace(vc, particles=int(cfg.particles))
-        self.vs = VehicleScenarios(ScenarioSampler(self.terr, chungju_preset().scenario), vc, region=cfg.region)
+        self.vs = VehicleScenarios(st["sampler"], vc, region=cfg.region, net=st["net"])
         self.rng = np.random.default_rng(seed)
         self.half = float(self.terr.axis[-1])
         self._scen = self._area = None
