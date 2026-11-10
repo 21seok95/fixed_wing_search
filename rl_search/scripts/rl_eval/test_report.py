@@ -30,6 +30,7 @@ def main():
     from rl_search.scripts.real_map import vehicle_web  # noqa: F401  (resets the font, so import before drawing)
     korean_font()
     d = args.out/args.tag
+    lab = f"{int(args.label):,}" if args.label.isdigit() else args.label
     rows = sorted(json.loads((d/f"eval_test_{args.label}.json").read_text()), key=lambda r: (r["stage"], r["k"]))
     refs = sarops_refs("test")
     rows = [r for r in rows if (r["stage"], r["k"]) in refs]
@@ -41,7 +42,7 @@ def main():
     diff = rl - sa
     n = len(rows)
     se = lambda x: x.std(ddof=1)/np.sqrt(len(x))
-    lines = [f"# RL {args.label} 스텝 vs SAROPS, 시험 {n}개 (3단계 이륙, 별도 particle)", "",
+    lines = [f"# RL {lab} 스텝 vs SAROPS, 시험 {n}개 (3단계 이륙, 별도 particle)", "",
              "| 지표 | RL | SAROPS | 차이 (RL − SAROPS) ± 표준오차 | RL이 높은 경우 |", "|---|---|---|---|---|"]
     for name, a, b in (("A + POS", rl, sa), ("POS", rl_p, sa_p), ("A", rl_a, sa_a)):
         dd = a - b
@@ -70,19 +71,21 @@ def main():
     for i, (p, a) in enumerate(((sa_p, sa_a), (rl_p, rl_a))):
         a3.text(i - w/2, p.mean() + .01, f"{p.mean():.3f}", ha="center", fontsize=10)
         a3.text(i + w/2, a.mean() + .01, f"{a.mean():.3f}", ha="center", fontsize=10)
-    a3.set(xticks=x, xticklabels=["SAROPS", f"RL {args.label}"], ylabel="평균", title="두 항: 왼쪽 POS, 오른쪽 A")
+    a3.set(xticks=x, xticklabels=["SAROPS", f"RL {lab}"], ylabel="평균", title="두 항: 왼쪽 POS, 오른쪽 A")
     for a in (a1, a2, a3):
         style(a)
     fig.suptitle(f"시험 {n}개 (LKP에서 8~20 km 고리에서 이륙, 별도 particle로 채점): RL {rl.mean():.3f} vs SAROPS {sa.mean():.3f}", fontsize=13)
     fig.savefig(d/f"test_{args.label}_compare.png", dpi=100)
     plt.close(fig)
 
-    picks = [("RL이 가장 많이 앞선 경우", int(order[-1])), ("중간", int(order[n//2])), ("SAROPS가 가장 많이 앞선 경우", int(order[0]))]
+    hi_i, lo_i = int(order[-1]), int(order[0])                 # titles follow the sign: one side may win every case
+    picks = [("RL이 가장 많이 앞선 경우" if diff[hi_i] > 0 else "SAROPS가 가장 적게 앞선 경우", hi_i), ("중간", int(order[n//2])),
+             ("SAROPS가 가장 많이 앞선 경우" if diff[lo_i] < 0 else "RL이 가장 적게 앞선 경우", lo_i)]
     fig, axs = plt.subplots(2, 3, figsize=(14, 9), layout="constrained")
     for col, (title, i) in enumerate(picks):
         r = rows[i]
         for row, (rid, color, name) in enumerate(((f"eval-test-s{r['stage']}-k{r['k']}-sarops", C_SAR, "SAROPS"),
-                                                  (f"eval-test-s{r['stage']}-k{r['k']}-rl-{args.label}", C_RL, f"RL {args.label}"))):
+                                                  (f"eval-test-s{r['stage']}-k{r['k']}-rl-{args.label}", C_RL, f"RL {lab}"))):
             a = axs[row, col]
             run = load_run(rid)
             if run is None:

@@ -66,8 +66,8 @@ def curve_figure(state, out, tb_dir):
     a1.axhline(0.9, color=MUTED, lw=1, ls=":")
     a1.text(0.01, 1.005, "SAROPS와 같음", color=C_SAR, fontsize=9, va="bottom")
     a1.text(0.01, 0.905, "단계 통과선 0.9", color=MUTED, fontsize=9, va="bottom")
-    for s in state["switches"]:
-        a1.annotate(f"{s['from_stage']}→{s['to_stage']}단계", (s["step"]/1e6, 0.86), fontsize=9, color=MUTED, ha="center")
+    for i, s in enumerate(state["switches"]):                 # one row per switch: on a long run the switches sit close together
+        a1.annotate(f"{s['from_stage']}→{s['to_stage']}단계", (s["step"]/1e6, 0.86 - 0.03*i), fontsize=9, color=MUTED, ha="left")
     a1.set(xlabel="학습 스텝 (백만)", ylabel="A + POS 비율 (RL ÷ SAROPS)", title="검증 점수: SAROPS 대비 (별도 particle로 채점)", ylim=(0.8, max(1.25, a1.get_ylim()[1])))
     a2.set(xlabel="학습 스텝 (백만)", ylabel="A + POS (별도 particle)", title="검증 점수: 단계마다 검증 경우가 다르다")
     a3.set(xlabel="학습 스텝 (백만)", ylabel="값", title="RL 검증 점수의 두 항")

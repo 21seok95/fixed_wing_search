@@ -5,7 +5,13 @@
 참고 문헌: Kratzke, Stone, Frost (2010) "Search and Rescue Optimal Planning System" (Fusion 2010),
 프로젝트 문서 `claude/literature_moving_target_search.md`.
 
-## 2026-11-10 · RL 재설계로 넘어감 (최신 인계)
+## 2026-11-11 · 암보이에서 RL이 SAROPS를 넘음 (최신 인계)
+
+5초 진행 방향 RL(`amboy_v1`, 630만 스텝, Ubuntu에서 학습 약 6.6시간)이 암보이 시험 30개(별도 particle)에서 30개 모두 SAROPS보다
+A + POS가 높았다: RL 1.568, SAROPS 1.281, 짝지은 차이 +0.287 ± 0.014. POS도 0.878 대 0.813으로 높다(29/30).
+표와 그림, 학습 곡선, 다음에 사용자와 정할 것은 [RL MDP 설계](rl_mdp_design.md)의 "이어서 학습한 결과" 절에 있다. 아래 11-10 절은 그 전의 인계다.
+
+## 2026-11-10 · RL 재설계로 넘어감
 
 SAROPS는 실제 지도(암보이)에서 지금 설정 그대로 RL의 비교 기준선이 됐다. 그 사이의 실제 지도 작업(충주, 바스토, 암보이, 경사 카메라의 A 점수,
 여러 대, 같은 시각 사각형 겹침 금지)은 [실제 지역 지도 TODO](real_map_todo.md)의 11-09 오후 절에 있다.
