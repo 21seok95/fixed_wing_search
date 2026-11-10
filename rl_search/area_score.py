@@ -6,8 +6,10 @@ once. c_j = swept cells inside H_j / cells of H_j, and the base score is A = mea
 A + w POS. A cell swept early that stays in later regions adds to every later c_j, so early sweeps of the core are
 worth more.
 
-``AreaEnv`` adds the score to what ``_detect_lrc`` returns, so ``pos_cum`` holds the total and the existing planner
-rollouts (``accordion.simulate``, ``sarops.refine``) optimise it unchanged. The team shares one ``AreaScore``.
+``AreaEnv`` adds the score to what ``_detect_lrc`` or ``_detect_oblique`` returns, so ``pos_cum`` holds the total and the
+existing planner rollouts (``accordion.simulate``, ``sarops.refine``) optimise it unchanged. The team shares one ``AreaScore``.
+With the oblique camera (real regions, 2026-11-09) a cell counts as swept when its centre is inside the camera image at a
+1 s sample, so the image's real position (ahead of the UAV, gimbal, turns) decides what is swept.
 ``AreaSaropsPlanner`` also starts rectangles from peaks of the unswept region and sees the cells the other UAVs are
 committed to. Rectangle sizes still come from the POS approximation.
 """
@@ -18,6 +20,7 @@ from scipy.ndimage import gaussian_filter, maximum_filter
 
 from rl_search import multi
 from rl_search.accordion import Rect
+from rl_search.detection import inside_quad
 from rl_search.multi import TrackedEnv
 from rl_search.patterns_v2 import Cluster
 from rl_search.sarops import SaropsPlanner, refine
@@ -25,6 +28,7 @@ from rl_search.sarops import SaropsPlanner, refine
 WINDOW_S = 300.0
 N_WINDOWS = 12
 CELL_M = 25.0
+_CORNER_H, _CORNER_V = np.array([-1.0, -1.0, 1.0, 1.0])[:, None], np.array([-1.0, 1.0, 1.0, -1.0])[:, None]   # image corners, in order round the image
 
 
 def region_masks(terr, h, track, dt, x):
@@ -106,7 +110,34 @@ class AreaScore:
         if not new.any():
             return 0.0
         yy, xx = np.nonzero(new)
+        return self._commit(yy + iy0, xx + ix0, k)
+
+    def mark_frame(self, x, y, frame, t, cfg) -> float:
+        """Oblique camera: sweep the cells whose centre is inside the image of this sample (flat ground ``cfg.alt_m`` below).
+        ``frame`` = camera axes (f, r, u), each (1, 3). Returns the gain in A."""
+        k = self.window(float(t))
+        if k > N_WINDOWS:
+            return 0.0
+        f, r, u = frame
+        d = f[0] + _CORNER_H*np.tan(np.radians(cfg.hfov_deg/2))*r[0] + _CORNER_V*np.tan(np.radians(cfg.vfov_deg/2))*u[0]
+        s = cfg.alt_m/np.maximum(-d[:, 2], 1e-3)
+        quad = np.stack([x + s*d[:, 0], y + s*d[:, 1]], 1)
+        ix0 = max(int(np.floor((quad[:, 0].min() - self.x0)/CELL_M)), 0)
+        ix1 = min(int(np.floor((quad[:, 0].max() - self.x0)/CELL_M)) + 1, self.B.shape[1])
+        iy0 = max(int(np.floor((quad[:, 1].min() - self.y0)/CELL_M)), 0)
+        iy1 = min(int(np.floor((quad[:, 1].max() - self.y0)/CELL_M)) + 1, self.B.shape[0])
+        if ix0 >= ix1 or iy0 >= iy1:
+            return 0.0
+        new = ((self.B[iy0:iy1, ix0:ix1] >> (k - 1)) & 1).astype(bool) & ~self.S[iy0:iy1, ix0:ix1]
+        if not new.any():
+            return 0.0
+        yy, xx = np.nonzero(new)
         yy, xx = yy + iy0, xx + ix0
+        hit = inside_quad(self.gx[xx], self.gy[yy], quad[None])[0]
+        return self._commit(yy[hit], xx[hit], k) if hit.any() else 0.0
+
+    def _commit(self, yy, xx, k: int) -> float:
+        """Mark cells swept in window k; returns the gain in A."""
         codes = self.B[yy, xx]
         self.S[yy, xx] = True
         self.log.append((yy, xx))
@@ -146,6 +177,15 @@ class AreaEnv(TrackedEnv):
         if w is not None or self.area is None:
             return gain
         return self.pos_w*gain + self.area_w*self.area.mark(xy, ts)
+
+    def _swept(self, x, y, frame, t):
+        if self.area is not None:
+            self._area_gain += self.area.mark_frame(x, y, frame, t, self.detector.cfg)
+
+    def _detect_oblique(self, samples, ts):
+        self._area_gain = 0.0
+        gain = super()._detect_oblique(samples, ts)
+        return gain if self.area is None else self.pos_w*gain + self.area_w*self._area_gain
 
     def snapshot(self):
         s = super().snapshot()
@@ -283,9 +323,12 @@ class NoOverlapMixin:
     """A new rectangle must keep ``d_safe`` from every other UAV's current rectangle (requested 2026-11-05). This comes on
     top of the planner and its separation check: start peaks ignore the other rectangles, the accordion may not grow
     into them, and a rotation that breaks the rule is searched again without rotating. A rectangle may be reused once
-    its UAV has finished it. If no clear rectangle exists the normal choice is flown and ``overlap_forced`` counts it."""
+    its UAV has finished it. If no clear rectangle exists the normal choice is flown and ``overlap_forced`` counts it.
+    ``strict_overlap`` (user 2026-11-09: rectangles flown at the same time must not overlap): the search is widened to more start
+    points, and if none is clear no rectangle is taken: the UAV flies towards the remaining probability and tries again 30 s later."""
     team = None            # all the planners of the team
     overlap_forced = 0
+    strict_overlap = False
 
     def _others(self):
         return [p.rects[-1][1] for p in (self.team or ()) if p is not self and p.rects and p.tasks and p.tasks[-1]["end"] is None]
@@ -318,10 +361,15 @@ class NoOverlapMixin:
 
         acc.approx, acc.peaks = approx, peaks
         rects = acc.peak_rects() or []
+        if not rects and self.strict_overlap:
+            n0, sep0 = acc.n_starts, acc.start_sep_m
+            acc.n_starts, acc.start_sep_m = max(n0, 8), min(sep0, 750.0)
+            rects = (acc.peak_rects() or [])[:n0]
+            acc.n_starts, acc.start_sep_m = n0, sep0
         acc.approx, acc.peaks = base_approx, base_peaks
         if not rects:
             self.overlap_forced += 1
-            return super().choose(env, acc)
+            return None if self.strict_overlap else super().choose(env, acc)
         if self.traffic and self.hard_sep:
             rects = [q for q, _ in self.feasible_starts(env, rects)]
         args = (acc.gamma, self.cycle_s, self.time_s, self.task, self.traffic, self.d_safe)
@@ -331,6 +379,11 @@ class NoOverlapMixin:
             if not clear(out[0]):
                 out = refine(env, r, tuple(k for k in self.moves if k != "rotate"), *args)
             res.append(out)
+        if self.strict_overlap:
+            res = [q for q in res if clear(q[0])]
+            if not res:
+                self.overlap_forced += 1
+                return None
         picked = int(np.argmax([q[1] for q in res]))
         self.search_log.append(res[picked][2] | dict(evals=sum(q[2]["evals"] for q in res), sec=sum(q[2]["sec"] for q in res),
                                                      starts=len(res), picked=picked, gain_first=res[0][1]))
@@ -343,6 +396,35 @@ class NoOverlapSarops(NoOverlapMixin, SaropsPlanner):
 
 class NoOverlapAreaSarops(NoOverlapMixin, AreaSaropsPlanner):
     pass
+
+
+def display_grid(a: AreaScore, first, max_cells: int = 1000) -> dict:
+    """Region bits and first-sweep minute (255 = never) of an ``AreaScore`` on a grid of at most ``max_cells`` per side."""
+    f = 2
+    while max(a.B.shape)/f > max_cells:
+        f *= 2
+    ny, nx = a.B.shape[0]//f, a.B.shape[1]//f
+    bits = np.bitwise_or.reduce(a.B[:ny*f, :nx*f].reshape(ny, f, nx, f), axis=(1, 3))
+    block = first[:ny*f, :nx*f].reshape(ny, f, nx, f).astype(np.int32)
+    block[block == 0] = 255
+    return dict(nx=nx, ny=ny, cell=CELL_M*f, x0=a.x0, y0=a.y0, bits=bits, first=block.min(axis=(1, 3)).astype(np.uint8))
+
+
+def score_frames(terr, h, track, dt, x, logs, cfg) -> dict:
+    """A of flown oblique-camera flights from their sample logs (``env.sample_log`` rows: t, x, y, yaw, roll, f, r, u, ...),
+    swept in time order: A, c_j per window, region sizes and swept area in km^2, and ``grid`` for display."""
+    a = AreaScore(terr, h, track, dt, x, 0.0, track_curve=True)
+    log = np.vstack(logs)
+    log = log[np.argsort(log[:, 0], kind="stable")]
+    first = np.zeros(a.B.shape, np.uint8)
+    for row in log:
+        n0 = len(a.log)
+        a.mark_frame(row[1], row[2], (row[5:8][None], row[8:11][None], row[11:14][None]), row[0], cfg)
+        if len(a.log) > n0:
+            first[a.log[-1]] = min(int(np.ceil(row[0]/60.0)), 254)
+    c = a.curve()
+    return dict(A=float(c.mean()), c=c.tolist(), area_km2=(a.size*CELL_M**2/1e6).tolist(), swept_km2=float(a.S.sum())*CELL_M**2/1e6,
+                grid=display_grid(a, first))
 
 
 def score_flight(terr, h, track, dt, x, half_width, xy, tt) -> dict:

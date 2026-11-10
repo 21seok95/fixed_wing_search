@@ -74,10 +74,15 @@ class ScenarioSampler:
         self.lkp_cells = np.flatnonzero(ok)
         if not len(self.lkp_cells):
             raise ValueError("No passable LKP cell with the requested clearance")
-        lo, hi = terr.axis[0], terr.axis[-1]
+        self.perimeter = self.perimeter_points(terr.axis, cfg)
+
+    @staticmethod
+    def perimeter_points(axis, cfg: ScenarioConfig) -> np.ndarray:
+        """Launch points along the map edge, without the corners."""
+        lo, hi = axis[0], axis[-1]
         s = np.arange(lo + cfg.corner_margin_m, hi - cfg.corner_margin_m + 1e-6, cfg.perimeter_step_m)
         side = lambda x, y: np.stack(np.broadcast_arrays(x, y), axis=1)
-        self.perimeter = np.concatenate([side(s, lo), side(hi, s), side(s, hi), side(lo, s)]).astype(float)
+        return np.concatenate([side(s, lo), side(hi, s), side(s, hi), side(lo, s)]).astype(float)
 
     @staticmethod
     def _perimeter_dist(terr: Terrain, cfg: ScenarioConfig) -> np.ndarray:

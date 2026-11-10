@@ -34,6 +34,15 @@ class TrackedEnv(RLSearchEnv):
         self.surv[m] *= self.belief.w[m]/before[m]
         return gain
 
+    def _detect_oblique(self, samples, ts):
+        if not hasattr(self, "surv"):
+            return super()._detect_oblique(samples, ts)
+        before = self.belief.w.copy()
+        gain = super()._detect_oblique(samples, ts)
+        m = before > 0
+        self.surv[m] *= self.belief.w[m]/before[m]
+        return gain
+
     def idle(self):
         """Wait one decision interval on the ground (staggered launch): time and target exits advance, the UAV
         does not move, sense or spend energy."""

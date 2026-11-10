@@ -1,0 +1,60 @@
+{
+ "region": "chungju",
+ "name": "충주·제천",
+ "origin": {
+  "lat_deg": 37.05,
+  "lon_deg": 128.05,
+  "elevation_m": 320.02
+ },
+ "frame": {
+  "x": "east (m)",
+  "y": "north (m)",
+  "z": "up (m, DEM elevation)",
+  "convention": "ENU, origin at the region centre",
+  "projection": "equirectangular at the centre latitude",
+  "m_per_deg_lon": 88845.60779754216,
+  "m_per_deg_lat": 111320.0,
+  "to_latlon": "lat = lat0 + y/m_per_deg_lat; lon = lon0 + x/m_per_deg_lon"
+ },
+ "grid": {
+  "size_m": 60000.0,
+  "cell_m": 25.0,
+  "cells_per_side": 2401,
+  "row0": "south",
+  "elevation_min_m": 37.99999999999999,
+  "elevation_max_m": 1178.3280290700445
+ },
+ "px4_sitl": {
+  "PX4_HOME_LAT": 37.05,
+  "PX4_HOME_LON": 128.05,
+  "PX4_HOME_ALT": 320.02
+ },
+ "gazebo": {
+  "spherical_coordinates": {
+   "surface_model": "EARTH_WGS84",
+   "world_frame_orientation": "ENU",
+   "latitude_deg": 37.05,
+   "longitude_deg": 128.05,
+   "elevation": 320.02,
+   "heading_deg": 0
+  },
+  "heightmap": {
+   "source": "rl_search/data/terrain_real_chungju_60km_25m.npz",
+   "layer": "z",
+   "size_m": 60000.0
+  }
+ },
+ "files": {
+  "terrain": "rl_search/data/terrain_real_chungju_60km_25m.npz",
+  "road_graph": "rl_search/data/real/chungju/road_graph_25m.npz",
+  "land_cover": "rl_search/data/real/chungju/landcover_25m.npz",
+  "raw_data_cache": "rl_search/data/real/chungju/raw"
+ },
+ "road_simplification": null,
+ "attribution": {
+  "roads_waterways": "OpenStreetMap contributors, ODbL 1.0 (https://www.openstreetmap.org/copyright)",
+  "elevation": "Copernicus DEM GLO-30, ESA / European Union; surface model, heights relative to the EGM2008 geoid",
+  "land_cover": "ESA WorldCover 2021 v200, CC BY 4.0"
+ },
+ "tested_with_px4": false
+}

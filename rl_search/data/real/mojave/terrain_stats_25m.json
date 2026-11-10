@@ -1,0 +1,49 @@
+{
+ "region": "mojave",
+ "name": "모하비 사막 (바스토)",
+ "centre": [
+  34.95,
+  -116.85
+ ],
+ "elevation_m_p1_p99": [
+  520.978423273996,
+  1350.4783908843058
+ ],
+ "forest": 0.0003807590235985596,
+ "built_outside_city": 0.008329168691165576,
+ "city": 0.0036178178570257674,
+ "water": 0.000432105115163559,
+ "steep_nogo": 0.0037487850838216273,
+ "forbidden": 0.0041808901989851864,
+ "city_zones": 1,
+ "bridge_cells": 0,
+ "bridge_groups": 0,
+ "surface_fast": 0.005339646589708821,
+ "surface_slow": 0.020410938729715042,
+ "cell_m": 25.0,
+ "land_parts_km2": {
+  "bridges_open": [
+   3601.4,
+   0.0,
+   0.0
+  ],
+  "bridges_closed": [
+   3601.4,
+   0.0,
+   0.0
+  ]
+ },
+ "graph_nodes": 4923,
+ "graph_edges": 5867,
+ "road_km_fast": 787.0576171875,
+ "road_km_slow": 2849.298583984375,
+ "road_km_by_highway": {
+  "motorway": 326.6858215332031,
+  "trunk": 0.0,
+  "primary": 55.98942947387695,
+  "secondary": 148.76431274414062,
+  "tertiary": 255.61801147460938,
+  "unclassified": 66.72282409667969,
+  "track": 2782.575439453125
+ }
+}

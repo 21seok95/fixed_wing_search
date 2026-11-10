@@ -1,0 +1,45 @@
+{
+ "region": "amboy",
+ "name": "모하비 동쪽 (암보이)",
+ "centre": [
+  34.56,
+  -115.74
+ ],
+ "elevation_m_p1_p99": [
+  172.86741257619065,
+  1497.6091423397788
+ ],
+ "forest": 0.0015573824664546097,
+ "built_outside_city": 0.0016321465389698621,
+ "city": 0.0,
+ "water": 3.521370468815836e-05,
+ "steep_nogo": 0.01246287599519914,
+ "forbidden": 0.0124980896998873,
+ "city_zones": 0,
+ "bridge_cells": 0,
+ "bridge_groups": 0,
+ "surface_fast": 0.0020534967295488603,
+ "surface_slow": 0.006658686050047521,
+ "cell_m": 25.0,
+ "land_parts_km2": {
+  "bridges_open": [
+   3602.9
+  ],
+  "bridges_closed": [
+   3602.9
+  ]
+ },
+ "graph_nodes": 788,
+ "graph_edges": 845,
+ "road_km_fast": 274.2003173828125,
+ "road_km_slow": 1040.576171875,
+ "road_km_by_highway": {
+  "motorway": 129.79888916015625,
+  "trunk": 0.0,
+  "primary": 0.0,
+  "secondary": 102.35608673095703,
+  "tertiary": 42.04533767700195,
+  "unclassified": 117.80661010742188,
+  "track": 922.7695922851562
+ }
+}

@@ -55,6 +55,10 @@ class RLConfig:
     heading_offset_deg: float = 90.0        # stage 1/2: initial heading = bearing to the prior +- this
     reuse: int = 8                          # episodes per target simulation
     map_margin_m: float = 1000.0            # stage 1/2 start points keep this far from the map edge
+    edge_mode: str = "shield"               # "shield": the 6.2 v3 geofence below; "mask" (docs/rl_mdp_design.md, 2026-11-10): within
+                                            # ``edge_band_m`` of the map edge the action is clipped to the range whose course target does
+                                            # not point outward (the same rule for SAROPS and the policy)
+    edge_band_m: float = 500.0
     geofence_m: float = 1000.0              # 6.2 v3: inside this band, an outward course target is replaced by
                                             # a full turn toward the map centre (0 disables)
     detect_model: str = "kernel"            # "kernel": 5.4 v3 (kernel mass over the interval's cells, once per
@@ -63,6 +67,11 @@ class RLConfig:
     lrc_range_m: float | None = None        # "lrc": definite-range LRC, POD inside this range (None: half the
                                             # footprint width, so the sweep width is POD * footprint width)
     pass_gap_s: float = 10.0                # "lrc": out of range longer than this before a new pass starts
+    # "oblique" (2026-11-06, docs/real_map_todo.md): the oblique EO camera on a 2-axis gimbal with terrain visibility,
+    # image-position and resolution factors and a per-pass POD cap (rl_search.detection), every 1 s sample
+    oblique_region: str = "chungju"         # land cover file for the visibility map
+    detection: dict | None = None           # DetectionConfig overrides
+    oblique_radius_m: float = 4000.0        # particles farther than this from the UAV are not projected
 
 
 MAP_NAMES = ("near", "mid", "wide", "global")
@@ -105,9 +114,19 @@ class RLSearchEnv:
         self.area_cum = 0.0
         self.fast = False      # path evaluation only: no maps, no reward zone / area (POS reward term only)
         self.skip_cells = False  # "lrc" in fast mode: no cell grid either (detection does not use it)
-        if c.detect_model not in ("kernel", "lrc"):
+        if c.detect_model not in ("kernel", "lrc", "oblique"):
             raise ValueError(c.detect_model)
         self.lrc = c.detect_model == "lrc"
+        self.oblique = c.detect_model == "oblique"
+        self.gimbal_target = None               # "oblique": ground point (x, y) the gimbal points at, None = forward view
+        self.lane_lead_m = 0.0                  # "oblique": lanes are flown this far behind (footprint ahead of the UAV)
+        self.prelook_s = 0.0                    # "oblique": point the gimbal at the next lane this long before a lane end
+        self.sample_log = None                  # "oblique": list -> every real (not planning) 1 s sample is logged
+        self._nested = 0                        # open snapshots: > 0 while a planner simulates ahead
+        if self.oblique:
+            from rl_search.detection import DetectionConfig, Detector, load_landcover
+            self.detector = Detector(terr, load_landcover(c.oblique_region, float(terr.cell)),
+                                     DetectionConfig(**(c.detection or {})))
         self.lrc_R = c.lrc_range_m if c.lrc_range_m is not None else self.fp_cross/2
         self.seg_t = np.concatenate([[0.0], (self.sample_idx + 1)*self.plant.h])   # path sample times in an interval
 
@@ -131,6 +150,11 @@ class RLSearchEnv:
         self.belief = ParticleBelief(scen.track, scen.save_dt_s, scen.exit_step, True)
         self._pass_p = np.zeros(self.belief.n)            # "lrc": LRC already applied in the current pass
         self._last_in = np.full(self.belief.n, -np.inf)   # "lrc": last time within range
+        if self.oblique:
+            from rl_search.detection import PassCap
+            self.passcap = PassCap(self.belief.n, self.detector.cfg)
+            self.gimbal = None                            # created at the first sample with the UAV heading
+            self.gimbal_target = None
         self.seen[:] = False
         self.pos_cum = self.area_cum = 0.0
         self._zone_key = None
@@ -145,6 +169,7 @@ class RLSearchEnv:
             self.energy = self.power.budget - self.t*float(self.power.power(0.0, self.v))
             self.belief.update_exits(self.t)
             self._observe_now()
+            self.launch_track = [(self.t, *self.plant.pose[:2])]     # no launch transit: the team runner starts here
         else:
             t_launch = float(options.get("t_launch_s", 0.0))    # multi-UAV: staggered launch (default 0)
             self.t = t_launch
@@ -182,6 +207,9 @@ class RLSearchEnv:
 
     def _observe_now(self):
         """Observation at the current pose only (launch / curriculum start), no reward."""
+        if self.oblique:
+            self.belief.update_exits(self.t)
+            return
         cells = self._cells_under(self.plant.pose[None, :])
         if self.lrc:
             xy = self.plant.pose[None, :2]
@@ -194,7 +222,12 @@ class RLSearchEnv:
     # ------------------------------------------------------------------ step
     def step(self, action):
         a = float(np.clip(np.ravel(action)[0], -1.0, 1.0))
-        a, shield = self._geofence(a)
+        if self.cfg.edge_mode == "mask":
+            lo, hi, forced = self.allowed_range()
+            clipped = float(np.clip(a, lo, hi))
+            a, shield = clipped, forced or abs(clipped - a) > 1e-12
+        else:
+            a, shield = self._geofence(a)
         self.chi_tgt = self.chi_tgt + a*self.turn
         out = self._interval()
         out["shield"] = shield
@@ -202,6 +235,24 @@ class RLSearchEnv:
         self.last_cells, self.last_t0 = out.pop("cells"), out.pop("t0")
         obs = None if self.fast else self._obs()
         return obs, out["reward"], out["terminated"], False, self._info(out)
+
+    def allowed_range(self):
+        """Edge rule "mask": the actions in [-1, 1] whose new course target does not point out of the map across an edge the UAV is
+        within ``edge_band_m`` of. Returns (low, high, forced); with no allowed action, the end of the range that points least outward
+        (a full turn inward) and forced = True."""
+        x, y, _ = self.plant.pose
+        lim = self.half_map - self.cfg.edge_band_m
+        normals = [n for n, inside in (((1.0, 0.0), x > lim), ((-1.0, 0.0), x < -lim), ((0.0, 1.0), y > lim), ((0.0, -1.0), y < -lim)) if inside]
+        if not normals:
+            return -1.0, 1.0, False
+        a = np.linspace(-1.0, 1.0, 201)
+        chi = self.chi_tgt + a*self.turn
+        out = np.max([np.cos(chi)*nx + np.sin(chi)*ny for nx, ny in normals], axis=0)
+        ok = np.flatnonzero(out <= 1e-9)
+        if len(ok):
+            return float(a[ok[0]]), float(a[ok[-1]]), False
+        j = int(np.argmin(out))
+        return float(a[j]), float(a[j]), True
 
     def _geofence(self, a: float):
         """Safety layer (6.2 v3): within ``geofence_m`` of the map edge, a course target that points outward
@@ -235,7 +286,10 @@ class RLSearchEnv:
         if exited:
             poses = poses[:np.argmin(inside)]          # observe until the exit
         cells = self._cells_under(poses) if len(poses) and not (self.lrc and self.skip_cells) else np.zeros(0, int)
-        if self.lrc:                                   # 3 (SAROPS CPA + LRC)
+        if self.oblique:                               # 3 (oblique camera, 1 s samples)
+            samples = np.array([hist[i] for i in self.sample_idx])[:len(poses)]
+            dpos = self._detect_oblique(samples, t0 + self.seg_t[1:len(poses) + 1])
+        elif self.lrc:                                 # 3 (SAROPS CPA + LRC)
             dpos = self._detect_lrc(np.vstack([xy0, poses[:, :2]]), t0 + self.seg_t[:len(poses) + 1])
         else:                                          # 3 (5.4 v3 kernel)
             dpos = self._detect(cells, t0)
@@ -294,6 +348,42 @@ class RLSearchEnv:
         w[idx] = before*(1 - self.search.pod*q)
         return float((before - w[idx]).sum()/b.n)
 
+    def _swept(self, x: float, y: float, frame, t: float) -> None:
+        """Called with the camera frame of every 1 s sample (``area_score.AreaEnv`` marks the cells inside the image)."""
+
+    def _detect_oblique(self, samples: np.ndarray, ts: np.ndarray) -> float:
+        """Oblique camera (rl_search.detection): at each 1 s sample (x, y, yaw, roll, r) the gimbal turns toward the
+        forward view or ``gimbal_target``, particles within ``oblique_radius_m`` are projected into the image, and
+        each pass adds at most ``pass_pod_max``. Updates the belief weights; returns the probability found."""
+        from rl_search.detection import Gimbal
+        det, b = self.detector, self.belief
+        if self.gimbal is None:
+            self.gimbal = Gimbal(1, det.cfg, yaw0=float(samples[0, 2]) if len(samples) else float(self.plant.pose[2]))
+        before = b.w.sum()
+        dts = np.diff(np.concatenate([[ts[0] - (self.seg_t[1] - self.seg_t[0])], ts])) if len(ts) else []
+        for (x, y, yaw, phi, _), t, dt in zip(samples, ts, dts):
+            if self.gimbal_target is not None:
+                los = self.gimbal.los_point(x, y, *self.gimbal_target)
+            else:
+                los = self.gimbal.los_forward(yaw)
+            frame, los_rate = self.gimbal.step(yaw, phi, los, float(dt))
+            self._swept(x, y, frame, t)
+            omega = np.degrees(9.80665*np.tan(phi)/self.v)
+            P = b.positions(t)
+            near = np.flatnonzero((b.w > 0) & (np.abs(P[:, 0] - x) < self.cfg.oblique_radius_m)
+                                  & (np.abs(P[:, 1] - y) < self.cfg.oblique_radius_m))
+            p = np.zeros(b.n)
+            inside = np.zeros(b.n, bool)
+            if len(near):
+                p[near] = det.slice_pod(P[near, 0], P[near, 1], x, y, yaw, phi, max(abs(omega), float(los_rate[0])),
+                                        frame=frame)
+                inside[near] = det.last_inside
+            b.w *= 1 - self.passcap.apply(p, inside)
+            if self.sample_log is not None and self._nested == 0:
+                tg = self.gimbal_target if self.gimbal_target is not None else (np.nan, np.nan)
+                self.sample_log.append((t, x, y, yaw, phi, *frame[0][0], *frame[1][0], *frame[2][0], *tg))
+        return float((before - b.w.sum())/b.n)
+
     def lrc_curve(self, d: np.ndarray) -> np.ndarray:
         """Lateral range curve: single-pass detection probability at closest-approach distance d (definite range)."""
         return np.where(d <= self.lrc_R, self.search.pod, 0.0)
@@ -343,9 +433,16 @@ class RLSearchEnv:
         """Episode state for planning rollouts in fast mode (the seen-cell grid is not saved: it only feeds the
         area term, which fast mode skips)."""
         b = self.belief
-        return dict(plant=self.plant.get_state(), chi=self.chi_tgt, t=self.t, k=self.k, energy=self.energy,
-                    w=b.w.copy(), escaped=b.escaped, gone=b._gone.copy(), pos=self.pos_cum, area=self.area_cum,
-                    pass_p=self._pass_p.copy(), last_in=self._last_in.copy())
+        s = dict(plant=self.plant.get_state(), chi=self.chi_tgt, t=self.t, k=self.k, energy=self.energy,
+                 w=b.w.copy(), escaped=b.escaped, gone=b._gone.copy(), pos=self.pos_cum, area=self.area_cum,
+                 pass_p=self._pass_p.copy(), last_in=self._last_in.copy())
+        self._nested += 1
+        if self.oblique:
+            g = self.gimbal
+            s["oblique"] = (None if g is None else (g.los.copy(), g.gam.copy(), g.th.copy()),
+                            self.passcap.acc.copy(), self.passcap.out.copy(), self.gimbal_target,
+                            self.passcap.raw.copy())
+        return s
 
     def restore(self, s: dict) -> None:
         b = self.belief
@@ -354,6 +451,18 @@ class RLSearchEnv:
         b.w[:], b.escaped, b._gone[:] = s["w"], s["escaped"], s["gone"]
         self.pos_cum, self.area_cum = s["pos"], s["area"]
         self._pass_p[:], self._last_in[:] = s["pass_p"], s["last_in"]
+        self._nested = max(0, self._nested - 1)
+        if self.oblique:
+            gs, acc, out, tgt, raw = s["oblique"]
+            if gs is None:
+                self.gimbal = None
+            else:
+                if self.gimbal is None:
+                    from rl_search.detection import Gimbal
+                    self.gimbal = Gimbal(1, self.detector.cfg)
+                self.gimbal.los, self.gimbal.gam, self.gimbal.th = gs[0].copy(), gs[1].copy(), gs[2].copy()
+            self.passcap.acc[:], self.passcap.out[:], self.passcap.raw[:] = acc, out, raw
+            self.gimbal_target = tgt
 
     def preview(self, actions) -> float:
         """Probability that the action sequence would find from the current state (POS term only, map exits

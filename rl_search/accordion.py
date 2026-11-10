@@ -213,7 +213,10 @@ class Accordion:
             q = 1 - self.env.search.pod
             best, best_k = -1.0, 1
             for kk in self.ks:
-                t_lanes = fixed_lane_time(ell, kk*units, self.cover_w/kk, self.r_turn, self.env.v)
+                if getattr(self.env, "lane_time_model", "geometry") == "flown":
+                    t_lanes = flown_lane_time(self.env, ell, kk*units, self.cover_w/kk)
+                else:
+                    t_lanes = fixed_lane_time(ell, kk*units, self.cover_w/kk, self.r_turn, self.env.v)
                 if t_lanes > self.search_s:
                     continue
                 m = (self.taus >= tr - 1e-6) & (self.taus <= tr + t_lanes + 1e-6)
@@ -424,6 +427,57 @@ def fixed_lane_time(ell: float, n: int, s: float, r_turn: float, v: float) -> fl
     return TASK_FLOWN*float(np.hypot(*np.diff(pts, axis=0).T).sum())/v
 
 
+class _DryEnv:
+    """Just what FramedFollower reads (t, pose, course target, turn step, decision interval) around a copy of the
+    UAV plant: flies a pattern without sensing."""
+
+    def __init__(self, env):
+        import copy
+        self.plant = copy.deepcopy(env.plant)
+        self.cfg, self.turn, self.v = env.cfg, env.turn, env.v
+        self.t, self.chi_tgt = 0.0, 0.0
+
+    def step(self, a: float):
+        self.chi_tgt += float(np.clip(a, -1, 1))*self.turn
+        self.plant._integrate(self.chi_tgt, self.plant.n_inner, self.v)
+        self.t += self.cfg.decision_dt_s
+
+
+_FLOWN: dict = {}
+
+
+def flown_lane_time(env, ell: float, n: int, s: float) -> float:
+    """Lane time of n lanes at spacing s in a rectangle of length ell (convention ell = lane + s) measured by flying
+    the actual follower on a copy of the UAV plant: the lanes ``lanes`` gives (skip order for s < 2 R, lead-shifted
+    when ``env.lane_lead_m`` > 0), from the first lane start to the end of the last lane, so the turns at the
+    real turn rate and the lead overshoot are in it (2026-11-06; ``fixed_lane_time`` was 1.6x short for the oblique
+    camera on Chungju). Cached per geometry."""
+    lead = getattr(env, "lane_lead_m", 0.0)
+    r_turn = env.v/(env.turn/env.cfg.decision_dt_s)
+    key = (round(float(ell), 1), int(n), round(float(s), 2), round(lead, 1), round(float(env.turn), 6), round(env.v, 3),
+           env.cfg.decision_dt_s)
+    if key in _FLOWN:
+        return _FLOWN[key]
+    pts = parallel_pts(max(ell - s, 100.0), n, s, r_turn, LANE_TOL)
+    if lead > 0:
+        pts = lead_shift(pts, lead)
+    d = env_dry = _DryEnv(env)
+    u = (pts[1] - pts[0])/max(np.hypot(*(pts[1] - pts[0])), 1e-9)
+    p0 = pts[0] - 400.0*u                               # arrive along the first lane
+    env_dry.plant.reset(np.array([p0[0], p0[1], np.arctan2(u[1], u[0])]))
+    env_dry.chi_tgt = float(np.arctan2(u[1], u[0]))
+    f = FramedFollower(env_dry, pts, np.zeros(2), 0.0, 0.0, np.zeros(2))
+    t_start = None
+    while f.laps < 1 and d.t < 3*3600.0:
+        a = f.action()
+        if t_start is None and f.started:
+            t_start = d.t
+        d.step(a)
+    out = d.t - (t_start if t_start is not None else 0.0)
+    _FLOWN[key] = out
+    return out
+
+
 def transit_time(env, r: Rect) -> float:
     """Straight-line time from the UAV to the rectangle's nearest corner."""
     R = _rot(r.theta)
@@ -473,10 +527,52 @@ def lane_plan(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None):
     return best[1], best[2]
 
 
+def lead_shift(pts: np.ndarray, lead: float) -> np.ndarray:
+    """UAV polyline for a camera whose footprint centre is ``lead`` metres ahead: every lane (segments 0-1, 2-3, ...)
+    moves back along its own direction, so the footprint centre runs over the rectangle's lane. Consecutive lanes
+    run in opposite directions, so each lane change also gains 2 * lead along the lanes (the UAV overshoots, then
+    turns)."""
+    out = np.asarray(pts, float).copy()
+    for i in range(0, len(out) - 1, 2):
+        d = out[i + 1] - out[i]
+        n = np.hypot(*d)
+        if n > 1e-9:
+            out[i:i + 2] -= lead*d/n
+    return out
+
+
+class LeadFollower(FramedFollower):
+    """FramedFollower over the lead-shifted UAV lanes that also points the gimbal (env ``gimbal_target``) at the
+    start of the next lane's footprint path once the UAV is within ``prelook_s`` of the end of its lane, and keeps
+    it there through the lane change (docs/real_map_todo.md, gimbal pre-pointing from the UAV's own path)."""
+
+    def __init__(self, env, pts_fp, pts_uav, origin_ref, t_ref, theta, vel, prelook_s=0.0, lookahead=150.0):
+        super().__init__(env, pts_uav, origin_ref, t_ref, theta, vel, lookahead)
+        self.fp = np.asarray(pts_fp, float)
+        self.prelook_s = prelook_s
+
+    def action(self) -> float:
+        a = super().action()
+        env = self.env
+        env.gimbal_target = None
+        if self.prelook_s > 0 and self.started:
+            i = int(np.clip(np.searchsorted(self.cum, self.s, side="right") - 1, 0, len(self.pts) - 2))
+            lane_end = i + 1 if i % 2 == 0 else i          # on a lane (even segment) or on a lane change (odd)
+            nxt = lane_end + 1
+            if nxt < len(self.fp) and (i % 2 == 1 or self.cum[lane_end] - self.s <= self.prelook_s*env.v):
+                env.gimbal_target = self.origin(env.t) + self.fp[nxt] @ self.R.T
+        return a
+
+
 def lanes(env, r: Rect, cycle_s=600.0, effort=0.85, search_s=None):
     """Parallel lanes filling the rectangle, started at ``r.corner`` or the corner nearest the UAV.
-    Returns (polyline in the rectangle frame, follower)."""
+    Returns (polyline in the rectangle frame, follower). With an oblique camera (``env.lane_lead_m`` > 0) the UAV flies
+    the lead-shifted lanes and may pre-point the gimbal (``env.prelook_s``)."""
     pts, _ = lane_plan(env, r, cycle_s, effort, search_s)
+    lead, pre = getattr(env, "lane_lead_m", 0.0), getattr(env, "prelook_s", 0.0)
+    if lead > 0 or pre > 0:
+        return pts, LeadFollower(env, pts, lead_shift(pts, lead), np.array([r.cx, r.cy]), env.t, r.theta, np.zeros(2),
+                                 prelook_s=pre)
     return pts, FramedFollower(env, pts, np.array([r.cx, r.cy]), env.t, r.theta, np.zeros(2))
 
 

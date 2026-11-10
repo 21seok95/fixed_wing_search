@@ -66,6 +66,7 @@ class DetectionConfig:
     image_px: int = 1920                # image width in pixels (for pixels on target only)
     target_m: float = 3.0
     pass_pod_max: float = 0.7           # most one pass can find (user 2026-11-06, as the earlier SAROPS sensor)
+    pass_mode: str = "cap"              # "cap": min(pass POD, pass_pod_max); "scale": pass_pod_max x pass POD
     res_n50_px: float = 12.0            # resolution factor: pixels across the target at which detection halves ...
     res_exp: float = 3.0                # ... (Johnson-type curve); normalised to 1 at the 45 deg image centre
     use_resolution: bool = True
@@ -345,17 +346,27 @@ class PassCap:
 
     def __init__(self, n: int, cfg: DetectionConfig):
         self.cfg = cfg
-        self.acc = np.zeros(n)
+        self.acc = np.zeros(n)          # hazard applied in the current pass
+        self.raw = np.zeros(n)          # "scale": uncapped hazard of the current pass
         self.out = np.full(n, np.inf)
         self.hmax = -np.log(1 - cfg.pass_pod_max) if cfg.pass_pod_max < 1 else np.inf
 
     def apply(self, p, inside):
-        """Capped probability of this slice from the uncapped one ``p`` and the in-image mask (N,)."""
+        """Probability of this slice from the uncapped one ``p`` and the in-image mask (N,).
+        ``pass_mode`` "cap": a pass adds at most ``pass_pod_max``. "scale" (user 2026-11-06): a pass adds
+        ``pass_pod_max`` x the model's pass POD, 1 - prod(1 - p) over its slices (never trust the model fully)."""
         dt = self.cfg.dt_s
         self.out = np.where(inside, 0.0, self.out + dt)
-        self.acc[self.out > self.cfg.pass_gap_s] = 0.0
+        new = self.out > self.cfg.pass_gap_s
+        self.acc[new] = 0.0
+        self.raw[new] = 0.0
         h = -np.log1p(-np.minimum(p, 1 - 1e-12))
-        h = np.minimum(h, np.maximum(self.hmax - self.acc, 0.0))
+        if self.cfg.pass_mode == "scale":
+            self.raw += h
+            target = -np.log1p(-self.cfg.pass_pod_max*(-np.expm1(-self.raw)))
+            h = np.maximum(target - self.acc, 0.0)
+        else:
+            h = np.minimum(h, np.maximum(self.hmax - self.acc, 0.0))
         self.acc += h
         return -np.expm1(-h)
 

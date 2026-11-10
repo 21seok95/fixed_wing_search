@@ -172,6 +172,7 @@ class SimViewer:
         self.n_particles = self.track.shape[1]
         self.t_end = (self.track.shape[0]-1)*run["dt_s"]
         self.slider_dt = run["dt_s"]
+        self.play_s = max(self.slider_dt, 30.0)   # simulated seconds per playback frame (frames every 0.1 s)
         self.h_fixed = h0
         self.t_launch = 0.0
         self.xa, self.ya = run["axis_x"]/1000, run["axis_y"]/1000
@@ -405,7 +406,7 @@ class SimViewer:
         (self.timer.start if self.playing else self.timer.stop)()
 
     def _tick(self):
-        jump = max(self.slider_dt, 30.0)/60
+        jump = self.play_s/60
         nxt = self.s_time.val + jump
         self.s_time.set_val(self.s_time.valmin if nxt > self.s_time.valmax + 1e-9 else nxt)
 

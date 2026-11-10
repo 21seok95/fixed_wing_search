@@ -38,7 +38,11 @@ def neighbours(env, r: Rect, moves, scale: float, gamma: float, cycle_s: float, 
     if "spacing" in moves and r.spacing is not None and r.k_max > 1:    # lane_mode "cover": passes k +- 1
         cw = 2*env.lrc_R if getattr(env, "lrc", False) else env.fp_cross
         k = int(round(cw/r.spacing))
-        out += [("spacing", replace(r, spacing=cw/kk)) for kk in (k - 1, k + 1) if 1 <= kk <= r.k_max]
+        kks = [kk for kk in (k - 1, k + 1) if 1 <= kk <= r.k_max]
+        if getattr(env, "spacing_budget", False) and search_s is not None:      # the same time check as the accordion
+            from rl_search.accordion import flown_lane_time
+            kks = [kk for kk in kks if flown_lane_time(env, r.ell, max(1, int(round(r.wid*kk/cw))), cw/kk) <= search_s]
+        out += [("spacing", replace(r, spacing=cw/kk)) for kk in kks]
     if "spacing" in moves and r.spacing is None:      # fixed spacing (lane_mode "fixed"): no spacing move
         for d in (-1, 1):
             q = replace(r, wid=r.wid*(1 + d*scale*d_spacing))

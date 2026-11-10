@@ -3,81 +3,337 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>차량 도주 particle 조절</title>
+<title>탐색 경로 시뮬레이터</title>
 <style>
-  :root { --bg:#f6f5f1; --panel:#ffffff; --ink:#222; --muted:#666; --line:#d9d6cf; --accent:#2a4d7a; }
+  :root { --bg:#eef0ee; --panel:#fff; --ink:#1d2327; --muted:#69737b; --line:#e0e3e0; --soft:#f5f6f5;
+          --accent:#1f5fa8; --accent-soft:#e8f0f9; --danger:#b3261e; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:13px -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
-  header { padding:8px 14px; display:flex; gap:16px; align-items:center; border-bottom:1px solid var(--line); background:var(--panel); }
-  header h1 { font-size:15px; margin:0; font-weight:600; }
-  #status { color:var(--muted); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #status.err { color:#b00020; }
-  main { display:grid; grid-template-columns:minmax(420px, 1fr) 520px; gap:12px; padding:12px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
-  #mapwrap { position:relative; }
-  #map { width:100%; aspect-ratio:1/1; display:block; border-radius:6px; cursor:crosshair; background:#e9e6de; }
-  #legend { position:absolute; left:18px; top:18px; background:rgba(255,255,255,.88); border-radius:6px; padding:6px 8px; font-size:12px; line-height:1.6; pointer-events:none; }
-  .sw { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
-  #timebar { display:flex; gap:8px; align-items:center; margin-top:8px; }
-  #time { flex:1; }
-  #tlabel { width:70px; text-align:right; font-variant-numeric:tabular-nums; }
-  button { font:inherit; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
-  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.45 -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  [hidden] { display:none !important; }
+  #app { height:100dvh; display:grid; grid-template-rows:auto minmax(0, 1fr); }
+  header { display:flex; align-items:center; gap:14px; padding:9px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:15px; font-weight:650; white-space:nowrap; }
+  #status { flex:1; min-width:0; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #status.err { color:var(--danger); }
+  #replay { display:flex; align-items:center; gap:8px; padding:3px 4px 3px 10px; border-radius:6px; background:var(--accent-soft); color:var(--accent); font-weight:600; max-width:46%; }
+  #replay span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #replay button { padding:2px 8px; font-size:12px; flex:none; }
+  main { display:grid; grid-template-columns:minmax(0, 1fr) 430px; min-height:0; }
+
+  #stage { display:grid; grid-template-rows:minmax(0, 1fr) auto; min-width:0; min-height:0; }
+  #mapbox { position:relative; min-height:0; overflow:hidden; background:#f1f1ee; }
+  #map { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  #map.pick { cursor:crosshair; }
+  .float { position:absolute; background:rgba(255,255,255,.95); border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.18); }
+  #modes { left:12px; top:12px; display:flex; padding:3px; gap:2px; }
+  #modes button { border:0; background:transparent; padding:6px 11px; border-radius:6px; }
+  #modes button.on { background:var(--accent); color:#fff; }
+  #banner { left:50%; top:12px; transform:translateX(-50%); padding:7px 14px; background:var(--ink); color:#fff; font-weight:500; white-space:nowrap; }
+  #hud { right:12px; top:12px; padding:9px 12px; min-width:170px; display:grid; grid-template-columns:auto auto; gap:2px 14px; }
+  #hud span { color:var(--muted); }
+  #hud b { text-align:right; font-weight:600; font-variant-numeric:tabular-nums; }
+  #legend { left:12px; bottom:12px; padding:7px 10px; font-size:12px; max-width:230px; }
+  #legend summary { cursor:pointer; font-weight:600; }
+  #legend .items { margin-top:5px; display:grid; gap:2px; }
+  .sw { display:inline-block; width:14px; height:10px; margin-right:6px; vertical-align:-1px; }
+  .sw.dot { width:10px; border-radius:50%; margin:0 8px 0 2px; }
+  #cbar { display:block; width:190px; height:11px; margin-top:6px; border-radius:2px; }
+  #cbarlab { display:flex; justify-content:space-between; color:var(--muted); font-variant-numeric:tabular-nums; }
+  #coord { color:var(--muted); font-variant-numeric:tabular-nums; width:96px; text-align:right; font-size:12px; }
+
+  #playbar { display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel); border-top:1px solid var(--line); }
+  #timeline { flex:1; min-width:0; height:40px; cursor:pointer; touch-action:none; }
+  #tlabel { width:58px; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; }
+
+  button, select, input[type=text] { font:inherit; color:inherit; }
+  button { padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
+  button:hover:not(:disabled) { background:var(--soft); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button.primary:hover:not(:disabled) { background:#194f8d; }
   button:disabled { opacity:.5; cursor:default; }
-  .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  button.small { padding:3px 8px; font-size:12px; }
+  select, input[type=text] { padding:5px 6px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+
+  aside { display:grid; grid-template-rows:auto minmax(0, 1fr); min-height:0; background:var(--panel); border-left:1px solid var(--line); }
+  #tabs { display:flex; border-bottom:1px solid var(--line); }
+  #tabs button { flex:1; border:0; border-bottom:2px solid transparent; border-radius:0; padding:10px 2px; color:var(--muted); background:transparent; font-weight:550; }
+  #tabs button.on { color:var(--accent); border-bottom-color:var(--accent); }
+  .badge { display:inline-block; min-width:16px; padding:0 4px; margin-left:3px; border-radius:8px; background:var(--accent); color:#fff; font-size:11px; line-height:16px; text-align:center; }
+  .panel { display:none; min-height:0; height:100%; }
+  .panel.on { display:flex; flex-direction:column; }
+  .scroll { flex:1; min-height:0; overflow-y:auto; padding:14px 16px; }
+  .foot { padding:12px 16px; border-top:1px solid var(--line); }
+  .sec + .sec { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  h2 { margin:0 0 8px; font-size:13px; font-weight:650; }
+  h3 { margin:12px 0 4px; font-size:12px; font-weight:600; color:var(--muted); }
+  .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .head h2 { margin:0; }
+  .kv { display:grid; grid-template-columns:82px 1fr auto auto; gap:6px; align-items:center; margin:5px 0; }
+  .kv span { color:var(--muted); }
+  .kv b { font-weight:600; font-variant-numeric:tabular-nums; }
+  .hint { color:var(--muted); font-size:12px; }
+  .param { display:grid; grid-template-columns:118px 20px minmax(0, 1fr) 20px 58px; gap:5px; align-items:center; margin:4px 0; }
+  .param span:first-child[title]:not([title=""]) { cursor:help; }
+  .param input[type=range] { width:100%; min-width:0; margin:0; accent-color:var(--accent); }
+  .param .tick { width:20px; height:20px; padding:0; border-radius:4px; font-size:14px; line-height:18px; color:var(--muted); touch-action:none; user-select:none; }
+  .param .v { width:100%; padding:2px 4px; border:1px solid var(--line); border-radius:4px; background:#fff; font:inherit; color:inherit; text-align:right; font-variant-numeric:tabular-nums; appearance:textfield; -moz-appearance:textfield; }
+  .param .v::-webkit-outer-spin-button, .param .v::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .slopetoggle { display:flex; align-items:center; gap:6px; margin:2px 0 8px 123px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .pick2 { display:grid; grid-template-columns:118px 1fr; gap:8px; align-items:center; margin:6px 0; }
+  .pick2 select { width:100%; }
+  .segs { display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .segs button { flex:1; border:0; border-radius:0; padding:5px 4px; }
+  .segs button + button { border-left:1px solid var(--line); }
+  .segs button.on { background:var(--accent); color:#fff; }
+  #submit { flex:1; padding:9px; }
+  #runname { flex:1; min-width:0; }
+  .subtabs { display:flex; gap:4px; margin-bottom:8px; flex-wrap:wrap; }
+  .subtabs button { padding:4px 10px; font-size:12px; }
+  .subtabs button.on { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
   .chart { width:100%; display:block; }
-  .tabs { display:flex; gap:4px; margin-bottom:8px; }
-  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .param { display:grid; grid-template-columns:150px 1fr 62px; gap:8px; align-items:center; margin:5px 0; }
-  .param input[type=range] { width:100%; }
-  .param .v { text-align:right; font-variant-numeric:tabular-nums; }
-  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  h3 { font-size:13px; margin:0 0 6px; font-weight:600; }
-  @media (max-width: 1000px) { main { grid-template-columns:1fr; } }
+  .tiles { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+  .tile { background:var(--soft); border-radius:6px; padding:8px; }
+  .tile b { display:block; font-size:17px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .tile span { color:var(--muted); font-size:11px; }
+  .checks { display:flex; flex-wrap:wrap; gap:6px 14px; }
+  .task { display:grid; grid-template-columns:22px 1fr; gap:2px 8px; width:100%; text-align:left; border:0; border-radius:6px; padding:6px 8px; background:transparent; }
+  .task.on { background:var(--accent-soft); }
+  .task i { grid-row:span 2; align-self:center; justify-self:center; width:20px; height:20px; border-radius:50%; font-style:normal; font-weight:650; font-size:12px; line-height:20px; text-align:center; color:#fff; }
+  .task small { color:var(--muted); font-size:12px; }
+  .job { display:grid; grid-template-columns:18px 1fr auto; gap:2px 8px; align-items:center; padding:8px 4px; border-bottom:1px solid var(--line); }
+  .job.viewing { background:var(--accent-soft); border-radius:6px; }
+  .job input, .job .ph { grid-row:span 2; margin:0; }
+  .job .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  .job .acts { grid-row:span 2; display:flex; gap:4px; }
+  .job .sub { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .job .bar { grid-column:2 / 4; height:3px; border-radius:2px; background:var(--soft); overflow:hidden; }
+  .job .bar div { height:100%; background:var(--accent); transition:width .4s; }
+  .empty { color:var(--muted); text-align:center; padding:40px 12px; }
+  @media (max-width:1000px) {
+    #app { height:auto; }
+    main { grid-template-columns:minmax(0, 1fr); }
+    #mapbox { height:62vh; }
+    aside { border-left:0; border-top:1px solid var(--line); }
+    .panel { height:auto; }
+    #playbar { flex-wrap:wrap; }
+    #timeline { flex-basis:100%; order:5; }
+  }
 </style>
 </head>
 <body>
+<div id="app">
 <header>
-  <h1>차량 도주 particle 조절</h1>
+  <h1>탐색 경로 시뮬레이터</h1>
+  <select id="region" title="지도 선택" aria-label="지도 선택"></select>
   <div id="status">불러오는 중 ...</div>
+  <button class="small" id="share" title="지금 화면과 모든 설정을 파일로 저장합니다. Claude가 그대로 볼 수 있습니다.">장면 저장</button>
+  <div id="replay" hidden><span id="replayname"></span><button id="replayclose">현재 설정으로 돌아가기</button></div>
 </header>
 <main>
-  <section class="card" id="mapwrap">
-    <canvas id="map"></canvas>
-    <div id="legend"></div>
-    <div id="timebar">
+  <section id="stage">
+    <div id="mapbox">
+      <canvas id="map"></canvas>
+      <div class="float" id="modes">
+        <button data-m="view" class="on" title="끌어서 이동, 휠로 확대">이동</button>
+        <button data-m="lkp" title="클릭한 곳을 표적의 마지막 위치로">LKP 지정</button>
+        <button data-m="start" id="modeStart" title="클릭한 곳에서 무인기 출발">출발점 지정</button>
+      </div>
+      <div class="float" id="banner" hidden></div>
+      <div class="float" id="hud" hidden>
+        <span>비행 시각</span><b id="h_t"></b>
+        <span>누적 POS</span><b id="h_pos"></b>
+        <span>현재 작업</span><b id="h_task"></b>
+        <span>상태</span><b id="h_phase"></b>
+        <span id="h_area_l" title="지금 시각의 x% 영역 중 훑은 면적 비율">영역 탐색률</span><b id="h_area"></b>
+      </div>
+      <details class="float" id="legend" open><summary>범례</summary>
+        <div class="items" id="legenditems"></div>
+        <div id="cbarbox" hidden><canvas id="cbar" width="380" height="22"></canvas><div id="cbarlab"><span id="cbarmin"></span><span id="cbarunit"></span><span id="cbarmax"></span></div></div>
+      </details>
+    </div>
+    <div id="playbar">
       <button id="play">재생</button>
-      <select id="pspeed" title="재생 속도 (화면 1초당 시뮬레이션 분)">
+      <select id="pspeed" title="재생 속도 (화면 1초당 비행 시간)">
         <option value="1">1분/초</option><option value="3" selected>3분/초</option><option value="6">6분/초</option><option value="12">12분/초</option>
       </select>
-      <input type="range" id="time" min="0" max="0" value="0" step="1">
+      <canvas id="timeline"></canvas>
       <span id="tlabel">0.0분</span>
+      <span id="coord"></span>
     </div>
-    <div class="hint">지도 클릭: LKP 이동 후 실행 · 휠: 확대/축소 · 끌기: 이동 · 더블클릭: 전체 보기 · 스페이스: 재생/정지 · ←/→: 1분 이동</div>
   </section>
-  <section>
-    <div class="card"><h3>상태별 비율</h3><canvas id="c_share" class="chart" height="170"></canvas></div>
-    <div class="card" style="margin-top:10px"><h3>LKP에서 직선거리 (km, 중앙값과 10–90%, 지도 밖 제외)</h3><canvas id="c_dist" class="chart" height="150"></canvas></div>
-    <div class="card" style="margin-top:10px"><h3 id="speedtitle">속도 분포</h3><canvas id="c_speed" class="chart" height="110"></canvas></div>
-    <div class="card" style="margin-top:10px">
-      <div class="tabs" id="tabs"></div>
-      <div id="params"></div>
-      <div class="row">
-        <label><input type="checkbox" id="auto" checked> 자동 실행</label>
-        <label><input type="checkbox" id="oneway"> 일방통행 지킴</label>
-        <button class="primary" id="run">실행</button>
-        <button id="save">저장</button>
+
+  <aside>
+    <nav id="tabs">
+      <button data-t="search" class="on">설정</button>
+      <button data-t="runs">실행<span class="badge" id="runbadge" hidden></span></button>
+      <button data-t="result">결과</button>
+      <button data-t="view">보기</button>
+      <button data-t="target">표적</button>
+    </nav>
+
+    <div class="panel on" id="p-search">
+      <div class="scroll">
+        <div class="sec">
+          <h2>시나리오</h2>
+          <div class="kv"><span>LKP</span><b id="lkpv">-</b><button class="small" id="setLkp">지도에서 지정</button></div>
+          <div class="kv"><span>무인기 출발점</span><b id="startv">-</b><button class="small" id="setStart">지도에서 지정</button><button class="small" id="autoStart" hidden>자동으로</button></div>
+          <div class="hint" id="startinfo"></div>
+        </div>
+        <div class="sec">
+          <div class="head"><h2>계획 설정</h2><button class="small" id="optdefaults">기본값으로</button></div>
+          <div id="optparams"></div>
+          <h3>작업 강제 종료</h3>
+          <select id="optcap" style="width:100%"></select>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="row" style="margin-bottom:8px">
+          <input type="text" id="runname" placeholder="실행 이름 (비우면 LKP로 자동)">
+          <label class="row" style="gap:4px">seed <select id="nseeds" title="seed를 하나씩 늘려 여러 시나리오를 함께 실행"><option>1</option><option>3</option><option>5</option><option>10</option></select>개</label>
+        </div>
+        <div class="row"><button class="primary" id="submit">최적화 실행</button></div>
       </div>
     </div>
-  </section>
+
+    <div class="panel" id="p-runs">
+      <div class="scroll">
+        <div class="sec" id="cmpsec" hidden>
+          <h2>POS 비교 (체크한 실행)</h2>
+          <canvas id="c_cmp" class="chart" height="130"></canvas>
+          <div class="hint" id="cmplegend" style="margin-top:4px"></div>
+        </div>
+        <div class="sec">
+          <div class="head"><h2>실행 목록</h2><span class="hint" id="runinfo"></span></div>
+          <div class="pick2"><span>보기</span><select id="runfilter" aria-label="실행 목록 필터">
+            <option value="all">전체</option><option value="web">웹에서 돌린 실행</option>
+            <option value="eval1">검증 1단계 (분포 근처 1~3 km)</option><option value="eval2">검증 2단계 (분포 밖 3~10 km)</option><option value="eval3">검증 3단계 (이륙)</option>
+          </select></div>
+          <div id="joblist"></div>
+          <div class="empty" id="jobempty">아직 실행한 것이 없습니다.<br>설정 탭에서 최적화를 실행하세요.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-result">
+      <div class="scroll">
+        <div class="empty" id="optempty">실행 목록에서 결과를 열면 여기에 나옵니다.</div>
+        <div id="optresult" hidden>
+          <div class="sec">
+            <div class="tiles">
+              <div class="tile"><b id="r_pos"></b><span>최종 POS</span></div>
+              <div class="tile"><b id="r_plans"></b><span>계획 횟수</span></div>
+              <div class="tile"><b id="r_esc"></b><span>지도 밖</span></div>
+              <div class="tile"><b id="r_sec"></b><span>계산 시간</span></div>
+            </div>
+            <div class="hint" style="margin-top:6px">POS는 계획기의 탐지 가정(믿음 모델)으로 계산한 값입니다.</div>
+            <div class="hint" id="r_note"></div>
+          </div>
+          <div class="sec"><h2>누적 POS</h2><canvas id="c_pos" class="chart" height="120"></canvas></div>
+          <div class="sec" id="areasec" hidden>
+            <div class="head"><h2>탐색 영역</h2><span class="hint" id="a_mode"></span></div>
+            <div class="tiles">
+              <div class="tile"><b id="a_A"></b><span>A</span></div>
+              <div class="tile"><b id="a_total"></b><span>A + w × POS</span></div>
+              <div class="tile"><b id="a_x"></b><span>영역 x</span></div>
+              <div class="tile"><b id="a_km"></b><span>훑은 면적</span></div>
+            </div>
+            <h3>시각별 영역 탐색률 c(t), 평균이 A</h3>
+            <canvas id="c_area" class="chart" height="110"></canvas>
+          </div>
+          <div class="sec">
+            <div class="head"><h2>작업</h2><button class="small" id="fitpath">경로에 맞춰 보기</button></div>
+            <div id="opttasks"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-view">
+      <div class="scroll">
+        <div class="sec">
+          <h2>particle 표시</h2>
+          <div class="segs" id="dispmode"><button data-v="dots" class="on">점</button><button data-v="density">확률 밀도</button></div>
+          <div id="densopts" hidden>
+            <div class="pick2"><span>밀도 종류</span><select id="denskind"><option value="prior">전체 (사전)</option><option value="remaining">남은 확률</option><option value="cond">남은 확률 정규화</option></select></div>
+            <div id="bwrow"></div>
+            <div class="checks" style="margin-top:6px">
+              <label><input type="checkbox" id="v_log"> 로그 색</label>
+              <label><input type="checkbox" id="v_lock"> 색 범위 고정</label>
+            </div>
+            <div class="hint" id="kindhint" style="margin-top:6px"></div>
+          </div>
+          <div id="dotopts">
+            <div id="dotrow"></div>
+            <div class="checks" style="margin-top:6px"><label><input type="checkbox" id="o_w" checked> 남은 확률로 흐리게</label></div>
+          </div>
+        </div>
+        <div class="sec">
+          <h2>비행 표시</h2>
+          <div class="pick2"><span>사각형</span><select id="rectmode"><option value="current">지금 맡은 것만</option><option value="past">지금까지 맡은 것</option><option value="all">전체 (앞으로 갈 것은 점선)</option><option value="off">끄기</option></select></div>
+          <div class="pick2"><span>경로</span><select id="pathmode"><option value="past">지나온 경로만</option><option value="all">전체 (앞으로 갈 경로는 연하게)</option><option value="cur">현재 작업만</option><option value="off">끄기</option></select></div>
+          <div class="checks">
+            <label><input type="checkbox" id="o_fov" checked> 카메라 화면</label>
+            <label><input type="checkbox" id="o_swath"> 훑은 범위 누적</label>
+            <label><input type="checkbox" id="o_area"> 탐색 영역 H(t)</label>
+          </div>
+        </div>
+        <div class="sec">
+          <h2>지형</h2>
+          <div class="checks"><label><input type="checkbox" id="o_slope"> 도로 밖으로 못 가는 곳</label></div>
+          <div class="hint" style="margin-top:4px">경사 한계는 표적 탭의 전이 묶음에서 바꿉니다.</div>
+        </div>
+        <div class="sec">
+          <h2>밑지도</h2>
+          <div class="pick2"><span>종류</span><select id="basemap"><option value="muted">흐린 회색</option><option value="color">원본</option><option value="off">끄기</option></select></div>
+          <div id="baserow"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="p-target">
+      <div class="scroll">
+        <div class="subtabs" id="subtabs"></div>
+        <div id="params"></div>
+        <div id="statbox" hidden>
+          <div class="sec"><h2>상태별 비율</h2><canvas id="c_share" class="chart" height="150"></canvas></div>
+          <div class="sec"><h2>LKP에서 직선거리 (km, 중앙값과 10–90%, 지도 밖 제외)</h2><canvas id="c_dist" class="chart" height="140"></canvas></div>
+          <div class="sec"><h2 id="speedtitle">속도 분포</h2><canvas id="c_speed" class="chart" height="110"></canvas></div>
+        </div>
+      </div>
+      <div class="foot" id="targetfoot">
+        <div class="row">
+          <label><input type="checkbox" id="auto" checked> 자동 실행</label>
+          <label><input type="checkbox" id="oneway"> 일방통행 지킴</label>
+          <span style="flex:1"></span>
+          <button id="save">저장</button>
+          <button class="primary" id="run">실행</button>
+        </div>
+      </div>
+    </div>
+  </aside>
 </main>
+</div>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-let META = null, RES = null, VALUES = {}, LKP = [0, 0], busy = false, pending = false;
-let frame = 0, playing = false, lastTs = 0, acc = 0;
+const DPR = () => window.devicePixelRatio || 1;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const V_UAV = 33, EXIT_STATE = 4;
+const TASK_COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#7A5195", "#B8860B", "#2F9FD8", "#A23B2A"];
+const taskColor = i => TASK_COLORS[i % TASK_COLORS.length];
+let META = null, RES = null, VALUES = {}, LKP = [0, 0], START = null, busy = false, pending = false;
+let frame = 0, playing = false, lastTs = 0, acc = 0, tab = "search", mode = "view", subtab = "";
+let OPT = null, viewing = null, JOBS = [], autoOpen = null, pollTimer = null, MAX_JOBS = 0;
+let REGION = "chungju", rectTouched = false;
+const REGION_LKP = {};                            // last LKP used on each map
+const OPTV = {}, CMP = new Set();
+const VIEW = { disp: "dots", bw: 250, dot: 1, base: .55 };
+let lockV = null, lastV = 1;
 const view = { cx: 0, cy: 0, scale: 0 };          // map centre (km) and pixels per km (0 = not fitted yet)
-const mapImg = new Image();
+const mapImg = new Image(), mutedMap = document.createElement("canvas");
 
 function status(msg, err) { const s = $("status"); s.textContent = msg; s.className = err ? "err" : ""; }
 function decode(b64, Type) {
@@ -85,56 +341,238 @@ function decode(b64, Type) {
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
   return new Type(buf.buffer);
 }
-function fmt(v, step) { const d = step >= 1 ? 0 : step >= .1 ? 1 : step >= .01 ? 2 : 3; return Number(v).toFixed(d); }
+function fmt(v, step) { return Number(v).toFixed(Math.min((String(step).split(".")[1] || "").length, 3)); }
+const km1 = p => `${(p[0]/1000).toFixed(1)}, ${(p[1]/1000).toFixed(1)} km`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---------------------------------------------------------------- tabs and modes
+function showTab(t) {
+  tab = t;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+  document.querySelectorAll(".panel").forEach(p => p.classList.toggle("on", p.id === "p-" + t));
+  sizeCharts(); drawCharts(); drawPos(); drawCompare();
+}
+const MODE_TEXT = { lkp: "지도를 클릭해 LKP를 지정하세요 · Esc 취소", start: "지도를 클릭해 무인기 출발점을 지정하세요 · Esc 취소" };
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll("#modes button").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  cv.classList.toggle("pick", m !== "view");
+  $("banner").hidden = m === "view"; $("banner").textContent = MODE_TEXT[m] || "";
+}
+function onMapClick([x, y]) {
+  if (mode === "lkp") { LKP = [x*1000, y*1000]; setMode("view"); run(); }
+  else if (mode === "start") {
+    const [x0, x1, y0, y1] = META.extent, m = .2;
+    if (x < x0 + m || x > x1 - m || y < y0 + m || y > y1 - m) { status("출발점은 지도 안쪽이어야 합니다", true); return; }
+    START = [x*1000, y*1000]; setMode("view"); startChanged();
+  }
+}
+function startChanged() {
+  if (viewing) { run(); return; }
+  updateScenarioUi();
+  if (OPT) clearView();
+  drawMap();
+}
+function updateScenarioUi() {
+  if (!RES) return;
+  const s = START || RES.auto_start, L = RES.lkp_road, d = Math.hypot(s[0] - L[0], s[1] - L[1])/1000;
+  $("lkpv").textContent = km1(L); $("startv").textContent = km1(s); $("autoStart").hidden = !START;
+  $("startinfo").textContent = `${START ? "직접 지정한 위치" : "자동 (지도 경계에서 seed로 선택)"} · LKP까지 ${d.toFixed(1)} km, 직선 ${(d*1000/V_UAV/60).toFixed(1)}분 · 이륙 방향은 LKP`;
+}
 
 // ---------------------------------------------------------------- parameters
+const decimals = x => { const t = String(x); return t.includes("e") ? 6 : t.includes(".") ? t.split(".")[1].length : 0; };
+// slider, - and + (one step per click, repeats while held) and a box to type a value; a typed value need not be a multiple of the step
+function paramRow(p, val, onInput, onChange) {
+  const row = document.createElement("div"); row.className = "param";
+  row.innerHTML = `<span title="${p.help || ""}">${p.label}</span><button type="button" class="tick" aria-label="${p.label} 한 칸 줄이기">−</button>`
+    + `<input type="range" aria-label="${p.label}" min="${p.min}" max="${p.max}" step="${p.step}" value="${val}"><button type="button" class="tick" aria-label="${p.label} 한 칸 늘리기">+</button>`
+    + `<input type="number" class="v" aria-label="${p.label} 값" min="${p.min}" max="${p.max}" step="any" value="${fmt(val, p.step)}">`;
+  const range = row.querySelector("input[type=range]"), box = row.querySelector(".v"), [minus, plus] = row.querySelectorAll(".tick");
+  const dec = Math.min(Math.max(decimals(p.step), decimals(p.min)), 6), whole = Number.isInteger(p.step);
+  const tidy = v => Number(clamp(whole ? Math.round(v) : v, p.min, p.max).toFixed(6));
+  const show = v => decimals(v) > decimals(p.step) ? String(v) : fmt(v, p.step);
+  let cur = Number(val);
+  const edges = () => { minus.disabled = cur <= p.min; plus.disabled = cur >= p.max; };
+  const set = v => { if (v === cur) return false; cur = v; range.value = v; box.value = show(v); edges(); onInput(v); return true; };
+  const commit = () => { if (onChange) onChange(cur); };
+  const tick = dir => {
+    const k = (cur - p.min)/p.step, n = dir > 0 ? Math.floor(k + 1e-9) + 1 : Math.ceil(k - 1e-9) - 1;      // next multiple of the step, also from a typed value
+    return set(Number(clamp(p.min + n*p.step, p.min, p.max).toFixed(dec)));
+  };
+  range.oninput = () => set(Number(range.value));
+  range.onchange = commit;
+  box.oninput = () => {                               // while typing: use a valid number, leave the text alone
+    const v = parseFloat(box.value);
+    if (!Number.isFinite(v) || v < p.min || v > p.max) return;
+    cur = tidy(v); range.value = cur; edges(); onInput(cur);
+  };
+  box.onchange = () => {
+    const v = parseFloat(box.value);
+    if (Number.isFinite(v)) { cur = tidy(v); range.value = cur; edges(); onInput(cur); commit(); }
+    box.value = show(cur);
+  };
+  box.onkeydown = e => {
+    if (e.key === "Enter") box.blur();
+    else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); if (tick(e.key === "ArrowUp" ? 1 : -1)) commit(); }
+  };
+  [[minus, -1], [plus, 1]].forEach(([btn, dir]) => {
+    let timer = null, moved = false;
+    const stop = () => { clearTimeout(timer); timer = null; window.removeEventListener("pointerup", stop); window.removeEventListener("pointercancel", stop); if (moved) { moved = false; commit(); } };
+    const repeat = () => { if (tick(dir)) { moved = true; timer = setTimeout(repeat, 70); } else stop(); };
+    btn.addEventListener("pointerdown", e => {
+      e.preventDefault();
+      moved = tick(dir);
+      window.addEventListener("pointerup", stop); window.addEventListener("pointercancel", stop);
+      timer = setTimeout(repeat, 380);
+    });
+    btn.addEventListener("click", e => { if (e.detail === 0 && tick(dir)) commit(); });     // keyboard
+  });
+  edges();
+  return row;
+}
 function buildParams() {
-  const tabs = $("tabs"), box = $("params");
-  Object.entries(META.groups).forEach(([g, items], gi) => {
+  const tabs = $("subtabs"), box = $("params");
+  Object.entries(META.groups).forEach(([g, items]) => {
     const b = document.createElement("button"); b.textContent = g; b.dataset.g = g;
     b.onclick = () => showGroup(g); tabs.appendChild(b);
     const div = document.createElement("div"); div.dataset.g = g;
     items.forEach(p => {
-      const row = document.createElement("div"); row.className = "param";
-      const val = VALUES[p.name] ?? p.min;
-      row.innerHTML = `<span>${p.label}</span><input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${val}"><span class="v">${fmt(val, p.step)}</span>`;
-      const inp = row.querySelector("input"), out = row.querySelector(".v");
-      inp.oninput = () => { out.textContent = fmt(inp.value, p.step); VALUES[p.name] = Number(inp.value); };
-      inp.onchange = () => { VALUES[p.name] = Number(inp.value); if ($("auto").checked) run(); };
-      div.appendChild(row);
+      div.appendChild(paramRow(p, VALUES[p.name] ?? p.min, v => { VALUES[p.name] = v; if (p.name === SLOPE_PARAM) slopeLimitChanged(); }, v => { VALUES[p.name] = v; if ($("auto").checked) run(); }));
+      if (p.name === SLOPE_PARAM) {
+        const r = document.createElement("label"); r.className = "slopetoggle";
+        r.innerHTML = `<input type="checkbox" id="o_slope2"><span>못 가는 곳 지도에 표시</span><span class="hint" id="slopeinfo"></span>`;
+        div.appendChild(r);
+      }
     });
     box.appendChild(div);
   });
+  const st = document.createElement("button"); st.textContent = "통계"; st.dataset.g = "__stats"; st.onclick = () => showGroup("__stats"); tabs.appendChild(st);
   showGroup(Object.keys(META.groups)[0]);
   $("oneway").checked = !!VALUES.respect_oneway;
   $("oneway").onchange = () => { VALUES.respect_oneway = $("oneway").checked; if ($("auto").checked) run(); };
 }
 function showGroup(g) {
-  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.g === g));
+  subtab = g;
+  document.querySelectorAll("#subtabs button").forEach(b => b.classList.toggle("on", b.dataset.g === g));
   document.querySelectorAll("#params > div").forEach(d => d.style.display = d.dataset.g === g ? "" : "none");
+  $("statbox").hidden = g !== "__stats"; $("targetfoot").hidden = g === "__stats";
+  sizeCharts(); drawCharts();
 }
-function payload() { return { ...VALUES, lkp: LKP }; }
+function payload() { return { ...VALUES, lkp: LKP, region: REGION }; }
+const offName = () => (META.regions.find(r => r.key === REGION) || {}).off_name || "논밭";
+const tr = s => s.replaceAll("논밭", offName());
+function relabel() {
+  document.querySelectorAll(".param > span:first-child").forEach(el => { el.dataset.orig ??= el.textContent; el.textContent = tr(el.dataset.orig); });
+}
+function loadMapImage(key) {
+  return new Promise((ok, bad) => {
+    mapImg.onload = () => { makeMuted(); ok(); };
+    mapImg.onerror = () => bad(new Error("지도 그림을 읽지 못했습니다"));
+    mapImg.src = "/map.png?region=" + encodeURIComponent(key);
+  });
+}
+async function useRegion(key) {
+  if (key === REGION && mapImg.naturalWidth) return;
+  const r = await fetch("/api/region?key=" + encodeURIComponent(key));
+  if (!r.ok) throw new Error("지도를 찾지 못했습니다");
+  const d = await r.json();
+  if (playing) togglePlay();
+  REGION_LKP[REGION] = LKP;
+  REGION = key; $("region").value = key; META.extent = d.extent; META.grid = d.grid;
+  LKP = REGION_LKP[key] || d.lkp; START = null;
+  clearView(true); RES = null;
+  await loadMapImage(key);
+  if ($("o_slope").checked) await loadSlope().catch(e => status("지형 경사를 읽지 못했습니다: " + e.message, true));
+  view.scale = 0;
+  relabel(); updateLegend(); resize();
+}
+async function changeRegion() {
+  const key = $("region").value;
+  setMode("view"); status("지도를 불러오는 중 ..."); $("region").disabled = true;
+  try { await useRegion(key); await run(); }
+  catch (e) { status("지도를 불러오지 못했습니다: " + e.message, true); $("region").value = REGION; }
+  $("region").disabled = false;
+}
+function buildOptParams() {
+  const box = $("optparams"); box.innerHTML = "";
+  let group = null;
+  META.opt_fields.forEach(p => {
+    if (p.group !== group) {
+      group = p.group; const h = document.createElement("h3"); h.textContent = group; box.appendChild(h);
+      if (group === META.opt_score_group) {
+        const sel = document.createElement("select"); sel.id = "optscore"; sel.style.width = "100%"; sel.style.marginBottom = "4px"; sel.setAttribute("aria-label", group);
+        META.opt_scores.forEach(c => { const o = document.createElement("option"); o.value = c.value; o.textContent = c.label; sel.appendChild(o); });
+        sel.onchange = syncScore; box.appendChild(sel);
+      }
+    }
+    OPTV[p.name] = Number(p.value);
+    const row = paramRow(p, p.value, v => { OPTV[p.name] = v; });
+    if (p.group === META.opt_score_group) row.classList.add("scoreopt");
+    box.appendChild(row);
+  });
+  if (!$("optcap").options.length)
+    META.opt_caps.forEach(c => { const o = document.createElement("option"); o.value = c.value; o.textContent = c.label; $("optcap").appendChild(o); });
+  $("optcap").value = META.opt_caps[0].value;
+  syncScore();
+}
+function syncScore() { document.querySelectorAll(".scoreopt").forEach(r => { r.hidden = $("optscore").value !== "area"; }); }
+const optChoices = () => ({ ...OPTV, cap: $("optcap").value, score: $("optscore").value });
+function buildViewOptions() {
+  $("bwrow").appendChild(paramRow({ label: "대역폭 (m)", min: 50, max: 1500, step: 25, help: "밀도를 얼마나 부드럽게 퍼뜨릴지" }, VIEW.bw, v => { VIEW.bw = v; drawMap(); }));
+  $("dotrow").appendChild(paramRow({ label: "점 크기", min: .4, max: 2.5, step: .1 }, VIEW.dot, v => { VIEW.dot = v; drawMap(); }));
+  $("baserow").appendChild(paramRow({ label: "진하기", min: .1, max: 1, step: .05 }, VIEW.base, v => { VIEW.base = v; drawMap(); }));
+  document.querySelectorAll("#dispmode button").forEach(b => b.onclick = () => {
+    VIEW.disp = b.dataset.v;
+    document.querySelectorAll("#dispmode button").forEach(x => x.classList.toggle("on", x === b));
+    $("densopts").hidden = VIEW.disp !== "density"; $("dotopts").hidden = VIEW.disp !== "dots";
+    updateLegend(); updateKindHint(); drawMap();
+  });
+  ["denskind", "v_log", "pathmode", "basemap", "rectmode", "o_fov", "o_swath", "o_area", "o_w"].forEach(id => $(id).onchange = () => { if (id === "denskind" || id === "v_log") lockV = null; updateKindHint(); updateLegend(); drawMap(); });
+  $("v_lock").onchange = () => { lockV = null; drawMap(); };
+  $("rectmode").addEventListener("change", () => { rectTouched = true; });
+  ["o_slope", "o_slope2"].forEach(id => $(id).onchange = () => setSlopeView($(id).checked));
+}
+function updateKindHint() {
+  $("kindhint").textContent = !OPT && $("denskind").value !== "prior" ? "결과를 열기 전에는 탐색이 없어 사전 분포와 같습니다." : "";
+}
+function updateLegend() {
+  const dens = VIEW.disp === "density";
+  const line = (st, text) => `<div><span class="sw" style="${st}"></span>${text}</div>`;
+  $("legenditems").innerHTML = (dens ? "" : META.states.map((n, s) => `<div><span class="sw dot" style="background:${META.colors[s]}"></span>${tr(n)}</div>`).join(""))
+    + line("background:#ffd400;border:1px solid #000", "LKP와 도주 방향")
+    + line("border:1.5px solid #1f4e8c;background:#fff", "무인기 출발점")
+    + line(`height:3px;background:linear-gradient(90deg,${TASK_COLORS[0]} 50%,${TASK_COLORS[1]} 50%);vertical-align:3px`, OPT && OPT.uavs.length > 1 ? "비행 경로 (색 = 무인기)" : "비행 경로 (색 = 작업)")
+    + line("background:rgba(230,126,34,.5);border:1px solid #d35400", "카메라 화면")
+    + (OPT && OPT.area && $("o_area").checked ? line("background:rgba(0,158,115,.2);border:1px solid #009E73", "탐색 영역 H(t)") + line("background:rgba(0,158,115,.65);border:1px solid #009E73", "그중 훑은 칸") : "")
+    + ($("o_slope").checked ? line("background:rgba(179,38,30,.5);border:1px solid #b3261e", `도로 밖으로 못 가는 곳 (경사 ${VALUES.off_max_slope_deg}° 이상, 숲·물·도시)`) : "");
+  $("cbarbox").hidden = !dens;
+}
 
 // ---------------------------------------------------------------- server calls
 async function run() {
   if (busy) { pending = true; return; }
-  busy = true; $("run").disabled = true; status("실행 중 ...");
+  busy = true; $("run").disabled = true; status("particle 계산 중 ...");
   try {
     const r = await fetch("/api/run", { method: "POST", body: JSON.stringify(payload()) });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     const keepMin = RES ? frame*RES.dt_s/60 : 30;
-    RES = d;
-    RES.posArr = decode(d.pos, Int16Array);
-    RES.stateArr = decode(d.state, Uint8Array);
-    RES.speedArr = decode(d.speed, Uint8Array);
-    $("time").max = d.T - 1;
+    clearView(true);
+    setParticles(d);
+    updateScenarioUi();
     setFrame(Math.min(d.T - 1, Math.round(keepMin*60/d.dt_s)));
     drawCharts();
-    status(`particle ${d.N}개 · LKP (${(d.lkp_road[0]/1000).toFixed(1)}, ${(d.lkp_road[1]/1000).toFixed(1)}) km · 방향 ${d.heading.toFixed(0)}° · seed ${VALUES.seed} · 계산 ${d.sim_s}초`);
+    status(`particle ${d.N}개 · 방향 ${d.heading.toFixed(0)}° · seed ${VALUES.seed} · 계산 ${d.sim_s}초`);
   } catch (e) { status("오류: " + e.message, true); }
   busy = false; $("run").disabled = false;
   if (pending) { pending = false; run(); }
+}
+function setParticles(d) {
+  RES = d;
+  RES.posArr = decode(d.pos, Int16Array);
+  RES.stateArr = decode(d.state, Uint8Array);
+  RES.speedArr = decode(d.speed, Uint8Array);
 }
 async function save() {
   const r = await fetch("/api/save", { method: "POST", body: JSON.stringify(payload()) });
@@ -142,63 +580,284 @@ async function save() {
   status(d.error ? "오류: " + d.error : "저장: " + d.saved, !!d.error);
 }
 
+function sceneState() {
+  const j = viewing ? JOBS.find(x => x.id === viewing) : null;
+  return { time_min: RES ? frame*RES.dt_s/60 : null, target: payload(), lkp_road: RES ? RES.lkp_road : null, start_set: START, start_auto: RES ? RES.auto_start : null,
+           plan: optChoices(), n_particles: RES ? RES.N : null, run: viewing, run_label: j ? j.label : null, run_final_pos: OPT ? OPT.final : null,
+           display: { ...VIEW, density_kind: $("denskind").value, log: $("v_log").checked, lock: $("v_lock").checked, path: $("pathmode").value, basemap: $("basemap").value, swath: $("o_swath").checked, area: $("o_area").checked, slope: $("o_slope").checked }, map_view: { ...view } };
+}
+async function share() {
+  const note = window.prompt("이 장면에 대한 메모 (비워도 됩니다)", "");
+  if (note === null) return;
+  try {
+    const r = await fetch("/api/share", { method: "POST", body: JSON.stringify({ note, state: sceneState(), png: cv.toDataURL("image/png") }) });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    status("장면을 저장했습니다: " + d.saved);
+  } catch (e) { status("장면을 저장하지 못했습니다: " + e.message, true); }
+}
+
 // ---------------------------------------------------------------- map
 const cv = $("map"), ctx = cv.getContext("2d");
 function fitView() {
   const [x0, x1, y0, y1] = META.extent;
   view.cx = (x0 + x1)/2; view.cy = (y0 + y1)/2;
-  view.scale = cv.width/(x1 - x0);
+  view.scale = Math.min(cv.width/(x1 - x0), cv.height/(y1 - y0));
+}
+function fitPath() {
+  if (!OPT) return;
+  let a = [1e9, 1e9, -1e9, -1e9];
+  OPT.uavs.forEach(U => {
+    for (let i = 0; i < U.n_path; i++) {
+      const x = U.xyArr[2*i]/1000, y = U.xyArr[2*i + 1]/1000;
+      a = [Math.min(a[0], x), Math.min(a[1], y), Math.max(a[2], x), Math.max(a[3], y)];
+    }
+  });
+  view.cx = (a[0] + a[2])/2; view.cy = (a[1] + a[3])/2;
+  view.scale = Math.min(cv.width/(a[2] - a[0] + 4), cv.height/(a[3] - a[1] + 4));
+  drawMap();
+}
+function sizeCharts() {
+  const dpr = DPR();
+  document.querySelectorAll(".chart").forEach(c => {
+    if (c.offsetParent === null) return;
+    c.width = Math.round(c.clientWidth*dpr); c.height = Math.round(Number(c.getAttribute("height"))*dpr);
+    c.style.height = c.getAttribute("height") + "px";
+  });
 }
 function resize() {
-  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth;
-  const keep = view.scale ? view.scale/cv.width : null;
-  cv.width = Math.round(w*dpr); cv.height = Math.round(w*dpr);
-  if (keep) view.scale = keep*cv.width; else fitView();
-  document.querySelectorAll(".chart").forEach(c => { c.width = Math.round(c.clientWidth*dpr); c.height = Math.round(Number(c.getAttribute("height"))*dpr); c.style.height = c.getAttribute("height") + "px"; });
-  drawMap(); drawCharts();
+  const dpr = DPR(), box = $("mapbox"), w = Math.round(box.clientWidth*dpr), h = Math.round(box.clientHeight*dpr);
+  if (view.scale && cv.width) view.scale *= w/cv.width;
+  cv.width = w; cv.height = h;
+  if (!view.scale) fitView();
+  const tl = $("timeline"); tl.width = Math.round(tl.clientWidth*dpr); tl.height = Math.round(40*dpr);
+  sizeCharts(); drawMap(); drawCharts(); drawPos(); drawTimeline(); drawCompare();
 }
 const toPx = (x, y) => [cv.width/2 + (x - view.cx)*view.scale, cv.height/2 - (y - view.cy)*view.scale];
 const toKm = (px, py) => [view.cx + (px - cv.width/2)/view.scale, view.cy - (py - cv.height/2)/view.scale];
 
-function drawMap() {
-  if (!META) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#e9e6de"; ctx.fillRect(0, 0, cv.width, cv.height);
+function drawBase() {
+  ctx.fillStyle = "#f1f1ee"; ctx.fillRect(0, 0, cv.width, cv.height);
+  const b = $("basemap").value;
+  if (b === "off" || !mapImg.complete) return;
   const [x0, x1, y0, y1] = META.extent;
   const [ax, ay] = toPx(x0, y1), [bx, by] = toPx(x1, y0);
   ctx.imageSmoothingEnabled = view.scale*(x1 - x0) < mapImg.width;
-  if (mapImg.complete) ctx.drawImage(mapImg, ax, ay, bx - ax, by - ay);
+  ctx.globalAlpha = VIEW.base;
+  ctx.drawImage(b === "color" ? mapImg : mutedMap, ax, ay, bx - ax, by - ay);
+  ctx.globalAlpha = 1;
+}
+function drawMap() {
+  if (!META) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawBase();
+  if ($("o_slope").checked) drawSlope();
   if (!RES) return;
-  const N = RES.N, k = frame, u = RES.pos_unit_m/1000, P = RES.posArr, S = RES.stateArr;
-  const r = Math.max(1.5, Math.min(4, view.scale*0.12))*(window.devicePixelRatio || 1)/1.5;
-  for (let s = 0; s < META.states.length; s++) {
-    ctx.fillStyle = META.colors[s];
-    for (let i = 0; i < N; i++) {
-      if (S[k*N + i] !== s) continue;
-      const j = (k*N + i)*2;
-      const [px, py] = toPx(P[j]*u, P[j + 1]*u);
-      ctx.fillRect(px - r, py - r, 2*r, 2*r);
-    }
-  }
+  const dpr = DPR();
+  if (OPT && OPT.area && $("o_area").checked) drawAreaMap();
+  if (VIEW.disp === "density") drawDensity(); else drawDots();
+  if (OPT && $("o_swath").checked) drawSwath();
+  drawOpt();
+  drawStart();
   const [lx, ly] = toPx(RES.lkp_road[0]/1000, RES.lkp_road[1]/1000);
-  const h = RES.heading*Math.PI/180, L = 40*(window.devicePixelRatio || 1);
+  const h = RES.heading*Math.PI/180, L = 40*dpr, ah = 9*dpr;
   ctx.strokeStyle = "#000"; ctx.lineWidth = 2.5; ctx.beginPath();
   ctx.moveTo(lx, ly); ctx.lineTo(lx + L*Math.cos(h), ly - L*Math.sin(h)); ctx.stroke();
-  const ah = 9*(window.devicePixelRatio || 1);
   ctx.beginPath();
   ctx.moveTo(lx + L*Math.cos(h), ly - L*Math.sin(h));
   ctx.lineTo(lx + L*Math.cos(h) - ah*Math.cos(h - .45), ly - L*Math.sin(h) + ah*Math.sin(h - .45));
   ctx.moveTo(lx + L*Math.cos(h), ly - L*Math.sin(h));
   ctx.lineTo(lx + L*Math.cos(h) - ah*Math.cos(h + .45), ly - L*Math.sin(h) + ah*Math.sin(h + .45));
   ctx.stroke();
-  star(lx, ly, 11*(window.devicePixelRatio || 1));
+  star(lx, ly, 11*dpr);
   scaleBar();
 }
+// where a vehicle cannot leave the road at the current slope limit, redrawn only when the limit or the map changes
+const SLOPE_PARAM = "off_max_slope_deg", SLOPE_ROAD = 254, SLOPE_CLOSED = 255;
+const slopeCv = document.createElement("canvas");
+let SLOPE = null, slopeKey = "", slopeImg = null;
+async function loadSlope() {
+  if (SLOPE && SLOPE.region === REGION) return;
+  const key = REGION, r = await fetch("/slope.bin?region=" + encodeURIComponent(key));
+  if (!r.ok) throw new Error("서버 응답 " + r.status);
+  const data = new Uint8Array(await r.arrayBuffer());
+  if (key === REGION) { SLOPE = { region: key, data, blocked: null }; slopeKey = ""; }
+}
+async function setSlopeView(on) {
+  $("o_slope").checked = $("o_slope2").checked = on;
+  if (on) await loadSlope().catch(e => status("지형 경사를 읽지 못했습니다: " + e.message, true));
+  if (!on) $("slopeinfo").textContent = "";
+  updateLegend(); drawMap();
+}
+function slopeLimitChanged() { if ($("o_slope").checked) { updateLegend(); drawMap(); } }
+function drawSlope() {
+  if (!SLOPE || SLOPE.region !== REGION) return;
+  const G = META.grid, n = G.n, lim = VALUES[SLOPE_PARAM], key = REGION + "|" + lim;
+  if (key !== slopeKey) {
+    slopeKey = key;
+    if (slopeCv.width !== n) { slopeCv.width = slopeCv.height = n; slopeImg = null; }
+    const g = slopeCv.getContext("2d");
+    slopeImg = slopeImg || g.createImageData(n, n);
+    const d = slopeImg.data, V = SLOPE.data, q = lim*4;
+    d.fill(0);
+    let closed = 0;
+    for (let r = 0; r < n; r++) {
+      const row = (n - 1 - r)*n;                      // row 0 of the data is the south edge
+      for (let c = 0; c < n; c++) {
+        const v = V[row + c];
+        if (v === SLOPE_ROAD || (v !== SLOPE_CLOSED && v < q)) continue;
+        closed++;
+        const o = 4*(r*n + c); d[o] = 179; d[o + 1] = 38; d[o + 2] = 30; d[o + 3] = 130;
+      }
+    }
+    g.putImageData(slopeImg, 0, 0);
+    SLOPE.blocked = closed/(n*n);
+    $("slopeinfo").textContent = `지도의 ${(SLOPE.blocked*100).toFixed(1)}%`;
+  }
+  const x0 = G.x0/1000, w = n*G.cell/1000, [ax, ay] = toPx(x0, x0 + w), [bx, by] = toPx(x0 + w, x0);
+  ctx.imageSmoothingEnabled = view.scale*w < n;       // smooth only while several cells share a pixel
+  ctx.drawImage(slopeCv, ax, ay, bx - ax, by - ay);
+}
+function drawDots() {
+  const N = RES.N, k = frame, u = RES.pos_unit_m/1000, P = RES.posArr, S = RES.stateArr, dpr = DPR();
+  const r = clamp(view.scale*.05/dpr, .9, 2.6)*dpr*VIEW.dot;
+  const W = OPT && $("o_w").checked ? OPT.wArr : null, kw = OPT ? Math.min(k, OPT.T - 1)*N : 0;
+  for (let s = 0; s < META.states.length; s++) {
+    if (s === EXIT_STATE) continue;
+    ctx.fillStyle = META.colors[s];
+    for (let i = 0; i < N; i++) {
+      if (S[k*N + i] !== s) continue;
+      const j = (k*N + i)*2;
+      const [px, py] = toPx(P[j]*u, P[j + 1]*u);
+      if (px < -5 || py < -5 || px > cv.width + 5 || py > cv.height + 5) continue;
+      if (W) ctx.globalAlpha = .1 + .9*W[kw + i]/255;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// density: particles binned on a screen grid, smoothed by three box passes, mapped through a colour table
+const denCv = document.createElement("canvas"), denCtx = denCv.getContext("2d");
+let denGrid = null, denTmp = null;
+const CMAP = (() => {
+  const stops = [[0, 255, 245, 200], [.25, 254, 204, 92], [.5, 240, 120, 40], [.75, 195, 40, 45], [1, 90, 5, 60]], out = new Uint8ClampedArray(256*3);
+  for (let i = 0; i < 256; i++) {
+    const t = i/255; let a = 0;
+    while (a < stops.length - 2 && t > stops[a + 1][0]) a++;
+    const f = (t - stops[a][0])/(stops[a + 1][0] - stops[a][0]);
+    for (let c = 0; c < 3; c++) out[3*i + c] = stops[a][c + 1] + f*(stops[a + 1][c + 1] - stops[a][c + 1]);
+  }
+  return out;
+})();
+function boxBlur(src, tmp, w, h, r) {
+  if (r < 1) return;
+  const norm = 1/(2*r + 1);
+  for (let y = 0; y < h; y++) {
+    let s = 0; const o = y*w;
+    for (let x = -r; x <= r; x++) s += src[o + clamp(x, 0, w - 1)];
+    for (let x = 0; x < w; x++) { tmp[o + x] = s*norm; s += src[o + Math.min(x + r + 1, w - 1)] - src[o + Math.max(x - r, 0)]; }
+  }
+  for (let x = 0; x < w; x++) {
+    let s = 0;
+    for (let y = -r; y <= r; y++) s += tmp[x + clamp(y, 0, h - 1)*w];
+    for (let y = 0; y < h; y++) { src[x + y*w] = s*norm; s += tmp[x + Math.min(y + r + 1, h - 1)*w] - tmp[x + Math.max(y - r, 0)*w]; }
+  }
+}
+function drawDensity() {
+  const dpr = DPR(), cell = 3*dpr, gw = Math.ceil(cv.width/cell), gh = Math.ceil(cv.height/cell), n = gw*gh;
+  if (!denGrid || denGrid.length !== n) { denGrid = new Float32Array(n); denTmp = new Float32Array(n); denCv.width = gw; denCv.height = gh; }
+  denGrid.fill(0);
+  const N = RES.N, k = frame, u = RES.pos_unit_m/1000, P = RES.posArr, S = RES.stateArr;
+  const kind = OPT ? $("denskind").value : "prior", W = kind === "prior" || !OPT ? null : OPT.wArr, kw = OPT ? Math.min(k, OPT.T - 1)*N : 0;
+  let total = 0;
+  for (let i = 0; i < N; i++) {
+    if (S[k*N + i] === EXIT_STATE) continue;
+    const w = W ? W[kw + i]/255 : 1;
+    total += w;
+    if (w <= 0) continue;
+    const j = (k*N + i)*2, [px, py] = toPx(P[j]*u, P[j + 1]*u);
+    const gx = Math.floor(px/cell), gy = Math.floor(py/cell);
+    if (gx >= 0 && gy >= 0 && gx < gw && gy < gh) denGrid[gx + gy*gw] += w;
+  }
+  const kmCell = cell/view.scale, sigma = VIEW.bw/1000/kmCell, r = Math.max(1, Math.round(sigma*.87));
+  for (let p = 0; p < 3; p++) boxBlur(denGrid, denTmp, gw, gh, Math.min(r, 60));
+  const scale = (kind === "cond" ? 1/Math.max(total, 1e-9) : 1/N)/(kmCell*kmCell);       // probability per km2
+  let vmax = 0;
+  for (let i = 0; i < n; i++) if (denGrid[i] > vmax) vmax = denGrid[i];
+  vmax *= scale;
+  lastV = vmax > 0 ? vmax : 1;
+  if ($("v_lock").checked && lockV === null) lockV = lastV;
+  const hi = lockV ?? lastV, log = $("v_log").checked, lo = hi/300;
+  const img = denCtx.createImageData(gw, gh), d = img.data;
+  for (let i = 0; i < n; i++) {
+    const v = denGrid[i]*scale;
+    if (v <= (log ? lo : hi/500)) continue;
+    const t = clamp(log ? Math.log(v/lo)/Math.log(hi/lo) : v/hi, 0, 1), c = Math.round(t*255);
+    d[4*i] = CMAP[3*c]; d[4*i + 1] = CMAP[3*c + 1]; d[4*i + 2] = CMAP[3*c + 2]; d[4*i + 3] = 40 + 205*Math.pow(t, .55);
+  }
+  denCtx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(denCv, 0, 0, gw*cell, gh*cell);
+  drawColorbar(hi, log, lo);
+}
+function drawColorbar(hi, log, lo) {
+  const c = $("cbar"), g = c.getContext("2d");
+  for (let x = 0; x < c.width; x++) { const k = Math.round(x/(c.width - 1)*255); g.fillStyle = `rgb(${CMAP[3*k]},${CMAP[3*k + 1]},${CMAP[3*k + 2]})`; g.fillRect(x, 0, 1, c.height); }
+  const f = v => v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toPrecision(2);
+  $("cbarmin").textContent = log ? f(lo) : "0"; $("cbarmax").textContent = f(hi); $("cbarunit").textContent = (log ? "로그 · " : "") + "확률/km²";
+}
+function drawSwath() {
+  const t = frame*RES.dt_s, p = new Path2D();
+  OPT.uavs.forEach(U => {
+    if (t < U.logT[0]) return;
+    const Q = U.quadArr, cur = clamp(Math.round(t - U.logT[0]), 0, U.n_log - 1);
+    for (let i = 0; i <= cur; i += 3) {
+      for (let c = 0; c < 4; c++) { const [a, b] = toPx(Q[8*i + 2*c]/1000, Q[8*i + 2*c + 1]/1000); c ? p.lineTo(a, b) : p.moveTo(a, b); }
+      p.closePath();
+    }
+  });
+  ctx.fillStyle = "rgba(0,114,178,.28)"; ctx.fill(p, "nonzero");
+}
+// the x% region of the current 5 min window, and the part of it already swept
+const areaCv = document.createElement("canvas");
+let areaKey = "";
+function drawAreaMap() {
+  const A = OPT.area, t = frame*RES.dt_s, j = clamp(Math.ceil(t/300), 1, 12) - 1, m = Math.ceil(t/60), key = j + "|" + m;
+  if (key !== areaKey) {
+    areaKey = key;
+    areaCv.width = A.nx; areaCv.height = A.ny;
+    const g = areaCv.getContext("2d"), img = g.createImageData(A.nx, A.ny), d = img.data;
+    for (let r = 0; r < A.ny; r++) for (let c = 0; c < A.nx; c++) {
+      const i = (A.ny - 1 - r)*A.nx + c;              // row 0 of the data is the south edge
+      if (!((A.bitsArr[i] >> j) & 1)) continue;
+      const o = 4*(r*A.nx + c), done = A.firstArr[i] <= m;
+      d[o] = 0; d[o + 1] = 158; d[o + 2] = 115; d[o + 3] = done ? 170 : 55;
+    }
+    g.putImageData(img, 0, 0);
+  }
+  const [ax, ay] = toPx(A.x0/1000, (A.y0 + A.ny*A.cell)/1000), [bx, by] = toPx((A.x0 + A.nx*A.cell)/1000, A.y0/1000);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(areaCv, ax, ay, bx - ax, by - ay);
+}
+function drawStart() {
+  const dpr = DPR(), s = OPT ? OPT.start : (START || RES.auto_start);
+  const [sx, sy] = toPx(s[0]/1000, s[1]/1000), R = 9*dpr, L = RES.lkp_road;
+  if (!OPT) {
+    const [lx, ly] = toPx(L[0]/1000, L[1]/1000);
+    ctx.setLineDash([6*dpr, 6*dpr]); ctx.strokeStyle = "rgba(31,78,140,.7)"; ctx.lineWidth = 1.3*dpr;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(lx, ly); ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.beginPath(); ctx.moveTo(sx, sy - R); ctx.lineTo(sx + R, sy + R*.8); ctx.lineTo(sx - R, sy + R*.8); ctx.closePath();
+  const filled = OPT || START;
+  ctx.fillStyle = filled ? "#1f4e8c" : "#fff"; ctx.fill();
+  ctx.strokeStyle = filled ? "#fff" : "#1f4e8c"; ctx.lineWidth = 1.6*dpr; ctx.stroke();
+}
 function scaleBar() {
-  const dpr = window.devicePixelRatio || 1, want = cv.width*0.18/view.scale;
+  const dpr = DPR(), want = cv.width*0.18/view.scale;
   const km = [0.5, 1, 2, 5, 10, 20].find(v => v >= want*0.6) || 20, w = km*view.scale;
   const x = cv.width - w - 20*dpr, y = cv.height - 22*dpr;
-  ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.fillRect(x - 8*dpr, y - 18*dpr, w + 16*dpr, 28*dpr);
+  ctx.fillStyle = "rgba(255,255,255,.88)"; ctx.fillRect(x - 8*dpr, y - 18*dpr, w + 16*dpr, 28*dpr);
   ctx.strokeStyle = "#222"; ctx.lineWidth = 2*dpr; ctx.beginPath();
   ctx.moveTo(x, y - 5*dpr); ctx.lineTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y - 5*dpr); ctx.stroke();
   ctx.fillStyle = "#222"; ctx.font = `${12*dpr}px sans-serif`; ctx.textAlign = "center"; ctx.fillText(km + " km", x + w/2, y - 6*dpr);
@@ -216,38 +875,34 @@ function star(x, y, R) {
 let drag = null;
 cv.addEventListener("mousedown", e => { drag = { x: e.offsetX, y: e.offsetY, cx: view.cx, cy: view.cy, moved: false }; });
 window.addEventListener("mousemove", e => {
+  const dpr = DPR(), rect = cv.getBoundingClientRect();
+  if (e.target === cv) { const [x, y] = toKm((e.clientX - rect.left)*dpr, (e.clientY - rect.top)*dpr); $("coord").textContent = `${x.toFixed(1)}, ${y.toFixed(1)} km`; }
   if (!drag) return;
-  const dpr = window.devicePixelRatio || 1, rect = cv.getBoundingClientRect();
   const dx = (e.clientX - rect.left - drag.x)*dpr, dy = (e.clientY - rect.top - drag.y)*dpr;
   if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
   if (drag.moved) { view.cx = drag.cx - dx/view.scale; view.cy = drag.cy + dy/view.scale; drawMap(); }
 });
 window.addEventListener("mouseup", e => {
-  if (drag && !drag.moved && e.target === cv) {
-    const dpr = window.devicePixelRatio || 1, [x, y] = toKm(e.offsetX*dpr, e.offsetY*dpr);
-    LKP = [x*1000, y*1000]; run();
-  }
+  if (drag && !drag.moved && e.target === cv && mode !== "view") { const dpr = DPR(); onMapClick(toKm(e.offsetX*dpr, e.offsetY*dpr)); }
   drag = null;
 });
 cv.addEventListener("wheel", e => {
   e.preventDefault();
-  const dpr = window.devicePixelRatio || 1, px = e.offsetX*dpr, py = e.offsetY*dpr;
+  const dpr = DPR(), px = e.offsetX*dpr, py = e.offsetY*dpr;
   const [x, y] = toKm(px, py), f = Math.exp(-e.deltaY*0.0015);
-  view.scale = Math.min(Math.max(view.scale*f, cv.width/120), cv.width/0.5);
+  view.scale = clamp(view.scale*f, cv.width/120, cv.width/0.5);
   view.cx = x - (px - cv.width/2)/view.scale; view.cy = y + (py - cv.height/2)/view.scale;
   drawMap();
 }, { passive: false });
-cv.addEventListener("dblclick", () => { fitView(); drawMap(); });
+cv.addEventListener("dblclick", () => { if (mode === "view") { fitView(); drawMap(); } });
 
 // ---------------------------------------------------------------- time and playback
 function setFrame(k) {
   if (!RES) return;
-  frame = Math.max(0, Math.min(RES.T - 1, k));
-  $("time").value = frame;
+  frame = clamp(k, 0, RES.T - 1);
   $("tlabel").textContent = (frame*RES.dt_s/60).toFixed(1) + "분";
-  drawMap(); drawCursor(); drawSpeed();
+  drawMap(); drawCursor(); drawSpeed(); drawPos(); drawTimeline(); updateHud();
 }
-$("time").oninput = () => setFrame(Number($("time").value));
 function togglePlay() { playing = !playing; $("play").textContent = playing ? "정지" : "재생"; lastTs = 0; acc = 0; if (playing) requestAnimationFrame(tick); }
 $("play").onclick = togglePlay;
 function tick(ts) {
@@ -260,17 +915,265 @@ function tick(ts) {
   lastTs = ts; requestAnimationFrame(tick);
 }
 document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { setMode("view"); return; }
   if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") return;
+  if (e.target.tagName === "SELECT") return;
   if (e.key === " ") { e.preventDefault(); togglePlay(); }
   else if (RES && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { e.preventDefault(); setFrame(frame + (e.key === "ArrowRight" ? 1 : -1)*Math.round(60/RES.dt_s)); }
 });
 
+const TL_PAD = 10, tl = $("timeline");
+let tlDrag = false;
+function tlSeek(e) {
+  if (!RES) return;
+  const r = tl.getBoundingClientRect();
+  setFrame(Math.round(clamp((e.clientX - r.left - TL_PAD)/(r.width - 2*TL_PAD), 0, 1)*(RES.T - 1)));
+}
+tl.addEventListener("pointerdown", e => { tlDrag = true; tl.setPointerCapture(e.pointerId); tlSeek(e); });
+tl.addEventListener("pointermove", e => { if (tlDrag) tlSeek(e); });
+tl.addEventListener("pointerup", () => { tlDrag = false; });
+function drawTimeline() {
+  if (!RES || !tl.width) return;
+  const g = tl.getContext("2d"), d = DPR(), W = tl.width, H = tl.height, pad = TL_PAD*d;
+  const total = (RES.T - 1)*RES.dt_s, X = t => pad + (W - 2*pad)*clamp(t, 0, total)/total;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+  const y0 = 4*d, h = 15*d;
+  g.fillStyle = "#e6e9e6"; g.fillRect(pad, y0, W - 2*pad, h);
+  if (OPT) {
+    const rows = OPT.uavs.length, rh = h/rows, gap = rows > 1 ? 1*d : 0;
+    OPT.uavs.forEach((U, u) => {
+      const end = U.ttArr[U.n_path - 1], ry = y0 + u*rh;
+      U.tasks.forEach((k, i) => {
+        const a = k.lane_t === null ? (k.end ?? end) : k.lane_t, b = k.end ?? end;
+        g.fillStyle = planColor(u, i); g.globalAlpha = .3; g.fillRect(X(k.t0), ry, X(a) - X(k.t0), rh - gap); g.globalAlpha = 1;
+        g.fillRect(X(a), ry, X(b) - X(a), rh - gap);
+        if (rows === 1 && X(b) - X(a) > 16*d) { g.fillStyle = "#fff"; g.font = `${11*d}px sans-serif`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(i + 1), (X(a) + X(b))/2, y0 + h/2 + .5*d); g.textBaseline = "alphabetic"; }
+      });
+    });
+  }
+  g.fillStyle = "#69737b"; g.font = `${11*d}px sans-serif`; g.textAlign = "center";
+  const step = total > 4800 ? 20 : 10;
+  for (let m = 0; m*60 <= total; m += step) { g.fillRect(X(m*60) - .5*d, y0 + h, 1*d, 3*d); g.fillText(String(m), X(m*60), H - 4*d); }
+  const px = X(frame*RES.dt_s);
+  g.fillStyle = "#d00"; g.fillRect(px - 1*d, 1*d, 2*d, h + 7*d);
+}
+const planColor = (u, i) => OPT.uavs.length > 1 ? taskColor(u) : taskColor(i);
+function currentTask(U, t) { let cur = -1; U.tasks.forEach((k, i) => { if (k.t0 <= t) cur = i; }); return cur; }
+function uavPhase(U, i, t) {
+  if (t > U.ttArr[U.n_path - 1]) return "비행 종료";
+  if (t < U.ttArr[0]) return "이륙 전";
+  if (i < 0) return "이륙 후 접근";
+  const k = U.tasks[i];
+  return k.lane_t === null || t < k.lane_t ? "사각형으로 이동" : "레인 탐색";
+}
+const PHASE_SHORT = { "비행 종료": "종료", "이륙 전": "대기", "이륙 후 접근": "접근", "사각형으로 이동": "이동", "레인 탐색": "레인" };
+function updateHud() {
+  $("hud").hidden = !OPT;
+  if (!OPT) return;
+  const t = frame*RES.dt_s, cur = OPT.uavs.map(U => currentTask(U, t)), ph = OPT.uavs.map((U, u) => uavPhase(U, cur[u], t));
+  let pos = 0;
+  OPT.pos_t.forEach((x, j) => { if (x <= t) pos = OPT.pos[j]; });
+  $("h_t").textContent = (t/60).toFixed(1) + "분";
+  $("h_pos").textContent = pos.toFixed(3);
+  $("h_task").textContent = OPT.uavs.map((U, u) => cur[u] < 0 ? "-" : `${cur[u] + 1}/${U.tasks.length}`).join(" · ");
+  if (OPT.uavs.length === 1) $("h_phase").textContent = ph[0];
+  else { const n = {}; ph.forEach(p => { n[p] = (n[p] || 0) + 1; }); $("h_phase").textContent = Object.entries(n).map(([p, c]) => `${PHASE_SHORT[p]} ${c}`).join(" · "); }
+  const A = OPT.area;
+  $("h_area_l").hidden = $("h_area").hidden = !A;
+  if (A) $("h_area").textContent = (A.c[clamp(Math.ceil(t/300), 1, 12) - 1]*100).toFixed(1) + "%";
+  document.querySelectorAll(".task").forEach(el => el.classList.toggle("on", Number(el.dataset.i) === cur[Number(el.dataset.u)]));
+}
+
+// ---------------------------------------------------------------- runs: queue, list, replay
+async function submit() {
+  if (!RES) return;
+  const n = Number($("nseeds").value);
+  const body = { ...payload(), start: START, opt: optChoices(), n_seeds: n, label: $("runname").value };
+  try {
+    const r = await fetch("/api/jobs", { method: "POST", body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    autoOpen = n === 1 ? d.ids[0] : null;
+    showTab("runs"); refreshJobs();
+  } catch (e) { status("실행을 넣지 못했습니다: " + e.message, true); }
+}
+async function refreshJobs() {
+  clearTimeout(pollTimer);
+  let d;
+  try { d = await (await fetch("/api/jobs")).json(); }
+  catch (e) { status("서버 연결이 끊겼습니다", true); pollTimer = setTimeout(refreshJobs, 3000); return; }
+  JOBS = d.jobs;
+  MAX_JOBS = d.max_jobs;
+  renderJobs();
+  if (autoOpen) { const j = JOBS.find(x => x.id === autoOpen); if (j && j.state === "done") { const id = autoOpen; autoOpen = null; openRun(id); } }
+  const active = JOBS.some(j => j.state === "running" || j.state === "queued");
+  if (active) pollTimer = setTimeout(refreshJobs, 1000);
+}
+const STATE_TEXT = { queued: "대기 중", cancelled: "취소됨", error: "오류" };
+function runMatch(j) {
+  const f = $("runfilter").value;
+  if (f === "all") return true;
+  if (f === "web") return !j.group || j.group === "web";
+  return j.group === "eval" && `eval${j.stage}` === f;
+}
+function renderJobs() {
+  const box = $("joblist"), active = JOBS.filter(j => j.state === "running" || j.state === "queued").length, shown = JOBS.filter(runMatch);
+  $("jobempty").hidden = shown.length > 0;
+  $("jobempty").innerHTML = JOBS.length ? "이 보기에 해당하는 실행이 없습니다." : "아직 실행한 것이 없습니다.<br>설정 탭에서 최적화를 실행하세요.";
+  $("runbadge").hidden = active === 0; $("runbadge").textContent = active;
+  $("runinfo").textContent = `동시 ${MAX_JOBS}개까지 · 저장된 결과는 서버를 다시 켜도 남습니다`;
+  box.innerHTML = "";
+  shown.forEach(j => {
+    const el = document.createElement("div"); el.className = "job" + (viewing === j.id ? " viewing" : "");
+    let sub;
+    if (j.state === "done" && j.group === "eval" && j.holdout) sub = `검증 점수 ${j.holdout.total.toFixed(3)} (POS ${j.holdout.pos.toFixed(3)}, A ${j.holdout.A.toFixed(3)}) · ${j.method} · 계획 ${j.plans}번`;
+    else if (j.state === "done") sub = `POS ${j.final.toFixed(3)}${j.area != null ? ` · A ${j.area.toFixed(3)}` : ""}${j.n_uav > 1 ? ` · ${j.n_uav}대` : ""} · 계획 ${j.plans}번 · ${j.created}`;
+    else if (j.state === "running") sub = `${j.stage || "준비"} · ${(j.elapsed || 0).toFixed(0)}초` + (j.plans ? ` · 비행 ${j.t_min.toFixed(0)}분` : "");
+    else sub = (STATE_TEXT[j.state] || j.state) + (j.msg ? ": " + j.msg.split("\n").slice(-2).join(" ") : "");
+    const chk = j.state === "done" ? `<input type="checkbox" ${CMP.has(j.id) ? "checked" : ""} title="POS 비교에 넣기">` : `<i class="ph"></i>`;
+    const acts = j.state === "done" ? `<button class="small" data-a="open">보기</button><button class="small" data-a="delete">삭제</button>`
+      : j.state === "running" || j.state === "queued" ? `<button class="small" data-a="stop">취소</button>` : `<button class="small" data-a="delete">삭제</button>`;
+    el.innerHTML = `${chk}<div class="name" title="${esc(j.label)}">${esc(j.label)}</div><div class="acts">${acts}</div><div class="sub">${esc(sub)}</div>`
+      + (j.state === "running" ? `<div class="bar"><div style="width:${j.t_min ? clamp(j.t_min/60, 0, 1)*100 : 3}%"></div></div>` : "");
+    const c = el.querySelector("input"); if (c) c.onchange = () => { c.checked ? CMP.add(j.id) : CMP.delete(j.id); drawCompare(); };
+    el.querySelectorAll("button").forEach(b => b.onclick = () => jobAction(j, b.dataset.a));
+    box.appendChild(el);
+  });
+  drawCompare();
+}
+async function jobAction(j, a) {
+  if (a === "open") { openRun(j.id); return; }
+  if (a === "delete" && !confirm(`"${j.label}" 결과를 삭제할까요?`)) return;
+  await fetch(`/api/jobs/${j.id}/${a}`, { method: "POST", body: "{}" });
+  CMP.delete(j.id);
+  if (a === "delete" && viewing === j.id) await backToLive();
+  refreshJobs();
+}
+async function openRun(id) {
+  status("저장된 결과를 불러오는 중 ...");
+  try {
+    const r = await fetch(`/api/jobs/${id}`);
+    if (!r.ok) throw new Error("결과 파일이 없습니다");
+    const d = await r.json();
+    const reg = d.meta.view.region || "chungju";
+    if (reg !== REGION) await useRegion(reg);
+    LKP = d.meta.view.lkp;
+    setParticles(d.res);
+    setOpt(d.opt);
+    viewing = id;
+    $("replay").hidden = false; $("replayname").textContent = "저장된 실행: " + d.meta.label; $("replayname").title = d.meta.label;
+    frame = Math.min(frame, RES.T - 1);
+    const cur = JOBS.find(x => x.id === id);
+    renderJobs();
+    showTab("result"); fitPath(); setFrame(frame); updateKindHint();
+    status(`particle ${RES.N}개 · LKP ${km1(RES.lkp_road)} · seed ${d.meta.view.seed}` + (cur ? " · " + cur.created : ""));
+    refreshJobs();
+  } catch (e) { status("불러오지 못했습니다: " + e.message, true); }
+}
+async function backToLive() { viewing = null; $("replay").hidden = true; await run(); renderJobs(); refreshJobs(); }
+function clearView(force) {
+  if (viewing || force) { viewing = null; $("replay").hidden = true; }
+  OPT = null; showResult(false); updateHud(); updateKindHint(); updateLegend();
+}
+function showResult(on) { $("optresult").hidden = !on; $("optempty").hidden = on; }
+function setOpt(d) {
+  if (!d.uavs) d.uavs = [{ tt: d.tt, xy: d.xy, n_path: d.n_path, log_t: d.log_t, log_xyyaw: d.log_xyyaw, quad: d.quad, target: d.target, n_log: d.n_log, rects: d.rects, tasks: d.tasks }];   // runs saved before teams
+  OPT = d;
+  OPT.wArr = decode(d.weight, Uint8Array);
+  OPT.uavs.forEach(U => {
+    U.ttArr = decode(U.tt, Float32Array); U.xyArr = decode(U.xy, Float32Array); U.logT = decode(U.log_t, Float32Array); U.logP = decode(U.log_xyyaw, Float32Array);
+    U.quadArr = decode(U.quad, Float32Array); U.targetArr = decode(U.target, Float32Array);
+  });
+  const multi = OPT.uavs.length > 1, A = d.area;
+  if (!rectTouched) $("rectmode").value = multi ? "current" : "all";     // a team's 25 rectangles of all times are unreadable together
+  $("r_note").textContent = d.no_clear ? `겹치지 않는 사각형을 바로 찾지 못해 다시 시도한 횟수: ${d.no_clear}번` : "";
+  $("r_pos").textContent = d.final.toFixed(3); $("r_plans").textContent = OPT.uavs.reduce((n, U) => n + U.rects.length, 0);
+  $("r_esc").textContent = (d.escaped*100).toFixed(0) + "%"; $("r_sec").textContent = d.sec.toFixed(0) + "초";
+  $("areasec").hidden = !A;
+  if (A) {
+    A.bitsArr = decode(A.bits, Uint16Array); A.firstArr = decode(A.first, Uint8Array); areaKey = "";
+    $("a_A").textContent = A.A.toFixed(3); $("a_total").textContent = A.total.toFixed(3); $("a_x").textContent = A.x.toFixed(0) + "%"; $("a_km").textContent = A.swept_km2.toFixed(1) + " km²";
+    $("a_mode").textContent = (A.on ? `A + ${A.w} × POS로 계획` : "POS만으로 계획, A는 참고값") + (multi ? ` · ${OPT.uavs.length}대` : "");
+  }
+  const how = { done: "레인 완료", cap: "상한에서 끊김" };
+  const box = $("opttasks"); box.innerHTML = "";
+  OPT.uavs.forEach((U, u) => {
+    if (multi) { const h = document.createElement("h3"); h.textContent = `무인기 ${u + 1}`; box.appendChild(h); }
+    U.tasks.forEach((t, i) => {
+      const r = U.rects[i], a = t.lane_t === null ? "-" : (t.lane_t/60).toFixed(1) + "분", b = t.end === null ? "비행 끝" : (t.end/60).toFixed(1) + "분";
+      const el = document.createElement("button"); el.className = "task"; el.dataset.u = u; el.dataset.i = i;
+      el.innerHTML = `<i style="background:${planColor(u, i)}">${i + 1}</i><span>${t.lane_t === null ? "이동 중 비행 종료" : `레인 ${a} ~ ${b}`}${t.how ? " · " + (how[t.how] || t.how) : ""}</span><small>${(t.t0/60).toFixed(1)}분 계획 · ${(r.ell/1000).toFixed(1)} × ${(r.wid/1000).toFixed(2)} km · 겹침 ${r.k}회</small>`;
+      el.onclick = () => setFrame(Math.round((t.lane_t ?? t.t0)/RES.dt_s));
+      box.appendChild(el);
+    });
+  });
+  updateLegend();
+  showResult(true);
+}
+
+function drawOpt() {
+  if (OPT) OPT.uavs.forEach((U, u) => drawUav(U, u));
+}
+function drawUav(U, u) {
+  const dpr = DPR(), t = frame*RES.dt_s, km = v => v/1000, cur = currentTask(U, t);
+  const poly = pts => { ctx.beginPath(); pts.forEach(([x, y], i) => { const [a, b] = toPx(km(x), km(y)); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); }); };
+  const rm = $("rectmode").value, holding = cur >= 0 && (U.tasks[cur].end === null || t < U.tasks[cur].end);
+  if (rm !== "off") U.rects.forEach((r, i) => {
+    if ((rm === "current" && (i !== cur || !holding)) || (rm === "past" && i > cur)) return;
+    const c = Math.cos(r.theta), s = Math.sin(r.theta), col = planColor(u, i);
+    poly([[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]].map(([a, b]) => [r.cx + a*r.ell/2*c - b*r.wid/2*s, r.cy + a*r.ell/2*s + b*r.wid/2*c]));
+    if (i === cur) { ctx.fillStyle = col; ctx.globalAlpha = .12; ctx.fill(); ctx.globalAlpha = 1; }
+    ctx.setLineDash(i > cur ? [6*dpr, 5*dpr] : []);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = (i === cur ? 4.5 : 3)*dpr; ctx.globalAlpha = i > cur ? .5 : 1; ctx.stroke();
+    ctx.strokeStyle = col; ctx.lineWidth = (i === cur ? 2.4 : 1.4)*dpr; ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    if (i === cur) { poly(r.lanes); ctx.setLineDash([4*dpr, 4*dpr]); ctx.strokeStyle = col; ctx.lineWidth = 1*dpr; ctx.stroke(); ctx.setLineDash([]); }
+    const [lx, ly] = toPx(km(r.cx), km(r.cy)), R = 9*dpr;
+    ctx.beginPath(); ctx.arc(lx, ly, R, 0, 6.2832); ctx.fillStyle = col; ctx.globalAlpha = i > cur ? .55 : 1; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5*dpr; ctx.stroke();
+    ctx.font = `600 ${11*dpr}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.fillText(String(i + 1), lx, ly + .5*dpr); ctx.textBaseline = "alphabetic";
+  });
+  const nP = U.n_path, T = U.ttArr, XY = U.xyArr, pm = $("pathmode").value;
+  let split = 0;
+  while (split < nP - 1 && T[split + 1] <= t) split++;
+  if (pm !== "off") {
+    const tid = i => { let c = -1; for (let j = 0; j < U.tasks.length; j++) if (U.tasks[j].t0 <= T[i]) c = j; return c; };
+    const trace = (a, b) => { ctx.beginPath(); for (let i = a; i <= b; i++) { const [px, py] = toPx(km(XY[2*i]), km(XY[2*i + 1])); i === a ? ctx.moveTo(px, py) : ctx.lineTo(px, py); } };
+    if (pm === "all" && split < nP - 1) { trace(split, nP - 1); ctx.strokeStyle = "rgba(60,60,60,.32)"; ctx.lineWidth = 1.1*dpr; ctx.stroke(); }
+    const from = pm === "cur" && cur >= 0 ? (() => { let a = 0; while (a < split && T[a] < U.tasks[cur].t0) a++; return a; })() : 0;
+    if (split > from) {
+      trace(from, split); ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 3.6*dpr; ctx.lineJoin = "round"; ctx.stroke();
+      let a = from;
+      while (a < split) {
+        const c = tid(a); let b = a + 1;
+        while (b < split && tid(b) === c) b++;
+        trace(a, b); ctx.strokeStyle = c < 0 ? "#555" : planColor(u, c); ctx.lineWidth = 1.8*dpr; ctx.stroke();
+        a = b;
+      }
+    }
+  }
+  if (t > T[nP - 1] + 1 || t < U.logT[0] - 1) return;
+  const i = clamp(Math.round(t - U.logT[0]), 0, U.n_log - 1);
+  if ($("o_fov").checked) {
+    poly([0, 1, 2, 3, 0].map(c => [U.quadArr[8*i + 2*c], U.quadArr[8*i + 2*c + 1]]));
+    ctx.fillStyle = "rgba(230,126,34,.45)"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 3*dpr; ctx.stroke(); ctx.strokeStyle = "#d35400"; ctx.lineWidth = 1.5*dpr; ctx.stroke();
+    const gx = U.targetArr[2*i], gy = U.targetArr[2*i + 1];
+    if (Number.isFinite(gx)) {
+      const [a, b] = toPx(km(gx), km(gy)), R = 6*dpr;
+      ctx.strokeStyle = "#00a651"; ctx.lineWidth = 2*dpr; ctx.beginPath(); ctx.moveTo(a - R, b - R); ctx.lineTo(a + R, b + R); ctx.moveTo(a + R, b - R); ctx.lineTo(a - R, b + R); ctx.stroke();
+    }
+  }
+  const [ux, uy] = toPx(km(U.logP[3*i]), km(U.logP[3*i + 1])), yaw = U.logP[3*i + 2], R = 12*dpr;
+  const pt = (a, l) => [ux + l*Math.cos(yaw + a), uy - l*Math.sin(yaw + a)];
+  ctx.beginPath(); ctx.moveTo(...pt(0, R)); ctx.lineTo(...pt(2.5, R*.8)); ctx.lineTo(...pt(Math.PI, R*.3)); ctx.lineTo(...pt(-2.5, R*.8)); ctx.closePath();
+  ctx.fillStyle = cur >= 0 ? planColor(u, cur) : "#444"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.8*dpr; ctx.stroke();
+}
+
 // ---------------------------------------------------------------- charts
 function axes(c, ymax, xmax, ylab, xunit = "분") {
-  const g = c.getContext("2d"), dpr = window.devicePixelRatio || 1;
-  const m = { l: 34*dpr, r: 8*dpr, t: 6*dpr, b: 18*dpr }, W = c.width - m.l - m.r, H = c.height - m.t - m.b;
+  const g = c.getContext("2d"), dpr = DPR();
+  const m = { l: 36*dpr, r: 8*dpr, t: 6*dpr, b: 18*dpr }, W = c.width - m.l - m.r, H = c.height - m.t - m.b;
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, c.width, c.height);
-  g.font = `${11*dpr}px sans-serif`; g.fillStyle = "#666"; g.strokeStyle = "#e4e1da"; g.lineWidth = 1;
+  g.font = `${11*dpr}px sans-serif`; g.fillStyle = "#69737b"; g.strokeStyle = "#e6e9e6"; g.lineWidth = 1;
   const X = x => m.l + x/xmax*W, Y = y => m.t + H - y/ymax*H;
   for (let i = 0; i <= 4; i++) {
     const y = ymax*i/4; g.beginPath(); g.moveTo(m.l, Y(y)); g.lineTo(m.l + W, Y(y)); g.stroke();
@@ -281,10 +1184,10 @@ function axes(c, ymax, xmax, ylab, xunit = "분") {
   return { g, X, Y, m, W, H, dpr };
 }
 let shareAx = null, distAx = null;
+const statsOn = () => tab === "target" && subtab === "__stats";
 function drawCharts() {
-  if (!RES) return;
+  if (!RES || !statsOn()) return;
   const tmax = (RES.T - 1)*RES.dt_s/60, tm = k => k*RES.dt_s/60;
-  // stacked shares
   let a = axes($("c_share"), 1, tmax, v => Math.round(v*100) + "%");
   const cum = new Float64Array(RES.T);
   for (let s = 0; s < META.states.length; s++) {
@@ -295,7 +1198,6 @@ function drawCharts() {
     for (let k = 0; k < RES.T; k++) cum[k] += RES.shares[k][s];
   }
   shareAx = { ...a, snap: a.g.getImageData(0, 0, $("c_share").width, $("c_share").height) };
-  // distance band
   let ymax = 1; RES.pct.forEach(p => { if (p[2] > ymax) ymax = p[2]; });
   const tick = [1, 2, 2.5, 5, 10, 20].find(t => 4*t >= ymax) || 10; ymax = 4*tick;
   a = axes($("c_dist"), ymax, tmax, v => v.toFixed(0));
@@ -309,7 +1211,7 @@ function drawCharts() {
   drawCursor(); drawSpeed();
 }
 function drawCursor() {
-  if (!RES || !shareAx) return;
+  if (!RES || !shareAx || !statsOn()) return;
   const t = frame*RES.dt_s/60;
   [shareAx, distAx].forEach(a => {
     a.g.putImageData(a.snap, 0, 0);
@@ -318,7 +1220,7 @@ function drawCursor() {
   });
 }
 function drawSpeed() {
-  if (!RES) return;
+  if (!RES || !statsOn()) return;
   const N = RES.N, k = frame, cap = RES.speed_cap_kmh, bw = 2.5, nb = Math.ceil((cap + 5)/bw);
   const hist = [0, 1, 2].map(() => new Float64Array(nb));
   for (let i = 0; i < N; i++) {
@@ -332,20 +1234,70 @@ function drawSpeed() {
     for (let b = 0; b < nb; b++) { a.g.lineTo(a.X(b*bw), a.Y(h[b])); a.g.lineTo(a.X((b + 1)*bw), a.Y(h[b])); }
     a.g.stroke();
   });
-  const sh = META.states.map((n, s) => { let c = 0; for (let i = 0; i < N; i++) if (RES.stateArr[k*N + i] === s) c++; return `${n} ${Math.round(c/N*100)}%`; });
+  const sh = META.states.map((n, s) => { let c = 0; for (let i = 0; i < N; i++) if (RES.stateArr[k*N + i] === s) c++; return `${tr(n)} ${Math.round(c/N*100)}%`; });
   $("speedtitle").textContent = `속도 분포 (km/h, ${(k*RES.dt_s/60).toFixed(1)}분): ` + sh.join(", ");
+}
+function drawPos() {
+  if (!OPT || !RES || tab !== "result") return;
+  const c = $("c_pos");
+  if (!c.width) return;
+  const tmax = 60, ymax = Math.min(1, Math.ceil(Math.max(.1, OPT.final)*10)/10);
+  const a = axes(c, ymax, tmax, v => v.toFixed(2));
+  a.g.beginPath(); OPT.pos_t.forEach((t, i) => a.g.lineTo(a.X(t/60), a.Y(OPT.pos[i])));
+  a.g.strokeStyle = "#1f4e8c"; a.g.lineWidth = 2*a.dpr; a.g.stroke();
+  const t = Math.min(frame*RES.dt_s/60, tmax);
+  a.g.strokeStyle = "#d00"; a.g.lineWidth = 1.5*a.dpr; a.g.beginPath(); a.g.moveTo(a.X(t), a.m.t); a.g.lineTo(a.X(t), a.m.t + a.H); a.g.stroke();
+  const A = OPT.area, ca = $("c_area");
+  if (!A || !ca.width) return;
+  const b = axes(ca, Math.min(1, Math.ceil(Math.max(.05, ...A.c)*20)/20), tmax, v => Math.round(v*100) + "%");
+  b.g.beginPath(); A.c.forEach((v, j) => b.g.lineTo(b.X((j + 1)*5), b.Y(v)));
+  b.g.strokeStyle = "#009E73"; b.g.lineWidth = 2*b.dpr; b.g.stroke();
+  b.g.strokeStyle = "#d00"; b.g.lineWidth = 1.5*b.dpr; b.g.beginPath(); b.g.moveTo(b.X(t), b.m.t); b.g.lineTo(b.X(t), b.m.t + b.H); b.g.stroke();
+}
+function drawCompare() {
+  const list = JOBS.filter(j => j.state === "done" && CMP.has(j.id));
+  $("cmpsec").hidden = list.length === 0;
+  if (tab !== "runs" || !list.length) return;
+  sizeCharts();
+  const c = $("c_cmp");
+  if (!c.width) return;
+  const top = Math.max(.1, ...list.map(j => j.final)), ymax = Math.min(1, Math.ceil(top*10)/10);
+  const a = axes(c, ymax, 60, v => v.toFixed(2));
+  list.forEach((j, i) => {
+    a.g.beginPath(); j.pos.forEach((p, m) => a.g.lineTo(a.X(m), a.Y(p)));
+    a.g.strokeStyle = taskColor(i); a.g.lineWidth = 2*a.dpr; a.g.stroke();
+  });
+  $("cmplegend").innerHTML = list.map((j, i) => `<span style="color:${taskColor(i)}; font-weight:600">${esc(j.label)}: ${j.final.toFixed(3)}</span>`).join("<br>");
 }
 
 // ---------------------------------------------------------------- start
+function makeMuted() {
+  mutedMap.width = mapImg.width; mutedMap.height = mapImg.height;
+  const g = mutedMap.getContext("2d"); g.drawImage(mapImg, 0, 0);
+  const im = g.getImageData(0, 0, mutedMap.width, mutedMap.height), d = im.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const y = .3*d[i] + .59*d[i + 1] + .11*d[i + 2], s = .22;
+    d[i] = y + s*(d[i] - y); d[i + 1] = y + s*(d[i + 1] - y); d[i + 2] = y + s*(d[i + 2] - y);
+  }
+  g.putImageData(im, 0, 0);
+}
 (async () => {
   META = await (await fetch("/api/meta")).json();
-  VALUES = { ...META.values }; LKP = META.lkp;
-  $("legend").innerHTML = META.states.map((n, s) => `<div><span class="sw" style="background:${META.colors[s]}"></span>${n}</div>`).join("");
-  buildParams();
+  VALUES = { ...META.values }; LKP = META.lkp; REGION = META.region;
+  META.regions.forEach(r => { const o = document.createElement("option"); o.value = r.key; o.textContent = r.name; $("region").appendChild(o); });
+  $("region").value = REGION; $("region").onchange = changeRegion;
+  buildParams(); buildOptParams(); buildViewOptions(); updateLegend();
+  document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.t));
+  document.querySelectorAll("#modes button").forEach(b => b.onclick = () => setMode(b.dataset.m));
+  $("setLkp").onclick = () => setMode("lkp"); $("setStart").onclick = () => setMode("start");
+  $("autoStart").onclick = () => { START = null; startChanged(); };
   $("run").onclick = run; $("save").onclick = save;
-  mapImg.onload = () => { resize(); run(); };
-  mapImg.src = "/map.png";
+  $("submit").onclick = submit; $("replayclose").onclick = backToLive; $("share").onclick = share; $("runfilter").onchange = renderJobs;
+  $("optdefaults").onclick = buildOptParams; $("fitpath").onclick = fitPath;
   window.addEventListener("resize", resize);
+  await useRegion(REGION);
+  await run();
+  refreshJobs();
 })();
 </script>
 </body>

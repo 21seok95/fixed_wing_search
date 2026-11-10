@@ -475,6 +475,8 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
             if len(i):
                 ang = psi[i, None] + OFF_OFFSETS[None, :]
                 dist = v[i]*dt
+                if getattr(net, "off_factor", None) is not None:      # optional speed factor per cell (e.g. slow in the mountains)
+                    dist = dist*net.off_factor[net.cell_of(pos[i])]
                 nx = pos[i, 0, None] + dist[:, None]*np.cos(ang)
                 ny = pos[i, 1, None] + dist[:, None]*np.sin(ang)
                 rr, cc = net.cell_of(np.stack([nx.ravel(), ny.ravel()], 1))

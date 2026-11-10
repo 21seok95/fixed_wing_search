@@ -1,0 +1,16 @@
+{
+ "density_km_per_km2": 2.0,
+ "anchor_m": 2500.0,
+ "spur_m": 500.0,
+ "dense_edges": 6998,
+ "anchors": 112,
+ "anchor_links": 250,
+ "spurs_removed": 680,
+ "slow_km_before": 4082.230227031946,
+ "slow_km_after": 2849.298583984375,
+ "edges_before": 11715,
+ "edges_after": 5867,
+ "largest_network_share": 0.9508474030946863,
+ "density_max_before": 12.8445758667307,
+ "density_max_after": 2.665424140492765
+}

@@ -180,6 +180,45 @@ def main():
         ax.set_xlabel("동쪽 (km)"); ax.set_ylabel("북쪽 (km)")
     fig.savefig(out_dir/f"terrain_crossings{sfx}.png", dpi=120)
     plt.close(fig)
+    full = out_dir/f"road_graph_full{sfx}.npz"
+    if full.exists():                               # which roads were removed: whole map and the places that changed most
+        g0 = dict(np.load(full))
+        key = lambda gr, k: tuple(np.round(gr["edge_poly"][gr["edge_poly_offset"][k]].astype(float), 1)) + tuple(np.round(gr["edge_poly"][gr["edge_poly_offset"][k + 1] - 1].astype(float), 1))
+        kept = {key(g, k) for k in range(len(g["edges"]))}
+        gone = np.array([key(g0, k) not in kept for k in range(len(g0["edges"]))])
+        gone_lines = edge_lines(g0, gone)
+        cells: dict = {}
+        for xy in gone_lines:
+            c = tuple(np.floor(xy[len(xy)//2]/8.0).astype(int))
+            cells[c] = cells.get(c, 0.0) + float(np.hypot(*np.diff(xy, axis=0).T).sum())
+        spots = []
+        for c, _ in sorted(cells.items(), key=lambda kv: -kv[1]):
+            q = (np.array(c) + .5)*8.0
+            if all(np.hypot(*(q - o)) >= 8.0 for o in spots):
+                spots.append(q)
+            if len(spots) == 4:
+                break
+        fig = plt.figure(figsize=(18, 9.2), layout="constrained", facecolor="#fcfcfb")
+        gs = fig.add_gridspec(2, 4)
+        main = fig.add_subplot(gs[:, :2])
+        zooms = [fig.add_subplot(gs[r, c]) for r in (0, 1) for c in (2, 3)]
+        km_slow = lambda gr: gr["edges"]["length_m"][gr["edges"]["tier"] == 1].sum()/1000
+        for ax, lim in [(main, None)] + list(zip(zooms, spots)):
+            draw_roads(ax, g, lw=(.7, 1.2) if lim is None else (1.3, 2.0))
+            for xy in gone_lines:
+                ax.plot(xy[:, 0], xy[:, 1], color="#d21f3c", lw=.8 if lim is None else 1.5, solid_capstyle="round", zorder=8)
+            ax.set_aspect("equal")
+            if lim is None:
+                ax.set_xlim(a[0], a[-1]); ax.set_ylim(a[0], a[-1]); ax.set_xlabel("동쪽 (km)"); ax.set_ylabel("북쪽 (km)")
+            else:
+                ax.set_xlim(lim[0] - 4, lim[0] + 4); ax.set_ylim(lim[1] - 4, lim[1] + 4)
+                ax.set_title(f"({lim[0]:.0f}, {lim[1]:.0f}) km 부근", fontsize=11, loc="left")
+                ax.tick_params(labelsize=8)
+        main.set_title(f"{region.name_ko}: 느린 길 {km_slow(g0):.0f} → {km_slow(g):.0f} km, 간선 {len(g0['edges'])} → {len(g['edges'])}개 (빨강 = 지운 길)", fontsize=13, loc="left")
+        from matplotlib.lines import Line2D
+        main.legend(handles=[Line2D([], [], color=FAST_C, lw=2, label="큰 길"), Line2D([], [], color=SLOW_C, lw=1.2, label="느린 길"), Line2D([], [], color="#d21f3c", lw=1.4, label="지운 길")], loc="lower left", frameon=True, fontsize=11)
+        fig.savefig(out_dir/f"road_simplify{sfx}.png", dpi=110, facecolor=fig.get_facecolor())
+        plt.close(fig)
     print(f"Figures in {out_dir}")
 
 

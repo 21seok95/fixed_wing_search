@@ -1,0 +1,41 @@
+{
+ "time": "2026-11-10 17:04:17",
+ "view": {
+  "heading": 135.0,
+  "seed": 0,
+  "lkp": [
+   -14831.855865992298,
+   -8062.318812187755
+  ],
+  "region": "chungju"
+ },
+ "config": {
+  "particles": 5000,
+  "duration_s": 4200.0,
+  "dt_s": 5,
+  "save_dt_s": 10,
+  "speed_cap_kmh": 30,
+  "fast_kmh": 30,
+  "fast_std_kmh": 0,
+  "slow_kmh": 20,
+  "slow_std_kmh": 0,
+  "off_kmh": 11,
+  "off_std_kmh": 0,
+  "p_leave_fast_min": 0,
+  "p_leave_slow_min": 0,
+  "p_return_min": 1,
+  "return_radius_m": 25,
+  "p_stop_min": 0.05,
+  "p_go_min": 0.16,
+  "off_max_slope_deg": 30,
+  "heading_std_deg": 20,
+  "reorient_std_deg_min": 0,
+  "goal_sector_deg": 28,
+  "p_detour": 0.05,
+  "avoid_deadend": true,
+  "respect_oneway": false,
+  "w_off_heading": 1,
+  "w_off_keep": 2,
+  "w_off_road": 0
+ }
+}

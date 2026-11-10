@@ -53,6 +53,7 @@ def run_job(job):
     no_overlap = bool(len(rest) > 1 and rest[1])     # also keep rectangles apart (rl_search.area_score.NoOverlapMixin)
     intercept = bool(len(rest) > 2 and rest[2])      # start peaks read T/2 after the transit to them, not T/2 after the plan (2026-11-06)
     adjacent = bool(len(rest) > 3 and rest[3])       # neighbouring lanes within 5 % of the turn diameter (accordion.LANE_TOL)
+    max_transit = float(rest[4]) if len(rest) > 4 else 600.0   # farthest rectangle a plan may choose, seconds of transit
     warnings.filterwarnings("ignore")
     from rl_search import accordion
     accordion.LANE_TOL = 0.05 if adjacent else 0.0   # set on every job: pool workers are reused
@@ -68,7 +69,7 @@ def run_job(job):
     scen = open_scenario(probe.sampler, seed)
     hold_scen = holdout_scenario(probe, scen, seed + 10**6)
     W = sweep_width(probe)
-    kw = dict(W=W, n_starts=5 if sep else 3, big_jump=True, search_s=600.0, max_transit_s=600.0, lane_mode="cover",
+    kw = dict(W=W, n_starts=5 if sep else 3, big_jump=True, search_s=600.0, max_transit_s=max_transit, lane_mode="cover",
               peak_timing="intercept" if intercept else "now")
     if config == "pos":
         envs = make_envs(n, seed)
@@ -95,7 +96,7 @@ def run_job(job):
     out = dict(seed=seed, config=config, n=n, x=x, w=w, pos=float(h["pos"][-1]),
                pos_t=[float(np.interp(m*60, h["t"] - h["t"][0], h["pos"])) for m in range(0, 61, 5)], scores=scores,
                dmin=float(dmin) if np.isfinite(dmin) else None, below=float(below), enc=int(enc),
-               plans=int(sum(len(p.rects) for p in pols)), sep=sep, no_overlap=no_overlap, intercept=intercept, adjacent=adjacent,
+               plans=int(sum(len(p.rects) for p in pols)), sep=sep, no_overlap=no_overlap, intercept=intercept, adjacent=adjacent, max_transit_s=max_transit,
                overlap_forced=int(sum(getattr(p, "overlap_forced", 0) for p in pols)),
                tasks=[[dict(t0=k["t0"], transit=k["transit"], lane_t=k["lane_t"], end=k["end"], how=k["how"]) for k in p.tasks] for p in pols],
                violations=int(sum(p.violations for p in pols)),
@@ -260,8 +261,8 @@ def run_sweep(args):
     reused. Actions are not kept, to keep the file small (paths stay, for figures and rescoring). ``--sep``: with the
     separation constraint, in its own folder, compared with the sweep without it."""
     setting = "no_overlap" if args.no_overlap else "sep" if args.sep else "sweep"
-    fix = args.peak_intercept or args.adjacent_lanes
-    tag = "_".join(t for t, on in (("intercept", args.peak_intercept), ("adjacent", args.adjacent_lanes)) if on)
+    fix = args.peak_intercept or args.adjacent_lanes or args.max_transit != 600.0
+    tag = "_".join(t for t, on in (("intercept", args.peak_intercept), ("adjacent", args.adjacent_lanes), (f"transit{args.max_transit:g}", args.max_transit != 600.0)) if on)
     out = args.output if args.output != OUT else Path("rl_search/data/center_open/" + (f"first_fix/{tag}/{setting}" if fix else setting))
     out.mkdir(parents=True, exist_ok=True)
     path = out/"results.jsonl"
@@ -274,7 +275,7 @@ def run_sweep(args):
                     f.write(json.dumps(r) + "\n")
     done = {sweep_key(json.loads(line)) for line in path.read_text().splitlines()} if path.exists() else set()
     seeds = range(args.seed0, args.seed0 + args.n_scen)
-    flags = (args.sep, args.no_overlap, args.peak_intercept, args.adjacent_lanes)
+    flags = (args.sep, args.no_overlap, args.peak_intercept, args.adjacent_lanes, args.max_transit)
     jobs = [] if fix and not args.with_pos else [(s, "pos", n, 70.0, 1.0, *flags) for n in args.n for s in seeds]
     jobs += [(s, "score", n, float(x), float(w), *flags) for w in args.ws for x in args.xs for n in args.n for s in seeds]
     key = lambda j: (j[0], j[1], j[2]) + ((j[3], j[4]) if j[1] == "score" else ())
@@ -307,6 +308,7 @@ def main():
     ap.add_argument("--no-overlap", action="store_true", help="with --sweep --sep: also keep rectangles apart")
     ap.add_argument("--peak-intercept", action="store_true", help="with --sweep: start peaks T/2 after the transit to them (first_fix folder)")
     ap.add_argument("--adjacent-lanes", action="store_true", help="with --sweep: neighbouring lanes within 5 %% of the turn diameter")
+    ap.add_argument("--max-transit", type=float, default=600.0, help="with --sweep: farthest rectangle in seconds of transit (default 600)")
     ap.add_argument("--with-pos", action="store_true", help="with a fix: also run the POS-only baseline")
     ap.add_argument("--xs", type=float, nargs="+", default=[70.0, 50.0, 85.0])
     ap.add_argument("--ws", type=float, nargs="+", default=[1.0, 0.5, 2.0])

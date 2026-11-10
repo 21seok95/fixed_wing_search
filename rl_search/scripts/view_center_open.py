@@ -7,6 +7,10 @@ moving x% region of the unweighted particles and the current SAROPS rectangles (
 
     python -m rl_search.scripts.view_center_open --seed 502 --n 5 --x 70 --w 1
     python -m rl_search.scripts.view_center_open --seed 502 --n 5 --x 85 --w 1   # adds this flight to the same list
+    python -m rl_search.scripts.view_center_open --seed 504 --source rl_search/data/center_open/no_overlap \
+        --extra rl_search/data/center_open/first_fix/intercept_adjacent/no_overlap rl_search/data/center_open/first_fix/intercept_adjacent_transit1800/no_overlap \
+        --names baseline fixes fixes_30min
+        # several result folders in one window (up/down switches flights); a folder without a POS-only run is fine
 
 Keys: left/right = one step, up/down = previous/next flight, space = play/pause. Weights come from the 10 s paths and
 include the launch transit, so the POS shown can differ a little from the table.
@@ -30,6 +34,15 @@ from sim_viewer import SimViewer, crop_run, find_missions, load_run
 
 SWEEP = Path("rl_search/data/center_open/sweep")
 OUT = Path("rl_search/data/center_open/view")
+BASE = Path("rl_search/data/center_open")
+
+
+def label(source: Path) -> str:
+    """Folder name that tells result folders apart: the path under center_open, e.g. first_fix_intercept_no_overlap."""
+    try:
+        return "_".join(Path(source).resolve().relative_to(BASE.resolve()).parts)
+    except ValueError:
+        return Path(source).name
 XS = (50.0, 70.0, 85.0)
 REGION_COLOR = "#00e676"
 sim_viewer.UAV_COLORS = ("#e040fb", "#00e5ff", "#ffea00", "#ff3d00", "#ffffff")   # five UAVs, one colour each
@@ -71,19 +84,27 @@ def mission_arrays(env, hold, r) -> dict:
                 plan=np.full((len(grid), n_uav, 1, 3), np.nan, np.float32), rects=np.array(rects, float).reshape(-1, 8))
 
 
-def export(seed, n, x, w, source=SWEEP, out=OUT) -> Path:
+def export(seed, n, x, w, source=SWEEP, out=OUT, extra=(), names=None) -> Path:
     from rl_search.area_score import region_masks
     from rl_search.scripts.center_open import open_scenario
     from rl_search.scripts.check_sarops import holdout_scenario
     from rl_search.scripts.compare_center_open import make_envs
     run_dir = out/f"s{seed}_n{n}"
-    wanted = {"pos_only": lambda r: r["config"] == "pos",
-              f"score_x{x:g}_w{w:g}": lambda r: r["config"] == "score" and r["x"] == x and r["w"] == w}
-    missing = {k: f for k, f in wanted.items() if not (run_dir/f"search_{k}"/"mission.npz").exists()}
+    score = lambda r: r["config"] == "score" and r["x"] == x and r["w"] == w
+    if extra:     # compare mode: one A + POS flight per folder, under a short name (--names, else the folder path)
+        tags = list(names) if names else [label(q) for q in (source, *extra)]
+        wanted = {f"pos_{tags[0]}": (Path(source), lambda r: r["config"] == "pos", True)}
+        wanted |= {t: (Path(q), score, False) for t, q in zip(tags, (source, *extra))}
+    else:
+        wanted = {"pos_only": (source, lambda r: r["config"] == "pos", True), f"score_x{x:g}_w{w:g}": (source, score, False)}
+
+    def stale(k, src):
+        f = run_dir/f"search_{k}"/"mission.npz"
+        return not f.exists() or json.loads(str(np.load(f)["meta"])).get("source", str(src)) != str(src)
+    missing = {k: v for k, v in wanted.items() if stale(k, v[0])}
     if not missing and (run_dir/"simulation_data.npz").exists():
         return run_dir
     print(f"Converting scenario {seed}, {n} UAVs for the viewer, up to a few minutes when the machine is busy...", flush=True)
-    rows = [r for r in map(json.loads, (source/"results.jsonl").read_text().splitlines()) if r["seed"] == seed and r["n"] == n]
     env = make_envs(1, seed)[0]
     scen = open_scenario(env.sampler, seed)
     hold = holdout_scenario(env, scen, seed + 10**6)
@@ -99,16 +120,20 @@ def export(seed, n, x, w, source=SWEEP, out=OUT) -> Path:
         np.savez_compressed(run_dir/"simulation_data.npz", axis=terr.axis, track=np.asarray(hold.track, np.float32), dt_s=hold.save_dt_s,
                             lkp=scen.lkp, heading_deg=scen.heading_deg, terrain=terr.z, mountain=terr.mountain.astype(bool), water=terr.water.astype(bool),
                             forest=terr.forest.astype(bool), fords=terr.fords.astype(bool), forbidden=terr.forbidden.astype(bool), **regions)
-    for name, f in missing.items():
+    for name, (src, f, optional) in missing.items():
+        rows = [q for q in map(json.loads, (src/"results.jsonl").read_text().splitlines()) if q["seed"] == seed and q["n"] == n]
         r = next((q for q in rows if f(q)), None)
         if r is None:
-            raise SystemExit(f"No run for seed {seed}, {n} UAVs, {name} in {source}")
+            if optional:
+                print(f"{name}: no such run in {src}, skipped", flush=True)
+                continue
+            raise SystemExit(f"No run for seed {seed}, {n} UAVs, {name} in {src}")
         arrays = mission_arrays(env, hold, r)
-        meta = dict(planner="SAROPS, POS only" if r["config"] == "pos" else f"SAROPS, A + {w:g} POS", region_x=x if r["config"] == "score" else None,
+        meta = dict(planner=("SAROPS, POS only" if r["config"] == "pos" else f"SAROPS, A + {w:g} POS") + f" ({label(src)})", region_x=x if r["config"] == "score" else None,
                     uav_speed_mps=float(env.v), dt_s=10.0, max_turn_deg=30.0, n_headings="-", flight_min=60, start_x=float(r["start"][0]), start_y=float(r["start"][1]),
                     fov_along_m=float(env.fp_along), fov_cross_m=float(env.fp_cross), bandwidth_m=float(env.h), pod=float(env.search.pod),
                     table_pos=r["pos"], c={k: v["c"] for k, v in r["scores"].items()}, close_s=r["below"],
-                    planner_opts={"POS in table": round(r["pos"], 3), "pair < 300 m (s)": round(r["below"])})
+                    planner_opts={"POS in table": round(r["pos"], 3), "pair < 300 m (s)": round(r["below"])}, source=str(src))
         d = run_dir/f"search_{name}"
         d.mkdir(exist_ok=True)
         np.savez_compressed(d/"mission.npz", meta=json.dumps(meta), **arrays)
@@ -166,20 +191,34 @@ def main():
     ap.add_argument("--x", type=float, default=70.0)
     ap.add_argument("--w", type=float, default=1.0)
     ap.add_argument("--source", type=Path, default=SWEEP)
+    ap.add_argument("--extra", type=Path, nargs="*", default=[], help="more result folders, shown as more flights in the same window")
+    ap.add_argument("--names", nargs="*", default=None, help="with --extra: short names for --source and each --extra folder")
     ap.add_argument("--time", type=float, default=None, help="initial time in minutes")
     ap.add_argument("--mode", choices=sim_viewer.DENSITY_MODES, default=None)
     ap.add_argument("--margin", type=float, default=2000.0)
+    ap.add_argument("--play-step", type=float, default=None, help="simulated seconds per playback frame (default 30, frames every 0.1 s)")
     ap.add_argument("--snapshot", type=Path, default=None, help="save a PNG and exit")
     ap.add_argument("--check", action="store_true", help="drive every control without a window")
     args = ap.parse_args()
-    out = OUT if args.source == SWEEP else OUT.parent/f"view_{args.source.name}"     # runs with other settings stay apart
-    run_dir = export(args.seed, args.n, args.x, args.w, args.source, out)
+    out = OUT if args.source == SWEEP else OUT.parent/f"view_{label(args.source)}"     # runs with other settings stay apart
+    if args.extra:
+        out = OUT.parent/"view_compare"
+    if args.names and len(args.names) != 1 + len(args.extra):
+        raise SystemExit("--names needs one name for --source and one for each --extra folder")
+    run_dir = export(args.seed, args.n, args.x, args.w, args.source, out, args.extra, args.names)
     run = load_run(run_dir)
     missions = find_missions(run_dir)
+    if args.extra:    # only this comparison's flights (the folder may hold flights of an earlier comparison)
+        keep = set(args.names) if args.names else {label(q) for q in (args.source, *args.extra)}
+        keep |= {f"pos_{n_}" for n_ in list(keep)}
+        missions = [m for m in missions if m.parent.name.removeprefix("search_") in keep]
     names = [p.parent.name.removeprefix("search_") for p in missions]
     pts = np.concatenate([run["track"][:int(3600/run["dt_s"]) + 1].reshape(-1, 2)] + [np.load(p)["poses"][0, :, :2] for p in missions])
     crop_run(run, pts, args.margin)
-    v = CenterViewer(run, missions, names.index(f"score_x{args.x:g}_w{args.w:g}"), args.time, x=args.x)
+    main_name = (args.names[0] if args.names else label(args.source)) if args.extra else f"score_x{args.x:g}_w{args.w:g}"
+    v = CenterViewer(run, missions, names.index(main_name), args.time, x=args.x)
+    if args.play_step:
+        v.play_s = args.play_step
     if args.mode:
         v.radio.set_active(sim_viewer.DENSITY_MODES.index(args.mode))
     for i, name in enumerate(names):

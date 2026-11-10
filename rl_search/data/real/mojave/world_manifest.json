@@ -1,0 +1,76 @@
+{
+ "region": "mojave",
+ "name": "모하비 사막 (바스토)",
+ "origin": {
+  "lat_deg": 34.95,
+  "lon_deg": -116.85,
+  "elevation_m": 778.01
+ },
+ "frame": {
+  "x": "east (m)",
+  "y": "north (m)",
+  "z": "up (m, DEM elevation)",
+  "convention": "ENU, origin at the region centre",
+  "projection": "equirectangular at the centre latitude",
+  "m_per_deg_lon": 91243.69093927936,
+  "m_per_deg_lat": 111320.0,
+  "to_latlon": "lat = lat0 + y/m_per_deg_lat; lon = lon0 + x/m_per_deg_lon"
+ },
+ "grid": {
+  "size_m": 60000.0,
+  "cell_m": 25.0,
+  "cells_per_side": 2401,
+  "row0": "south",
+  "elevation_min_m": 486.6093428722453,
+  "elevation_max_m": 1909.1948032014743
+ },
+ "px4_sitl": {
+  "PX4_HOME_LAT": 34.95,
+  "PX4_HOME_LON": -116.85,
+  "PX4_HOME_ALT": 778.01
+ },
+ "gazebo": {
+  "spherical_coordinates": {
+   "surface_model": "EARTH_WGS84",
+   "world_frame_orientation": "ENU",
+   "latitude_deg": 34.95,
+   "longitude_deg": -116.85,
+   "elevation": 778.01,
+   "heading_deg": 0
+  },
+  "heightmap": {
+   "source": "rl_search/data/terrain_real_mojave_60km_25m.npz",
+   "layer": "z",
+   "size_m": 60000.0
+  }
+ },
+ "files": {
+  "terrain": "rl_search/data/terrain_real_mojave_60km_25m.npz",
+  "road_graph": "rl_search/data/real/mojave/road_graph_25m.npz",
+  "land_cover": "rl_search/data/real/mojave/landcover_25m.npz",
+  "raw_data_cache": "rl_search/data/real/mojave/raw",
+  "road_graph_before_simplification": "rl_search/data/real/mojave/road_graph_full_25m.npz"
+ },
+ "road_simplification": {
+  "density_km_per_km2": 2.0,
+  "anchor_m": 2500.0,
+  "spur_m": 500.0,
+  "dense_edges": 6998,
+  "anchors": 112,
+  "anchor_links": 250,
+  "spurs_removed": 680,
+  "slow_km_before": 4082.230227031946,
+  "slow_km_after": 2849.298583984375,
+  "edges_before": 11715,
+  "edges_after": 5867,
+  "largest_network_share": 0.9508474030946863,
+  "density_max_before": 12.8445758667307,
+  "density_max_after": 2.665424140492765
+ },
+ "attribution": {
+  "roads_waterways": "OpenStreetMap contributors, ODbL 1.0 (https://www.openstreetmap.org/copyright)",
+  "elevation": "Copernicus DEM GLO-30, ESA / European Union; surface model, heights relative to the EGM2008 geoid",
+  "land_cover": "ESA WorldCover 2021 v200, CC BY 4.0"
+ },
+ "tested_with_px4": false
+}
