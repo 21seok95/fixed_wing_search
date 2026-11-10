@@ -30,6 +30,7 @@ from rl_search.area_score import CELL_M, N_WINDOWS, WINDOW_S, AreaScore
 from rl_search.plants import wrap
 
 MAPS = (("m1600", 1600.0, 15.0), ("m6400", 6400.0, 60.0), ("m25600", 25600.0, 300.0), ("m51200", 51200.0, 600.0))
+POOL_DIR = "rl_search/data/real/amboy/rl_pool"
 N_REF = 5000                       # particle units are scaled to this many particles
 VEC_NAMES = ("roll", "turn_rate_state", "course_minus_heading", "energy_left", "window_time_left", "prob_left", "allowed_low",
              "allowed_high")
@@ -63,8 +64,18 @@ class RealRLConfig:
     stage: int = 1                     # curriculum stage
     stage_mix: dict | None = None      # {start stage: share}; None: STAGE_MIX[stage]
     seed_base: int = 10_000_000        # training scenario seeds (validation 70000+, test 80000+, hold-out + 1 000 000)
+    pool: str | None = POOL_DIR        # pre-built training scenarios (scripts/rl_eval/make_pool.py); None or empty: generate each time
     max_steps: int | None = None       # cut episodes after this many decisions (truncated); None: until the energy is spent
     settings: dict = field(default_factory=dict)    # overrides of the SAROPS reference settings (web_optimize FIELDS)
+
+
+def training_scenario(vs, seed: int):
+    """Training scenario of ``seed`` (``rl_eval_set`` LKP rule: a road cell in the central 3 km square, heading uniform)."""
+    from rl_search.rl_eval_set import center_lkp
+    r = np.random.default_rng(seed)
+    lkp = center_lkp(vs.net, r)
+    heading = float(r.uniform(0.0, 360.0))
+    return vs.make_at(seed, lkp, heading, start=(0.0, 0.0))
 
 
 class RealRLEnv:
@@ -83,6 +94,7 @@ class RealRLEnv:
         self.s = settings() | cfg.settings
         self.env = team_env(self.s, cfg.region, self.terr, seed, area=True)        # the SAROPS reference env (AreaEnv)
         self.env.pos_w, self.env.area_w = float(self.s["area_w"]), 1.0
+        self.env._obs = lambda: None          # this instance only: skip the legacy maps that RLSearchEnv.reset builds (40-80 ms, unused here)
         vc = vehicle_config()
         if cfg.particles is not None:
             vc = replace(vc, particles=int(cfg.particles))
@@ -124,14 +136,23 @@ class RealRLEnv:
         return np.where(inside, cfg.edge_factor(uu[0], vv[0]), 0.0).reshape(fwd.shape).astype(np.float32)
 
     # ------------------------------------------------------------------ scenarios and starts
+    def _pool_files(self) -> list:
+        if not hasattr(self, "_pool"):
+            from pathlib import Path
+            d = Path(self.cfg.pool) if self.cfg.pool else None
+            self._pool = sorted(d.glob("s*.pkl")) if d is not None and d.is_dir() else []
+        return self._pool
+
     def _new_scenario(self):
-        from rl_search.rl_eval_set import center_lkp
-        seed = self.cfg.seed_base + int(self.rng.integers(0, 10**9))
-        r = np.random.default_rng(seed)
-        lkp = center_lkp(self.vs.net, r)
-        heading = float(r.uniform(0.0, 360.0))
-        scen = self.vs.make_at(seed, lkp, heading, start=(0.0, 0.0))
-        return scen
+        files = self._pool_files()
+        if files:                                               # pre-built: the scenario and its AreaScore
+            import pickle
+            with open(files[int(self.rng.integers(len(files)))], "rb") as f:
+                d = pickle.load(f)
+            scen = d["scen"]
+            self._area_cache = {id(scen.track): d["area"]}
+            return scen
+        return training_scenario(self.vs, self.cfg.seed_base + int(self.rng.integers(0, 10**9)))
 
     def _area_score(self, scen) -> AreaScore:
         key = id(scen.track)                                    # stage 3 starts replace the scenario but keep its track
@@ -313,5 +334,9 @@ def make_gym(cfg: RealRLConfig | None = None, seed: int = 0):
 
         def step(self, action):
             return self.env.step(action)
+
+        def set_stage(self, stage: int):
+            """Curriculum: starts from now on follow STAGE_MIX[stage] (called on every worker by the training script)."""
+            self.env.cfg.stage, self.env.cfg.stage_mix = int(stage), None
 
     return RealRLGym()

@@ -73,3 +73,36 @@ class MultiMapExtractor(BaseFeaturesExtractor):
     def forward(self, obs):
         feats = [self.cnns[n](obs[n]) for n in MAP_NAMES] + [self.vec(obs["vec"])]
         return self.joint(torch.cat(feats, dim=1))
+
+
+class RealMapExtractor(BaseFeaturesExtractor):
+    """Feature extractor of the real-region RL env (rl_search.rl_real, docs/rl_mdp_design.md section 7): an independent CNN per map
+    (3x3 kernels, 16 -> 32 -> 32 channels, stride 2, flatten, linear ``map_features``; no pooling, the cell position is the reward),
+    the maps in ``fine_maps`` start with an extra stride-1 layer (64 -> 64 -> 32 -> 16 -> 8) to keep the image centre / edge detail of
+    the 1.6 km map, a vector MLP, and a joint layer shared by the policy and the value function."""
+
+    def __init__(self, observation_space: spaces.Dict, channels=(16, 32, 32), map_features: int = 128, vec_features: int = 32,
+                 features_dim: int = 256, fine_maps=("m1600",)):
+        super().__init__(observation_space, features_dim)
+        self.names = [k for k in observation_space.spaces if k != "vec"]
+        self.cnns = nn.ModuleDict()
+        for name in self.names:
+            c, h, w = observation_space[name].shape
+            layers, cin = [], c
+            if name in fine_maps:
+                layers += [nn.Conv2d(cin, channels[0], 3, stride=1, padding=1), nn.ReLU()]
+                cin = channels[0]
+            for cout in channels:
+                layers += [nn.Conv2d(cin, cout, 3, stride=2, padding=1), nn.ReLU()]
+                cin = cout
+            cnn = nn.Sequential(*layers, nn.Flatten())
+            with torch.no_grad():
+                n = cnn(torch.zeros(1, c, h, w)).shape[1]
+            self.cnns[name] = nn.Sequential(cnn, nn.Linear(n, map_features), nn.ReLU())
+        nv = observation_space["vec"].shape[0]
+        self.vec = nn.Sequential(nn.Linear(nv, vec_features), nn.ReLU(), nn.Linear(vec_features, vec_features), nn.ReLU())
+        self.joint = nn.Sequential(nn.Linear(len(self.names)*map_features + vec_features, features_dim), nn.ReLU())
+
+    def forward(self, obs):
+        feats = [self.cnns[n](obs[n]) for n in self.names] + [self.vec(obs["vec"])]
+        return self.joint(torch.cat(feats, dim=1))
