@@ -272,7 +272,11 @@ clip 0.2, target KL 0.02, 엔트로피 0.005, 가치 손실 가중치 0.25(보�
 - PPO 메모: 업데이트 1540번 중 1475번이 KL 한계(목표 0.02의 1.5배)에 걸려 일찍 멈췄다(첫 epoch에서 530번, 둘째에서 571번). 정책 표준편차는 0.19, 가치 설명력은 0.998이다.
   점수가 끝까지 올랐으니 버그는 아니다. 다만 한 번의 업데이트가 짧게 끝난다. 더 학습한다면 학습률을 낮추는 것(예: 5e-5)을 먼저 검토한다.
 - 한계는 앞 절과 같다: 지도 1개(암보이), LKP는 중앙 3 km 안, seed 1개, 채점 모델 = 믿음 모델.
-- 파일: 그림, 표, 평가 json, `state.json`은 git에 있다. 모델(`best_stage3.zip` 20 MB, `ckpt/` 2.4 GB)과 웹 실행 파일(비행 하나 약 6 MB)은 git에 없고 Ubuntu PC에만 있다.
+- 파일: 그림, 표, 평가 json, `state.json`, 시험에 쓴 모델 `best_stage3.zip`(620만 스텝, 20 MB)은 git에 있다. 체크포인트(`ckpt/` 2.4 GB)와
+  웹 실행 파일(비행 하나 약 6 MB)은 Ubuntu PC에만 있다. 다른 PC에서 RL 비행을 웹으로 보려면 암보이 지도를 만든 뒤
+  `python -m rl_search.scripts.rl_eval.eval_rl --model rl_search/data/rl_real/amboy_v1/best_stage3.zip --label 6200000 --split test`
+  (검증은 `--split val --stages 1 2 3`)를 돌리고, 웹 실행 탭의 "보기: 검증 3단계"로 본다(시험 비행도 이 보기에 나온다).
+  SAROPS 비행을 나란히 보려면 `python -m rl_search.scripts.rl_eval.sarops_ref --split test --stages 3`으로 같은 경우를 다시 만든다(Ubuntu 5개 동시 약 45분).
 - **다음에 사용자와 정할 것:**
   1. 더 학습할지: 검증 곡선이 아직 오른다. 학습률을 낮춰 이어 갈 수 있다.
   2. 1절의 결정대로 넓히기: 충주 지도, 또는 여러 대(충돌 페널티 추가).
