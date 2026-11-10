@@ -91,7 +91,10 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
     a_h = score_frames(terr, eh.h, hold.track, hold.save_dt_s, x, [np.array(eh.sample_log)], eh.detector.cfg)
     pos_h = float(h["pos"][-1])
     holdout = dict(pos=pos_h, A=float(a_h["A"]), total=float(a_h["A"] + w*pos_h))
-    ref = sarops_refs(split).get((stage, k))
+    try:
+        ref = sarops_refs(split).get((stage, k))
+    except FileNotFoundError:                                  # SAROPS references of this split not made yet
+        ref = None
     out = dict(split=split, stage=stage, k=k, step=step, belief=belief, holdout=holdout, steps=len(acts),
                sarops=ref["holdout"] if ref else None, sec=time.perf_counter() - t_start)
     if save_web:
@@ -121,8 +124,9 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
         if vc is None:
             from rl_search.rl_eval_set import vehicle_config
             vc = _CACHE["vc"] = vehicle_config()
-        meta = vw.run_meta(opt, rid, f"{case.label} · RL {step:,}", time.strftime("%m-%d %H:%M"), view, asdict(vc), group="eval", split=split,
-                           stage=stage, case=k, method=f"RL {step:,}", holdout=holdout, case_info=case_dict(case))
+        name = f"RL {step:,}" if isinstance(step, int) else f"RL {step}"
+        meta = vw.run_meta(opt, rid, f"{case.label} · {name}", time.strftime("%m-%d %H:%M"), view, asdict(vc), group="eval", split=split,
+                           stage=stage, case=k, method=name, holdout=holdout, case_info=case_dict(case))
         vw.save_run(rid, dict(opt=opt, res=particles_payload(vres, vc, case.heading, start, 0.0)), meta)
         out["web_run"] = rid
     return out

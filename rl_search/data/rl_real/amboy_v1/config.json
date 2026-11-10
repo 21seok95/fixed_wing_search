@@ -1,0 +1,32 @@
+{
+ "tag": "amboy_v1",
+ "out": "rl_search/data/rl_real",
+ "n_envs": 8,
+ "n_steps": 512,
+ "batch_size": 256,
+ "n_epochs": 5,
+ "lr": 0.0001,
+ "gamma": 0.995,
+ "gae_lambda": 0.95,
+ "clip": 0.2,
+ "target_kl": 0.02,
+ "ent_coef": 0.005,
+ "vf_coef": 0.25,
+ "max_grad_norm": 0.5,
+ "log_std_init": -1.0,
+ "value_init": "auto",
+ "stage": 1,
+ "stage_budget": [
+  3000000,
+  3000000,
+  6000000
+ ],
+ "pass_ratio": 0.9,
+ "stop_at": 6308456,
+ "eval_every": 50000,
+ "eval_workers": 5,
+ "seed": 0,
+ "resume": "latest",
+ "device": "cuda",
+ "parameters": 1349411
+}

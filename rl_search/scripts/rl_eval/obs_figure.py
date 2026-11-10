@@ -12,7 +12,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 
-plt.rcParams["font.family"] = ["AppleGothic", "Noto Sans CJK KR", "sans-serif"]
+from matplotlib import font_manager as _fm
+_NAMES = {f.name for f in _fm.fontManager.ttflist}
+plt.rcParams["font.family"] = [n for n in ("AppleGothic", "Noto Sans CJK KR") if n in _NAMES][:1] + ["sans-serif"]   # Mac or Ubuntu Korean font
 plt.rcParams["axes.unicode_minus"] = False
 src, key = Path(sys.argv[1]), sys.argv[2]
 out_dir = src.parent

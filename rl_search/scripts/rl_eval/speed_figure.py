@@ -10,7 +10,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-plt.rcParams["font.family"] = ["AppleGothic", "Noto Sans CJK KR", "sans-serif"]
+from matplotlib import font_manager as _fm
+_NAMES = {f.name for f in _fm.fontManager.ttflist}
+plt.rcParams["font.family"] = [n for n in ("AppleGothic", "Noto Sans CJK KR") if n in _NAMES][:1] + ["sans-serif"]   # Mac or Ubuntu Korean font
 plt.rcParams["axes.unicode_minus"] = False
 SRC = Path("rl_search/data/real/amboy/rl_eval/speed_check.json")
 INK, MUTED, GRID, C1, C2 = "#0b0b0b", "#52514e", "#e4e3df", "#2a78d6", "#eb6834"
