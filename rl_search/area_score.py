@@ -28,6 +28,27 @@ from rl_search.sarops import SaropsPlanner, refine
 WINDOW_S = 300.0
 N_WINDOWS = 12
 CELL_M = 25.0
+_ROAD: dict = {}
+
+
+def road_mask(region: str = "amboy", cell_m: float = CELL_M) -> np.ndarray:
+    """Terrain cells on a drivable road (bool, [row = y, col = x], the road network's ``road_dist`` <= half a cell). Built once from the
+    road network and cached in rl_search/data/real/<region>/road_mask_<cell>m.npz (git-ignored; rebuilt from the network when missing)."""
+    key = (region, float(cell_m))
+    if key not in _ROAD:
+        from pathlib import Path
+        p = Path("rl_search/data/real")/region/f"road_mask_{cell_m:g}m.npz"
+        if p.exists():
+            d = np.load(p)
+            shape = tuple(int(v) for v in d["shape"])
+            m = np.unpackbits(d["bits"])[:shape[0]*shape[1]].reshape(shape).astype(bool)
+        else:
+            from rl_search.vehicle import load_net
+            m = load_net(region, cell_m).road_dist <= cell_m/2
+            p.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(p, bits=np.packbits(m), shape=np.array(m.shape))
+        _ROAD[key] = m
+    return _ROAD[key]
 _CORNER_H, _CORNER_V = np.array([-1.0, -1.0, 1.0, 1.0])[:, None], np.array([-1.0, 1.0, 1.0, -1.0])[:, None]   # image corners, in order round the image
 
 
@@ -165,26 +186,445 @@ class AreaScore:
         return self.count/np.maximum(self.size, 1.0)
 
 
+SEEN_CELL_M = 25.0          # region cell (the smallest map's pixel)
+SEEN_RANK_CELL_M = 50.0     # density grid for ranking the cells (nested: two region cells per side)
+SEEN_RANK_SIGMA_M = 150.0   # density kernel, as the window A's region (search.bandwidth_m)
+SEEN_T_END_S = 3600.0       # frames up to 60 min after the LKP, the window A's span
+
+
+class SeenArea:
+    """A from seen particles (agreed with the user on 2026-11-11, replacing the 5 min window A for RL and SAROPS).
+
+    Every ``dt`` (the particle save step, 10 s) up to ``t_end``, the region H(t) is the 25 m cells holding the densest x% of the active
+    particles. Density: particles per 50 m cell, smoothed with sigma 150 m. Only cells with particles in them count, so empty ground beside
+    a road is never region. A particle is seen once its cumulative POD since the hand-over reaches ``pod`` (survival <= 1 - pod), and the
+    flag moves with the particle. Coverage c(t) = mean over the region cells of the share of the cell's particles already seen (each cell
+    counts once: area, not particle count). A = mean of c(t) over the frames. Seeing particle i at time tau adds F_i(tau) = its share of
+    c over the frames t >= tau, booked when it happens (as the window A books a cell's later windows when the cell is swept).
+    The planner interface (``log``, ``rollback``, ``apply``, ``committed``, ``planning``) matches ``AreaScore``."""
+
+    def __init__(self, track, exit_step, dt, x: float = 80.0, pod: float = 0.5, t_end: float = SEEN_T_END_S):
+        track = np.asarray(track)
+        T, N = track.shape[:2]
+        self.dt, self.x, self.pod, self.n = float(dt), float(x), float(pod), N
+        J = self.J = max(min(int(round(t_end/self.dt)), T - 1), 1)
+        self.t = np.arange(1, J + 1)*self.dt
+        ex = np.asarray(exit_step).astype(np.int64)
+        a = np.zeros((J, N), np.float32)                  # share of particle i in c_j, divided by J
+        self.size = np.zeros(J)                            # region cells per frame
+        g, h = SEEN_RANK_CELL_M, SEEN_CELL_M
+        for j in range(1, J + 1):
+            idx = np.flatnonzero((ex < 0) | (ex > j))      # active at t_j (ParticleBelief.active)
+            if len(idx) == 0:
+                continue
+            P = track[j, idx].astype(float)
+            lo = np.floor(P.min(0)/g)*g - 4*SEEN_RANK_SIGMA_M
+            ig = np.floor((P - lo)/g).astype(np.int64)
+            ny, nx = ig[:, 1].max() + 5*int(SEEN_RANK_SIGMA_M/g) + 1, ig[:, 0].max() + 5*int(SEEN_RANK_SIGMA_M/g) + 1
+            hist = np.bincount(ig[:, 1]*nx + ig[:, 0], minlength=ny*nx).reshape(ny, nx).astype(float)
+            dens = gaussian_filter(hist, SEEN_RANK_SIGMA_M/g, mode="constant")
+            d = dens[ig[:, 1], ig[:, 0]]
+            core = d >= max(np.quantile(d, 1 - self.x/100), 1e-12)
+            ic = np.floor((P[core] - lo)/h).astype(np.int64)
+            _, inv, cnt = np.unique(ic[:, 1]*(2*nx + 2) + ic[:, 0], return_inverse=True, return_counts=True)
+            self.size[j - 1] = len(cnt)
+            a[j - 1, idx[core]] = 1.0/(J*len(cnt)*cnt[inv.ravel()])
+        self.a = a
+        F = np.zeros((J + 2, N), np.float32)                # F[k] = sum of a over frames k..J (k = 1..J); F[0] = F[1]
+        F[1:J + 1] = np.cumsum(a[::-1], axis=0, dtype=np.float64)[::-1]
+        F[0] = F[1]
+        self.F = F
+        self.seen = np.zeros(N, bool)
+        self.t_seen = np.full(N, np.inf)
+        self.log, self.gains, self.committed, self.planning = [], [], {}, False
+        self.team = None            # the team's envs: seen from the team survival (product of each UAV's own), else the env's own
+
+    def clear(self) -> None:
+        self.seen[:] = False
+        self.t_seen[:] = np.inf
+        self.log.clear()
+        self.gains.clear()
+        self.committed.clear()
+
+    def frame_of(self, t: float) -> int:
+        """First frame k (1..J, J + 1 past the end) with t_k >= t."""
+        return int(np.clip(np.ceil(t/self.dt - 1e-9), 1, self.J + 1))
+
+    def frame_now(self, t: float) -> int:
+        """Frame (1..J) nearest to t, for the observation."""
+        return int(np.clip(np.rint(t/self.dt), 1, self.J))
+
+    def update(self, surv: np.ndarray, t: float) -> float:
+        """Particles whose survival since the hand-over fell to 1 - pod become seen at t; returns the gain in A."""
+        new = ~self.seen & (surv <= 1.0 - self.pod + 1e-12)
+        if not new.any():
+            return 0.0
+        idx = np.flatnonzero(new)
+        self.seen[idx] = True
+        self.t_seen[idx] = t
+        self.log.append(idx)
+        gain = float(self.F[self.frame_of(t), idx].sum(dtype=np.float64))
+        if not self.planning:
+            self.gains.append((float(t), gain, len(idx)))
+        return gain
+
+    def rollback(self, cp: int) -> list:
+        undone = self.log[cp:]
+        for idx in undone:
+            self.seen[idx] = False
+            self.t_seen[idx] = np.inf
+        del self.log[cp:]
+        return undone
+
+    def apply(self, items) -> None:
+        """Mark particles as seen without scoring (other UAVs' committed sweeps while planning); undone by rollback."""
+        for idx in items:
+            new = idx[~self.seen[idx]]
+            if len(new):
+                self.seen[new] = True
+                self.t_seen[new] = -1.0
+                self.log.append(new)
+
+    def value_now(self, t: float) -> np.ndarray:
+        """A gain of seeing each particle at t (0 for seen ones)."""
+        return np.where(self.seen, 0.0, self.F[self.frame_of(t)])
+
+    def cover_now(self, t: float) -> float:
+        """c at the frame nearest to t: share of the region already seen."""
+        j = self.frame_now(t)
+        return float(self.a[j - 1][self.seen].sum(dtype=np.float64)*self.J)
+
+    def curve(self) -> np.ndarray:
+        """c_j per frame from the seen times."""
+        out = np.zeros(self.J)
+        for j0 in range(0, self.J, 60):
+            sl = slice(j0, min(j0 + 60, self.J))
+            hit = self.t_seen[None, :] <= self.t[sl, None]
+            out[sl] = (self.a[sl]*hit).sum(1, dtype=np.float64)*self.J
+        return out
+
+    @property
+    def A(self) -> float:
+        return float(self.curve().mean())
+
+
+RT_DENS_CELL_M = 50.0       # density grid of the real-time region (two 25 m cells per side)
+
+
+class RealtimeArea:
+    """The window A with its region in real time (user, 2026-11-11): the 5 min windows become 10 s frames.
+
+    Frame j (t_j = j dt up to ``t_end`` = the end of the track, dt = the particle save step, 10 s): H_j is the x% region of the active
+    unweighted particles at t_j,
+    as ``region_masks`` (density smoothed with sigma ``h`` = 150 m, threshold at the particles so that x% are inside, no-go cells out), on the
+    25 m cells (density on a 50 m grid around the particles, each 50 m cell giving its four 25 m cells). A 25 m cell is swept when its centre
+    is inside the camera image at a 1 s sample while it is in the region of that moment, and it scores once. c_j = swept cells in H_j / cells
+    of H_j; A = mean of c_j over the scoring window (``set_window``: from 0 to 60 min after the LKP by default, the window A's span; for a
+    late launch, from the launch to the end of the flight). Sweeping a cell at frame j adds sum over the window frames m >= j that hold it
+    of 1 / (J |H_m|), J = frames in the window, booked at once.
+    The interface (``mark_frame``, ``log``, ``rollback``, ``apply``, ``committed``, ``planning``) matches ``AreaScore``.
+
+    ``quality`` (A4, user 2026-11-11): a sweep counts by the image quality q of its 1 s sample (the detection's turn-rate factor, the same one
+    that scales the POD): each cell keeps the best q so far (0-255), c_j sums those qualities, and a better sweep later adds the difference.
+    Without it every sweep has q = 1 (A3).
+
+    ``roll_max_deg`` (A4t, user 2026-11-11, method (가)): a cell is searched (q = 1) only when it is in the image at a 1 s sample whose turn
+    rate is at most that of a coordinated turn at this roll (33 m/s: 20 deg = 6.2 deg/s), the gimbal's own rate included; other sweeps do
+    not count, and the cell can still be searched later. Overrides ``quality``.
+
+    ``h_off`` with ``road`` (user 2026-11-12): particles on a road cell (``road_mask``) are smoothed with ``h`` and the others with
+    ``h_off`` (75 / 150 m: off-road particles spread over an area and are sparse, so the 75 m region broke into many small pieces there),
+    the two densities added before the x% threshold."""
+
+    def __init__(self, terr, h, track, exit_step, dt, x: float = 70.0, t_end: float | None = None, quality: bool = False,
+                 window: tuple = (0.0, SEEN_T_END_S), roll_max_deg: float | None = None, v_mps: float = 33.0, h_off: float | None = None,
+                 road=None):
+        track = np.asarray(track)
+        T, N = track.shape[:2]
+        self.dt, self.x, self.h, self.quality = float(dt), float(x), float(h), bool(quality)
+        self.h_off = float(h_off) if h_off and road is not None and float(h_off) != float(h) else 0.0
+        self.roll_max_deg = roll_max_deg
+        self.rate_max_dps = None if roll_max_deg is None else float(np.degrees(9.80665*np.tan(np.radians(roll_max_deg))/v_mps))
+        J = self.J_all = max(min(int(round(t_end/self.dt)) if t_end is not None else T - 1, T - 1), 1)
+        self.t_all = np.arange(1, J + 1)*self.dt
+        tc = float(terr.axis[1] - terr.axis[0])
+        self.n = n = len(terr.axis)
+        self.X0 = float(terr.axis[0] - tc/2)
+        f = int(round(RT_DENS_CELL_M/CELL_M))
+        forb = np.asarray(terr.forbidden).ravel()
+        ex = np.asarray(exit_step).astype(np.int64)
+        g = RT_DENS_CELL_M
+        sig = self.h/g
+        sig_off = (self.h_off or self.h)/g
+        pad = int(np.ceil(4*max(sig, sig_off))) + 1
+        H = []
+        for j in range(1, J + 1):
+            idx = np.flatnonzero((ex < 0) | (ex > j))
+            if len(idx) == 0:
+                H.append(np.zeros(0, np.int32))
+                continue
+            pj = track[j, idx].astype(float)
+            ig = np.floor((pj - self.X0)/g).astype(np.int64)
+            lo = ig.min(0) - pad
+            ij = ig - lo
+            ny, nx = ij[:, 1].max() + pad + 1, ij[:, 0].max() + pad + 1
+            flat = ij[:, 1]*nx + ij[:, 0]
+            if self.h_off:                                     # road particles with h, off-road ones with h_off
+                ic = np.clip(np.floor((pj - self.X0)/tc).astype(np.int64), 0, n - 1)
+                on = road[ic[:, 1], ic[:, 0]]
+                dens = gaussian_filter(np.bincount(flat[on], minlength=ny*nx).reshape(ny, nx).astype(float), sig, mode="constant") \
+                    + gaussian_filter(np.bincount(flat[~on], minlength=ny*nx).reshape(ny, nx).astype(float), sig_off, mode="constant")
+            else:
+                hist = np.bincount(flat, minlength=ny*nx).reshape(ny, nx).astype(float)
+                dens = gaussian_filter(hist, sig, mode="constant")
+            thr = max(np.quantile(dens[ij[:, 1], ij[:, 0]], 1 - self.x/100), 1e-12)
+            ry, rx = np.nonzero(dens >= thr)
+            ry, rx = ry + lo[1], rx + lo[0]
+            cy = (f*ry[:, None] + np.arange(f)[None, :]).repeat(f, 1).ravel()
+            cx = np.tile(f*rx[:, None] + np.arange(f)[None, :], (1, f)).ravel()
+            ok = (cx >= 0) & (cx < n) & (cy >= 0) & (cy < n)
+            key = (cy[ok]*n + cx[ok]).astype(np.int64)
+            key = np.unique(key[~forb[key]])
+            H.append(key.astype(np.int32))
+        self.H = H
+        self.size_all = np.array([len(k) for k in H], float)
+        self.Q = np.zeros(n*n, np.uint8)               # best image quality of each swept cell, 0 = not swept, 255 = q 1
+        self.log, self.log_t, self.committed, self.planning = [], [], {}, False   # log: (keys, old Q, new Q)
+        self.F = None
+        self.set_window(*window)
+
+    def set_window(self, t0: float, t1: float) -> None:
+        """Scoring window: the frames with t0 <= t_j <= t1 (clipped to the track). Recomputes the booked values F_j."""
+        j0 = int(np.clip(np.ceil(t0/self.dt - 1e-9), 1, self.J_all))
+        j1 = int(np.clip(np.floor(t1/self.dt + 1e-9), j0, self.J_all))
+        if self.F is not None and (j0, j1) == (self.j0, self.j1):
+            return
+        self.j0, self.j1 = j0, j1
+        J = self.J = j1 - j0 + 1
+        self.t = self.t_all[j0 - 1:j1]
+        self.size = self.size_all[j0 - 1:j1]
+        H = self.H[j0 - 1:j1]
+        w = np.where(self.size > 0, 1.0/(J*np.maximum(self.size, 1.0)), 0.0)
+        U = np.unique(np.concatenate(H)) if any(len(k) for k in H) else np.zeros(0, np.int32)
+        acc = np.zeros(len(U))
+        F = [None]*J
+        for i in range(J - 1, -1, -1):                 # F_j(cell) = sum over window frames m >= j holding the cell of w_m
+            pos = np.searchsorted(U, H[i])
+            acc[pos] += w[i]
+            F[i] = acc[pos].astype(np.float32)
+        self.F = F
+
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d["F"] = None                                  # rebuilt by set_window (pickled training scenarios stay small)
+        if not self.log:
+            d["Q"] = None                              # nothing swept yet: all zero, rebuilt on load (5.8 MB less per file)
+        return d
+
+    def __setstate__(self, d):
+        self.__dict__.update(d)
+        self.__dict__.setdefault("h_off", 0.0)                 # regions saved before the off-road sigma (2026-11-12)
+        if self.Q is None:
+            self.Q = np.zeros(self.n*self.n, np.uint8)
+        if self.F is None:
+            j0, j1 = self.j0, self.j1
+            self.j0 = self.j1 = -1
+            self.set_window(j0*self.dt, j1*self.dt)
+
+    # ---------------------------------------------------------------- state
+    def clear(self) -> None:
+        for keys, _, _ in self.log:
+            self.Q[keys] = 0
+        self.log.clear()
+        self.log_t.clear()
+        self.committed.clear()
+
+    def frame_now(self, t: float) -> int:
+        """Index (1..J) of the window frame nearest to t, halves rounded up (as ``curve`` counts a sweep at t in the frames with
+        t < t_j + dt / 2)."""
+        return int(np.clip(np.floor(t/self.dt + .5), self.j0, self.j1)) - self.j0 + 1
+
+    def active(self, t: float) -> bool:
+        return (self.j0 - .5)*self.dt <= t < (self.j1 + .5)*self.dt
+
+    def rollback(self, cp: int) -> list:
+        undone = self.log[cp:]
+        for keys, old, _ in reversed(undone):
+            self.Q[keys] = old
+        del self.log[cp:]
+        del self.log_t[cp:]
+        return undone
+
+    def apply(self, items) -> None:
+        """Mark cells swept without scoring (other UAVs' committed sweeps while planning); undone by rollback."""
+        for keys, _, qn in items:
+            better = qn > self.Q[keys]
+            if better.any():
+                k = keys[better]
+                self.log.append((k, self.Q[k].copy(), qn[better]))
+                self.log_t.append(-1.0)
+                self.Q[k] = qn[better]
+
+    # ---------------------------------------------------------------- sweeping
+    def _cells_in(self, quad):
+        """Keys of the 25 m cells whose centre is inside the ground quad (4, 2)."""
+        n, c = self.n, CELL_M
+        ix0 = max(int(np.floor((quad[:, 0].min() - self.X0)/c)), 0)
+        ix1 = min(int(np.floor((quad[:, 0].max() - self.X0)/c)) + 1, n)
+        iy0 = max(int(np.floor((quad[:, 1].min() - self.X0)/c)), 0)
+        iy1 = min(int(np.floor((quad[:, 1].max() - self.X0)/c)) + 1, n)
+        if ix0 >= ix1 or iy0 >= iy1:
+            return np.zeros(0, np.int64)
+        yy, xx = np.mgrid[iy0:iy1, ix0:ix1]
+        keys = (yy*n + xx).ravel()
+        cx, cy = self.X0 + (xx.ravel() + .5)*c, self.X0 + (yy.ravel() + .5)*c
+        return keys[inside_quad(cx, cy, quad[None])[0]]
+
+    def mark_quad(self, quad, t: float, q: float = 1.0) -> float:
+        """Sweep the cells inside the image quad (4, 2) at time t with image quality q (1 without ``quality``); returns the gain in A."""
+        if not self.active(t):
+            return 0.0
+        return self._mark_keys(self._cells_in(np.asarray(quad, float)), t, q)
+
+    def _mark_keys(self, keys, t: float, q: float = 1.0) -> float:
+        qn = 255 if not self.quality else int(np.clip(round(float(q)*255), 1, 255))
+        if not len(keys):
+            return 0.0
+        keys = keys[self.Q[keys] < qn]
+        j = self.frame_now(t)
+        Hj = self.H[self.j0 + j - 2]
+        if not len(keys) or not len(Hj):
+            return 0.0
+        pos = np.clip(np.searchsorted(Hj, keys), 0, len(Hj) - 1)
+        inr = Hj[pos] == keys
+        if not inr.any():
+            return 0.0
+        new = keys[inr]
+        old = self.Q[new].copy()
+        self.Q[new] = qn
+        self.log.append((new, old, np.full(len(new), qn, np.uint8)))
+        self.log_t.append(float(t))
+        return float(((qn - old.astype(np.float64))/255.0*self.F[j - 1][pos[inr]]).sum())
+
+    def mark_frame(self, x, y, frame, t, cfg, q: float = 1.0) -> float:
+        """Oblique camera (as ``AreaScore.mark_frame``): the image corners on flat ground ``cfg.alt_m`` below."""
+        f, r, u = frame
+        d = f[0] + _CORNER_H*np.tan(np.radians(cfg.hfov_deg/2))*r[0] + _CORNER_V*np.tan(np.radians(cfg.vfov_deg/2))*u[0]
+        s = cfg.alt_m/np.maximum(-d[:, 2], 1e-3)
+        quad = np.stack([x + s*d[:, 0], y + s*d[:, 1]], 1)
+        img_min = float(getattr(self, "img_min", 0.0) or 0.0)
+        if img_min <= 0:
+            return self.mark_quad(quad, t, q)
+        # (user 2026-11-12) a cell is searched only where the image-position factor of the POD (1 in the central half of each image axis,
+        # 0.5 at an edge, 0.25 in a corner) is at least img_min; 0.75 keeps the central 3/4 of the width (about 141 m of 188 m)
+        if not self.active(t):
+            return 0.0
+        keys = self._cells_in(quad)
+        if not len(keys):
+            return 0.0
+        from rl_search.detection import image_coords
+        c = self.centres(keys)
+        uu, vv, front = image_coords(c[:, 0], c[:, 1], x, y, frame, cfg)
+        ok = front[0] & (cfg.edge_factor(uu[0], vv[0]) >= img_min - 1e-9)
+        return self._mark_keys(keys[ok], t, q)
+
+    # ---------------------------------------------------------------- reading
+    def open_now(self, t: float):
+        """Region cells of the frame nearest to t that still hold value: (keys, A value of sweeping each now at q = 1)."""
+        j = self.frame_now(t)
+        Hj = self.H[self.j0 + j - 2]
+        rem = 1.0 - self.Q[Hj]/255.0
+        m = rem > 0
+        return Hj[m], (self.F[j - 1][m]*rem[m]).astype(np.float32)
+
+    def centres(self, keys):
+        iy, ix = np.divmod(np.asarray(keys, np.int64), self.n)
+        return np.stack([self.X0 + (ix + .5)*CELL_M, self.X0 + (iy + .5)*CELL_M], 1)
+
+    def value_at(self, wx, wy, t: float) -> np.ndarray:
+        """A value of sweeping the 25 m cells under world points now (0 outside the region or swept)."""
+        j = self.frame_now(t)
+        Hj = self.H[self.j0 + j - 2]
+        v = np.zeros(np.shape(wx))
+        if not len(Hj):
+            return v
+        ix = np.floor((np.asarray(wx) - self.X0)/CELL_M).astype(np.int64)
+        iy = np.floor((np.asarray(wy) - self.X0)/CELL_M).astype(np.int64)
+        ok = (ix >= 0) & (ix < self.n) & (iy >= 0) & (iy < self.n)
+        keys = np.where(ok, iy*self.n + ix, -1)
+        pos = np.clip(np.searchsorted(Hj, keys), 0, len(Hj) - 1)
+        hit = ok & (Hj[pos] == keys)
+        v[hit] = self.F[j - 1][pos[hit]]*(1.0 - self.Q[keys[hit]]/255.0)
+        return v
+
+    def cover_now(self, t: float) -> float:
+        j = self.frame_now(t)
+        Hj = self.H[self.j0 + j - 2]
+        return float(self.Q[Hj].mean()/255.0) if len(Hj) else 0.0
+
+    def curve(self) -> np.ndarray:
+        """c_j per frame from the sweep log: the best quality each region cell had by t_j (sweeps before t_j + dt/2)."""
+        out = np.zeros(self.J)
+        if not self.log:
+            return out
+        keys = np.concatenate([k for k, _, _ in self.log])
+        dq = np.concatenate([(n.astype(np.float64) - o)/255.0 for _, o, n in self.log])
+        ts = np.concatenate([np.full(len(k), t) for (k, _, _), t in zip(self.log, self.log_t)])
+        for j in range(self.J):
+            Hj = self.H[self.j0 - 1 + j]
+            if not len(Hj):
+                continue
+            m = (ts < self.t[j] + self.dt/2) & np.isin(keys, Hj)
+            out[j] = dq[m].sum()/len(Hj)
+        return out
+
+    @property
+    def A(self) -> float:
+        return float(self.curve().mean())
+
+
 class AreaEnv(TrackedEnv):
-    """Team env whose detection step also sweeps the shared area score: gain = pos_w POS + area_w A."""
+    """Team env whose detection step also scores the shared area term: gain = pos_w POS + area_w A. ``area`` is an ``AreaScore`` (5 min
+    windows, swept cells) or a ``SeenArea`` (seen particles, booked once per decision from the survival since the hand-over)."""
 
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
         self.area, self.uav_id, self.pos_w, self.area_w = None, 0, 1.0, 1.0
+        self._seen_on = False
+
+    def reset(self, seed=None, options=None):
+        self._seen_on = False                     # the pre-hand-over transit does not count, as for POS (run_team_launch s0)
+        out = super().reset(seed, options)
+        self._seen_on = True
+        return out
 
     def _detect_lrc(self, xy, ts, w=None, state=None):
         gain = super()._detect_lrc(xy, ts, w, state)
-        if w is not None or self.area is None:
+        if w is not None or not isinstance(self.area, AreaScore):
             return gain
         return self.pos_w*gain + self.area_w*self.area.mark(xy, ts)
 
-    def _swept(self, x, y, frame, t):
-        if self.area is not None:
+    def _swept(self, x, y, frame, t, rate_dps=None):
+        if isinstance(self.area, RealtimeArea):
+            a = self.area
+            if a.rate_max_dps is not None:                        # A4t: searched only from a steady image
+                if rate_dps is not None and abs(rate_dps) > a.rate_max_dps:
+                    return
+                q = 1.0
+            else:
+                q = float(self.detector.cfg.rate_factor(rate_dps)) if (a.quality and rate_dps is not None) else 1.0
+            self._area_gain += a.mark_frame(x, y, frame, t, self.detector.cfg, q)
+        elif isinstance(self.area, AreaScore):
             self._area_gain += self.area.mark_frame(x, y, frame, t, self.detector.cfg)
 
     def _detect_oblique(self, samples, ts):
         self._area_gain = 0.0
+        self.last_samples = samples                 # rl_real: roll of each 1 s sample (roll-reversal cost)
         gain = super()._detect_oblique(samples, ts)
+        if isinstance(self.area, SeenArea) and self._seen_on and len(ts):
+            team = self.area.team
+            surv = self.surv if not team or len(team) < 2 else np.prod([e.surv for e in team], axis=0)
+            self._area_gain += self.area.update(surv, float(ts[-1]))
         return gain if self.area is None else self.pos_w*gain + self.area_w*self._area_gain
 
     def snapshot(self):
@@ -224,6 +664,10 @@ def area_peaks(env, t_mid: float, k: int, sep: float = 1500.0, block: int = 8, s
                radius: float = 2000.0) -> list[Cluster]:
     """Peaks of the unswept part of the region at t_mid, as start points for rectangles (main axis from the cells)."""
     a = env.area
+    if isinstance(a, SeenArea):
+        return seen_peaks(env, t_mid, k, sep, block, smooth, radius)
+    if isinstance(a, RealtimeArea):
+        return realtime_peaks(env, t_mid, k, sep, block, smooth, radius)
     w = min(a.window(t_mid), N_WINDOWS)
     open_cells = ((a.B >> (w - 1)) & 1).astype(bool) & ~a.S
     if not open_cells.any():
@@ -247,6 +691,76 @@ def area_peaks(env, t_mid: float, k: int, sep: float = 1500.0, block: int = 8, s
             continue
         P = np.stack([px[near], py[near]], 1)
         ev, evec = np.linalg.eigh(np.cov((P - P.mean(0)).T) + np.eye(2)*1e-6)
+        theta = float(np.arctan2(evec[1, 1], evec[0, 1]))
+        out.append(Cluster(pk, theta, max(np.sqrt(ev[1]), 200.0), max(np.sqrt(ev[0]), 200.0), np.zeros(2),
+                           float(near.sum())*CELL_M**2/1e6))
+    return out
+
+
+def seen_peaks(env, t_mid: float, k: int, sep: float = 1500.0, block: int = 8, smooth: float = 250.0,
+               radius: float = 2000.0) -> list[Cluster]:
+    """``area_peaks`` for a ``SeenArea``: peaks of the unseen part of the region at t_mid. Each unseen region particle weighs 1 / (particles
+    in its 25 m cell), so a block's weight is its unseen region area in cells, as the window version counts open cells."""
+    a = env.area
+    j = a.frame_now(t_mid)
+    w = a.a[j - 1].astype(float)*a.J*a.size[j - 1]
+    w[a.seen] = 0.0
+    sel = w > 0
+    if sel.sum() < 5:
+        return []
+    P, W = env.belief.positions(t_mid)[sel], w[sel]
+    g = block*CELL_M
+    lo = P.min(0) - 3*g
+    ij = np.floor((P - lo)/g).astype(np.int64)
+    ny, nx = ij[:, 1].max() + 4, ij[:, 0].max() + 4
+    if ny < 3 or nx < 3:
+        return []
+    coarse = np.bincount(ij[:, 1]*nx + ij[:, 0], weights=W, minlength=ny*nx).reshape(ny, nx)
+    dens = gaussian_filter(coarse, smooth/g)
+    m = max(int(sep/g), 1)
+    peaks = np.argwhere((dens == maximum_filter(dens, size=2*m + 1)) & (dens > 0))
+    peaks = peaks[np.argsort(-dens[peaks[:, 0], peaks[:, 1]])][:k]
+    out = []
+    for i, jj in peaks:
+        pk = lo + (np.array([jj, i]) + .5)*g
+        near = np.hypot(P[:, 0] - pk[0], P[:, 1] - pk[1]) < radius
+        if W[near].sum() < 5:
+            continue
+        Q, q = P[near], W[near]/W[near].sum()
+        mu = (Q*q[:, None]).sum(0)
+        D = Q - mu
+        ev, evec = np.linalg.eigh((D*q[:, None]).T @ D + np.eye(2)*1e-6)
+        theta = float(np.arctan2(evec[1, 1], evec[0, 1]))
+        out.append(Cluster(pk, theta, max(np.sqrt(ev[1]), 200.0), max(np.sqrt(ev[0]), 200.0), np.zeros(2),
+                           float(W[near].sum())*CELL_M**2/1e6))
+    return out
+
+
+def realtime_peaks(env, t_mid: float, k: int, sep: float = 1500.0, block: int = 8, smooth: float = 250.0,
+                   radius: float = 2000.0) -> list[Cluster]:
+    """``area_peaks`` for a ``RealtimeArea``: peaks of the unswept part of the region at the frame nearest to t_mid."""
+    a = env.area
+    keys, _ = a.open_now(t_mid)
+    if len(keys) < 5:
+        return []
+    P = a.centres(keys)
+    g = block*CELL_M
+    lo = P.min(0) - 3*g
+    ij = np.floor((P - lo)/g).astype(np.int64)
+    ny, nx = ij[:, 1].max() + 4, ij[:, 0].max() + 4
+    coarse = np.bincount(ij[:, 1]*nx + ij[:, 0], minlength=ny*nx).reshape(ny, nx).astype(float)
+    dens = gaussian_filter(coarse, smooth/g)
+    m = max(int(sep/g), 1)
+    peaks = np.argwhere((dens == maximum_filter(dens, size=2*m + 1)) & (dens > 0))
+    peaks = peaks[np.argsort(-dens[peaks[:, 0], peaks[:, 1]])][:k]
+    out = []
+    for i, jj in peaks:
+        pk = lo + (np.array([jj, i]) + .5)*g
+        near = np.hypot(P[:, 0] - pk[0], P[:, 1] - pk[1]) < radius
+        if near.sum() < 5:
+            continue
+        Q = P[near]
+        ev, evec = np.linalg.eigh(np.cov((Q - Q.mean(0)).T) + np.eye(2)*1e-6)
         theta = float(np.arctan2(evec[1, 1], evec[0, 1]))
         out.append(Cluster(pk, theta, max(np.sqrt(ev[1]), 200.0), max(np.sqrt(ev[0]), 200.0), np.zeros(2),
                            float(near.sum())*CELL_M**2/1e6))

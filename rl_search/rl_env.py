@@ -222,12 +222,15 @@ class RLSearchEnv:
     # ------------------------------------------------------------------ step
     def step(self, action):
         a = float(np.clip(np.ravel(action)[0], -1.0, 1.0))
-        if self.cfg.edge_mode == "mask":
+        if self.cfg.edge_mode == "none":           # (user 2026-11-12) no edge rule: the UAV may fly off the map, the flight goes on
+            shield = False
+        elif self.cfg.edge_mode == "mask":
             lo, hi, forced = self.allowed_range()
             clipped = float(np.clip(a, lo, hi))
             a, shield = clipped, forced or abs(clipped - a) > 1e-12
         else:
             a, shield = self._geofence(a)
+        self.a_applied = a                         # after the edge mask (rl_real's straight-flight bonus)
         self.chi_tgt = self.chi_tgt + a*self.turn
         out = self._interval()
         out["shield"] = shield
@@ -240,6 +243,8 @@ class RLSearchEnv:
         """Edge rule "mask": the actions in [-1, 1] whose new course target does not point out of the map across an edge the UAV is
         within ``edge_band_m`` of. Returns (low, high, forced); with no allowed action, the end of the range that points least outward
         (a full turn inward) and forced = True."""
+        if self.cfg.edge_mode == "none":
+            return -1.0, 1.0, False
         x, y, _ = self.plant.pose
         lim = self.half_map - self.cfg.edge_band_m
         normals = [n for n, inside in (((1.0, 0.0), x > lim), ((-1.0, 0.0), x < -lim), ((0.0, 1.0), y > lim), ((0.0, -1.0), y < -lim)) if inside]
@@ -282,7 +287,7 @@ class RLSearchEnv:
         self.energy -= self.power.step_energy(self.plant.trace)
         poses = np.array([hist[i][:3] for i in self.sample_idx])
         inside = self.terr.inside(poses[:, 0], poses[:, 1])
-        exited = not inside.all()
+        exited = not inside.all() and self.cfg.edge_mode != "none"    # edge_mode "none": off the map is allowed, the camera keeps looking
         if exited:
             poses = poses[:np.argmin(inside)]          # observe until the exit
         cells = self._cells_under(poses) if len(poses) and not (self.lrc and self.skip_cells) else np.zeros(0, int)
@@ -348,8 +353,8 @@ class RLSearchEnv:
         w[idx] = before*(1 - self.search.pod*q)
         return float((before - w[idx]).sum()/b.n)
 
-    def _swept(self, x: float, y: float, frame, t: float) -> None:
-        """Called with the camera frame of every 1 s sample (``area_score.AreaEnv`` marks the cells inside the image)."""
+    def _swept(self, x: float, y: float, frame, t: float, rate_dps: float | None = None) -> None:
+        """Called with the camera frame and turn rate of every 1 s sample (``area_score.AreaEnv`` marks the cells inside the image)."""
 
     def _detect_oblique(self, samples: np.ndarray, ts: np.ndarray) -> float:
         """Oblique camera (rl_search.detection): at each 1 s sample (x, y, yaw, roll, r) the gimbal turns toward the
@@ -367,8 +372,8 @@ class RLSearchEnv:
             else:
                 los = self.gimbal.los_forward(yaw)
             frame, los_rate = self.gimbal.step(yaw, phi, los, float(dt))
-            self._swept(x, y, frame, t)
             omega = np.degrees(9.80665*np.tan(phi)/self.v)
+            self._swept(x, y, frame, t, max(abs(omega), float(los_rate[0])))
             P = b.positions(t)
             near = np.flatnonzero((b.w > 0) & (np.abs(P[:, 0] - x) < self.cfg.oblique_radius_m)
                                   & (np.abs(P[:, 1] - y) < self.cfg.oblique_radius_m))

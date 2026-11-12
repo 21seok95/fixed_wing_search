@@ -106,3 +106,29 @@ class RealMapExtractor(BaseFeaturesExtractor):
     def forward(self, obs):
         feats = [self.cnns[n](obs[n]) for n in self.names] + [self.vec(obs["vec"])]
         return self.joint(torch.cat(feats, dim=1))
+
+
+def load_expanded(path, env, device: str = "cpu", **ppo_kw):
+    """A new PPO on ``env`` with the weights of the model at ``path`` when ``env``'s maps have more channels (user 2026-11-12: the
+    relative-POS channel, appended last). Every weight is copied; the first convolution of each map gets zero weights for the new input
+    channels, so the new model acts and values exactly like the old one until training uses the new channels. ``ppo_kw``: PPO arguments
+    (learning rate, n_steps, ...); the policy architecture is the old model's."""
+    import torch
+    from stable_baselines3 import PPO
+    old = PPO.load(path, device="cpu")
+    model = PPO("MultiInputPolicy", env, policy_kwargs=old.policy_kwargs, device=device, **ppo_kw)
+    sd_old, sd_new = old.policy.state_dict(), model.policy.state_dict()
+    grown = []
+    for k, v in sd_new.items():
+        o = sd_old[k]
+        if o.shape == v.shape:
+            sd_new[k] = o.clone()
+        elif o.dim() == 4 and o.shape[0] == v.shape[0] and o.shape[2:] == v.shape[2:] and o.shape[1] < v.shape[1]:
+            w = torch.zeros_like(v)
+            w[:, :o.shape[1]] = o
+            sd_new[k] = w
+            grown.append(f"{k} {o.shape[1]} -> {v.shape[1]}")
+        else:
+            raise ValueError(f"cannot carry {k}: {tuple(o.shape)} -> {tuple(v.shape)}")
+    model.policy.load_state_dict(sd_new)
+    return model, grown

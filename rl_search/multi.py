@@ -130,7 +130,7 @@ def run_team_launch(envs, planners, options, launch_gap_s=60.0, actions=None, lo
     separation as a constraint (holds tried, ``pol.violations`` counts plans with no feasible candidate)."""
     n = len(envs)
     for u, e in enumerate(envs):
-        e.reset(options=dict(options, t_launch_s=u*launch_gap_s))
+        e.reset(options=dict(options, t_launch_s=float(options.get("t_launch_s", 0.0)) + u*launch_gap_s))   # base: a late launch
     if planners is not None:
         for p in planners:
             p.hard_sep = hard

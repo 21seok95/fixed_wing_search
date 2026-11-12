@@ -26,13 +26,13 @@ def main():
     ap.add_argument("--label", required=True)
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/rl_real"))
     args = ap.parse_args()
-    from rl_search.rl_real_eval import sarops_refs
+    from rl_search.rl_real_eval import run_area_def, sarops_refs
     from rl_search.scripts.real_map import vehicle_web  # noqa: F401  (resets the font, so import before drawing)
     korean_font()
     d = args.out/args.tag
     lab = f"{int(args.label):,}" if args.label.isdigit() else args.label
     rows = sorted(json.loads((d/f"eval_test_{args.label}.json").read_text()), key=lambda r: (r["stage"], r["k"]))
-    refs = sarops_refs("test")
+    refs = sarops_refs("test", run_area_def(args.out/args.tag))
     rows = [r for r in rows if (r["stage"], r["k"]) in refs]
     rl = np.array([r["holdout"]["total"] for r in rows])
     sa = np.array([refs[(r["stage"], r["k"])]["holdout"]["total"] for r in rows])

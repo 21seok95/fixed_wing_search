@@ -61,6 +61,9 @@ class DetectionConfig:
     rate_ok_dps: float = 5.0            # image-stability factor: 1 up to this turn rate
     rate_floor_dps: float = 20.0        # ... falling linearly to rate_floor at this rate
     rate_floor: float = 0.2
+    rate_tau_dps: float = 0.0           # > 0: exponential factor exp(-|omega| / tau) instead (user 2026-11-11, D2 in docs/rl_experiments.md)
+    rate_dead_dps: float = 0.0          # with rate_tau_dps: 1 up to this turn rate, exp(-(|omega| - dead) / tau) above (D3, user 2026-11-11)
+    rate_tau_low_dps: float = 0.0       # > 0: also exp(-|omega| / tau_low) from 0 on, i.e. D2 x D3 with no free zone (D4, user 2026-11-12)
     edge_plateau: float = 0.5           # image-position factor g: 1 for |u|, |v| up to this ...
     edge_value: float = 0.5             # ... falling linearly to this at the image edge, per axis (corner 0.25)
     image_px: int = 1920                # image width in pixels (for pixels on target only)
@@ -98,6 +101,9 @@ class DetectionConfig:
 
     def rate_factor(self, omega_dps):
         w = np.abs(np.asarray(omega_dps, float))
+        if self.rate_tau_dps > 0:
+            low = w/self.rate_tau_low_dps if self.rate_tau_low_dps > 0 else 0.0
+            return np.exp(-low - np.maximum(w - self.rate_dead_dps, 0.0)/self.rate_tau_dps)
         f = 1 - (1 - self.rate_floor)*(w - self.rate_ok_dps)/max(self.rate_floor_dps - self.rate_ok_dps, 1e-9)
         return np.clip(f, self.rate_floor, 1.0)
 

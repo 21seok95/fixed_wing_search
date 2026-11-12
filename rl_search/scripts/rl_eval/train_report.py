@@ -172,11 +172,11 @@ def main():
     ap.add_argument("--tag", required=True)
     ap.add_argument("--out", type=Path, default=Path("rl_search/data/rl_real"))
     args = ap.parse_args()
-    from rl_search.rl_real_eval import sarops_refs
+    from rl_search.rl_real_eval import run_area_def, sarops_refs
     d = args.out/args.tag
     state = json.loads((d/"state.json").read_text())
     curve_figure(state, d, d/"tb")
-    cases_figure(state, d, sarops_refs("val"))
+    cases_figure(state, d, sarops_refs("val", run_area_def(args.out/args.tag)))
     paths_figure(state, d)
     print("saved", sorted(p.name for p in d.glob("report_*.png")))
 

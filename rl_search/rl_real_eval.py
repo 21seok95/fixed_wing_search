@@ -16,11 +16,25 @@ import numpy as np
 _CACHE: dict = {}
 
 
-def sarops_refs(split: str = "val") -> dict:
-    """SAROPS reference scores by (stage, k): {"holdout": {...}, "belief": {...}}."""
-    from rl_search.rl_eval_set import EVAL_DIR
-    rows = json.loads((EVAL_DIR/f"sarops_ref_{split}.json").read_text())
+def sarops_refs(split: str = "val", key: str = "window") -> dict:
+    """SAROPS reference scores by (stage, k): {"holdout": {...}, "belief": {...}}, for a reference set (sarops_ref.ref_key)."""
+    from rl_search.scripts.rl_eval.sarops_ref import ref_path
+    rows = json.loads(ref_path(split, key).read_text())
     return {(r["case"]["stage"], r["case"]["k"]): r for r in rows}
+
+
+def run_area_def(run_dir) -> str:
+    """Reference set of a training run from its config.json (A definition and turn-rate factor); "window" for runs made before 2026-11-11."""
+    from pathlib import Path
+    from rl_search.scripts.rl_eval.sarops_ref import ref_key
+    cfg = Path(run_dir)/"config.json"
+    if not cfg.exists():
+        return "window"
+    c = json.loads(cfg.read_text())
+    tau = float(c.get("blur_tau", 0.0) or 0.0)
+    dead = float(c.get("blur_dead_roll", 0.0) or 0.0) if tau else 0.0
+    return ref_key(c.get("area_def", "window"), tau, float(c.get("area_roll_max", 20.0) or 20.0), float(c.get("pos_w", 1.0) or 1.0), dead,
+                   float(c.get("blur_tau_low", 0.0) or 0.0) if dead else 0.0, c.get("area_sigma") or None, float(c.get("area_img_min", 0.0) or 0.0))
 
 
 def _case(split: str, stage: int, k: int):
@@ -35,11 +49,12 @@ def _case(split: str, stage: int, k: int):
     return _CACHE[key]
 
 
-def _env():
-    if "env" not in _CACHE:
-        from rl_search.rl_real import RealRLEnv
-        _CACHE["env"] = RealRLEnv(seed=0)
-    return _CACHE["env"]
+def _env(settings: dict | None = None):
+    key = ("env", json.dumps(settings or {}, sort_keys=True))
+    if key not in _CACHE:
+        from rl_search.rl_real import RealRLConfig, RealRLEnv
+        _CACHE[key] = RealRLEnv(RealRLConfig(settings=dict(settings or {})), seed=0)
+    return _CACHE[key]
 
 
 def _model(path: str):
@@ -51,23 +66,31 @@ def _model(path: str):
     return _CACHE["model"]
 
 
-def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, save_web: bool = True) -> dict:
-    """Fly the policy on one case; returns the belief and hold-out scores (A, POS, total) and the SAROPS reference of the case."""
-    from rl_search.area_score import score_frames
-    from rl_search.multi import run_team_launch
+def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, save_web: bool = True, settings: dict | None = None) -> dict:
+    """Fly the policy on one case; returns the belief and hold-out scores (A, POS, total) and the SAROPS reference of the case.
+    ``settings``: overrides of the SAROPS reference settings (e.g. dict(area_def="window", area_x=70) for a window-A model)."""
+    from rl_search.area_score import RealtimeArea, SeenArea, score_frames
     from rl_search.rl_eval_set import REGION, case_dict
     from rl_search.scripts.real_map import vehicle_web as vw
-    from rl_search.scripts.real_map.web_optimize import b64, footprints, particles_payload, team_env
+    from rl_search.scripts.real_map.web_optimize import X_WINDOW_REF, b64, footprints, particles_payload, realtime_payload, seen_payload
+    from rl_search.scripts.rl_eval.sarops_ref import holdout_replay
     t_start = time.perf_counter()
     case, scen, vres, hold = _case(split, stage, k)
-    model, env = _model(model_path), _env()
+    model, env = _model(model_path), _env(settings)
     e = env.env
     e.sample_log = []
     obs, info = env.reset(options=case.options(scen))
     s = env.s
     x, w = float(s["area_x"]), float(s["area_w"])
     acts, tt, xy, pos_t, pos = [], [e.t], [e.plant.pose[:2].copy()], [e.t], [0.0]
+    if getattr(env, "transit_actions", None):           # distance hand-over: the rule's transit comes first (path, POS, hold-out replay)
+        t0_, x0_, y0_ = env.transit_start
+        tr = env.transit_track
+        acts = list(env.transit_actions)
+        tt, xy = [t0_] + [r[0] for r in tr], [np.array([x0_, y0_])] + [np.array(r[1:3]) for r in tr]
+        pos_t, pos = [t0_] + [r[0] for r in tr], [0.0] + [r[3] for r in tr]
     rec_t, rec_w = [e.t], [np.round(e.surv*255).astype(np.uint8)]
+    end_rec = []          # once a minute: t, POS, share of the remaining belief within 10 km, distance to the map edge (end-of-flight check)
     term = trunc = False
     while not (term or trunc):
         a, _ = model.predict(obs, deterministic=True)
@@ -77,26 +100,38 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
         xy.append(e.plant.pose[:2].copy())
         pos_t.append(e.t)
         pos.append(info["POS"])
+        if len(acts) % 12 == 0:
+            b = e.belief
+            Pb, wb = b.positions(e.t), b.w
+            dd = np.hypot(Pb[:, 0] - e.plant.pose[0], Pb[:, 1] - e.plant.pose[1])
+            end_rec.append((e.t, float(info["POS"]), float(wb[dd < 10000.0].sum()/max(wb.sum(), 1e-12)),
+                            float(env.half - max(abs(e.plant.pose[0]), abs(e.plant.pose[1])))))
         rec_t.append(e.t)
         rec_w.append(np.round(e.surv*255).astype(np.uint8))
     log = np.array(e.sample_log)
     e.sample_log = None
     terr, cfg = env.terr, e.detector.cfg
-    a_b = score_frames(terr, e.h, scen.track, scen.save_dt_s, x, [log], cfg)
-    belief = dict(pos=float(info["POS"]), A=float(a_b["A"]), total=float(a_b["A"] + w*info["POS"]))
+    from rl_search.scripts.rl_eval.sarops_ref import ref_key_of
+    seen = isinstance(env._area, (SeenArea, RealtimeArea))
+    area_def = s.get("area_def", "window")
+    key = ref_key_of(s)
+    a_b = score_frames(terr, e.h, scen.track, scen.save_dt_s, X_WINDOW_REF if seen else x, [log], cfg)
+    a_bel = env._area.A if seen else a_b["A"]
+    belief = dict(pos=float(info["POS"]), A=float(a_bel), total=float(a_bel + w*info["POS"]), A_window=float(a_b["A"]))
     # the same actions on the hold-out particles (as sarops_ref)
-    eh = team_env(s, REGION, terr, case.seed)
-    eh.sample_log = []
-    h = run_team_launch([eh], None, case.options(hold), 60.0, actions=[acts])
-    a_h = score_frames(terr, eh.h, hold.track, hold.save_dt_s, x, [np.array(eh.sample_log)], eh.detector.cfg)
-    pos_h = float(h["pos"][-1])
-    holdout = dict(pos=pos_h, A=float(a_h["A"]), total=float(a_h["A"] + w*pos_h))
+    pos_h, a_h, a_win, _ = holdout_replay(s, terr, case, hold, [acts])
+    holdout = dict(pos=pos_h, A=float(a_h), total=float(a_h + w*pos_h), A_window=float(a_win), area_def=area_def, ref_key=key)
     try:
-        ref = sarops_refs(split).get((stage, k))
+        ref = sarops_refs(split, key).get((stage, k))
     except FileNotFoundError:                                  # SAROPS references of this split not made yet
         ref = None
+    er = np.array(end_rec) if end_rec else np.zeros((0, 4))
+    end = dict(pos_last15=float(info["POS"]) - (float(np.interp(er[-1, 0] - 900.0, er[:, 0], er[:, 1])) if len(er) else 0.0),
+               far_min=float((er[:, 2] < 0.05).sum()), edge_min=float((er[:, 3] < 1000.0).sum())) if len(er) else {}
+    # end-of-flight check (user 2026-11-12): POS gained in the last 15 min, minutes with < 5 % of the remaining belief within 10 km,
+    # minutes within 1 km of the map edge
     out = dict(split=split, stage=stage, k=k, step=step, belief=belief, holdout=holdout, steps=len(acts),
-               sarops=ref["holdout"] if ref else None, sec=time.perf_counter() - t_start)
+               sarops=ref["holdout"] if ref else None, sec=time.perf_counter() - t_start, end=end)
     if save_web:
         dt, n = scen.save_dt_s, e.belief.n
         T = min(int(np.ceil(tt[-1]/dt)) + 1, len(scen.track))
@@ -107,6 +142,13 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
             if i >= 0:
                 W[j] = rw[i]
         g = a_b.pop("grid")
+        if isinstance(env._area, RealtimeArea):
+            area = realtime_payload(env._area, True, x, w, belief["pos"], a_b["A"])
+        elif seen:
+            area = seen_payload(env._area, True, x, w, belief["pos"], a_b["A"])
+        else:
+            area = {**a_b, "def": "window", "on": True, "x": x, "w": w, "total": belief["total"], "nx": g["nx"], "ny": g["ny"], "cell": g["cell"],
+                    "x0": g["x0"], "y0": g["y0"], "bits": b64(g["bits"].astype("<u2")), "first": b64(g["first"])}
         uav = dict(rects=[], tasks=[], tt=b64(np.asarray(tt, np.float32)), xy=b64(np.asarray(xy, np.float32)), n_path=len(tt),
                    log_t=b64(log[:, 0].astype(np.float32)), log_xyyaw=b64(log[:, 1:4].astype(np.float32)),
                    quad=b64(footprints(log, cfg).astype(np.float32)), target=b64(log[:, 14:16].astype(np.float32)), n_log=len(log))
@@ -114,16 +156,11 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
         start = opts["start_pose"][:2] if opts.get("stage", 3) in (1, 2) else scen.start
         opt = dict(T=T, N=int(n), dt_s=float(dt), weight=b64(W), uavs=[uav], start=[float(v) for v in start], lkp=[float(v) for v in scen.lkp],
                    pos_t=np.round(np.asarray(pos_t), 1).tolist(), pos=np.round(np.asarray(pos), 4).tolist(), final=belief["pos"],
-                   escaped=float(e.belief.escaped), no_clear=0,
-                   area={**a_b, "on": True, "x": x, "w": w, "total": belief["total"], "nx": g["nx"], "ny": g["ny"], "cell": g["cell"],
-                         "x0": g["x0"], "y0": g["y0"], "bits": b64(g["bits"].astype("<u2")), "first": b64(g["first"])},
-                   sec=round(out["sec"], 1), settings=s)
+                   escaped=float(e.belief.escaped), no_clear=0, area=area, sec=round(out["sec"], 1), settings=s)
         view = dict(region=REGION, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
         rid = f"eval-{split}-s{stage}-k{k}-rl-{step}"
-        vc = _CACHE.get("vc")
-        if vc is None:
-            from rl_search.rl_eval_set import vehicle_config
-            vc = _CACHE["vc"] = vehicle_config()
+        from rl_search.rl_eval_set import case_vc
+        vc = case_vc(case)                                    # the case's own target model (diverse cases)
         name = f"RL {step:,}" if isinstance(step, int) else f"RL {step}"
         meta = vw.run_meta(opt, rid, f"{case.label} · {name}", time.strftime("%m-%d %H:%M"), view, asdict(vc), group="eval", split=split,
                            stage=stage, case=k, method=name, holdout=holdout, case_info=case_dict(case))
@@ -133,7 +170,7 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
 
 
 def eval_job(args):
-    """Pool entry: (model_path, split, stage, k, step)."""
+    """Pool entry: (model_path, split, stage, k, step[, save_web, settings])."""
     import warnings
     warnings.filterwarnings("ignore")
     return evaluate_case(*args)

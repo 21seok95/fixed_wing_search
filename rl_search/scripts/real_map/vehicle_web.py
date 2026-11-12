@@ -34,7 +34,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from rl_search.real_terrain import DATA, REGIONS
-from rl_search.scripts.real_map.web_optimize import CAPS, FIELDS, SCORE_GROUP, SCORES, particles_payload, worker
+from rl_search.scripts.real_map.web_optimize import AREA_DEFS, CAPS, FIELDS, SCORE_GROUP, SCORES, particles_payload, worker
 from rl_search.scripts.real_map.vehicle_tuner import DEFAULT_LKP, GROUPS, PARAMS, STATE_COLORS, load_settings, map_image
 from rl_search.real_scenario import chungju_preset
 from rl_search.scenario import ScenarioSampler
@@ -242,7 +242,7 @@ class App:
         return {"groups": groups, "values": values, "lkp": self.default_lkp(self.default), "extent": self.region(self.default).extent,
                 "region": self.default, "regions": [dict(key=k, name=REGIONS[k].name_ko, off_name="도로 밖" if k in DESERTS else "논밭") for k in self.available],
                 "states": list(STATE_NAMES), "colors": [STATE_COLORS[s] for s in range(len(STATE_NAMES))],
-                "params_file": str(PARAMS), "opt_fields": FIELDS, "opt_caps": CAPS, "opt_scores": SCORES, "opt_score_group": SCORE_GROUP}
+                "params_file": str(PARAMS), "opt_fields": FIELDS, "opt_caps": CAPS, "opt_scores": SCORES, "opt_area_defs": AREA_DEFS, "opt_score_group": SCORE_GROUP}
 
     def config_from(self, d: dict):
         known = {f.name for f in fields(VehicleConfig)}
