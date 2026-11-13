@@ -165,7 +165,7 @@ def run_case(region: str, scen, vres, vc, view: dict, s: dict, q=None, options: 
     for u, e in enumerate(envs):
         e.uav_id, e.sample_log, e.spacing_budget = u, [], s["cap"] == "A"
         if area is not None:
-            e.area, e.pos_w, e.area_w = area, (w if area_on else 1.0), (1.0 if area_on else 0.0)
+            e.area, e.pos_w, e.area_w = area, (w if area_on else 1.0), (float(s.get("a_weight", 1.0)) if area_on else 0.0)
 
     def team_surv():
         return np.round(np.prod([e.surv for e in envs], axis=0)*255).astype(np.uint8)

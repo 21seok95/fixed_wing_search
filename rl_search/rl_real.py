@@ -122,7 +122,8 @@ class RealRLEnv:
         self.terr = st["terr"] if terr is None else terr
         self.s = settings() | cfg.settings
         self.env = team_env(self.s, cfg.region, self.terr, seed, area=True)        # the SAROPS reference env (AreaEnv)
-        self.env.pos_w, self.env.area_w = float(self.s["area_w"]), 1.0
+        # reward and score a_weight x A + w x POS; a_weight 0 (user 2026-11-13): A off, reward POS only (A is still measured and reported)
+        self.env.pos_w, self.env.area_w = float(self.s["area_w"]), float(self.s.get("a_weight", 1.0))
         self.env._obs = lambda: None          # this instance only: skip the legacy maps that RLSearchEnv.reset builds (40-80 ms, unused here)
         vc = vehicle_config()
         if cfg.particles is not None:
@@ -396,7 +397,7 @@ class RealRLEnv:
 
     def _info(self, d_area, d_pos, shield) -> dict:
         env = self.env
-        return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=self.A_cum + env.pos_w*self.pos_cum,
+        return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=env.area_w*self.A_cum + env.pos_w*self.pos_cum,
                     bonus=self.bonus_cum, roll_rev=self.roll_rev, mask_cut=self.mask_cum, shield=bool(shield), energy_left=env.energy, stage=self.start_stage, steps=self.steps,
                     typ=getattr(self, "_typ", ""))
 
@@ -472,16 +473,31 @@ class RealRLEnv:
         # fp_rate (user 2026-11-12): the camera channel times the detection's turn-rate factor at the current roll, so the map shows the
         # image getting worse in a turn (level flight: unchanged)
         fp_q = float(det.cfg.rate_factor(np.degrees(9.80665*np.tan(float(env.plant.phi))/env.v))) if self.s.get("fp_rate") else 1.0
+        # pos_norm (user 2026-11-13): the two POS channels of each map divided by that map's largest cell (log scale, 0..1), so a spread or
+        # searched-down belief reads as clearly as a dense one; the divisor has a floor of three particles at the current mean weight (a few
+        # stray particles do not become the brightest cell), and log(1 + divisor) of every map goes to the vector (how much is there)
+        norm = bool(self.s.get("pos_norm"))
+        floor = 3.0*float(w.mean())*unit if len(w) else 1.0
+        a_off = float(self.s.get("a_weight", 1.0)) == 0.0          # A off: no A channel
+        scales = []
         c, s = np.cos(yaw), np.sin(yaw)
         obs = {}
         for k, (name, side, lead) in enumerate(cfg.maps):
-            ch = [np.log1p(self._bin(P, val_now, k))]
+            now = self._bin(P, val_now, k)
             fut = live & b.active(t + lead)
             Pf = b.positions(t + lead)[fut]
-            ch.append(np.log1p(self._bin(Pf, b.w[fut]*det.visibility(Pf[:, 0], Pf[:, 1])*unit, k)))
+            pred = self._bin(Pf, b.w[fut]*det.visibility(Pf[:, 0], Pf[:, 1])*unit, k)
+            if norm:
+                ln = float(np.log1p(max(float(now.max()), float(pred.max()), floor)))
+                scales.append(ln)
+                ch = [np.log1p(now)/ln, np.log1p(pred)/ln]
+            else:
+                ch = [np.log1p(now), np.log1p(pred)]
             fwd, right = self.offsets[k]
             wx, wy = x + fwd*c + right*s, y + fwd*s - right*c
-            if side/cfg.map_px <= CELL_M and rt:              # 1.6 km map: one 25 m cell per map cell, read
+            if a_off:
+                pass
+            elif side/cfg.map_px <= CELL_M and rt:              # 1.6 km map: one 25 m cell per map cell, read
                 ch.append(np.log1p(self._area.value_at(wx, wy, t)*N_REF))
             elif side/cfg.map_px <= CELL_M and not seen:
                 ch.append(np.log1p(self._area_at(wx, wy)*N_REF))
@@ -497,23 +513,36 @@ class RealRLEnv:
             ch.append(vis)
             if k == 0:
                 ch.append(self.footprint*fp_q)
-            if rel_unit is not None:                          # last channel: remaining POS now as a share of the remaining belief
+            if rel_unit is not None and not norm:             # last channel: remaining POS now as a share of the remaining belief
                 ch.append(np.log1p(self._bin(P, val_now/unit*rel_unit, k)))
             obs[name] = np.stack(ch).astype(np.float32)
-        obs["vec"] = self.vector()
+        obs["vec"] = self.vector(scales if norm else None)
         return obs
 
-    def vector(self) -> np.ndarray:
+    def vector(self, scales=None) -> np.ndarray:
         env = self.env
         p = env.plant
         lo, hi, _ = env.allowed_range()
-        if isinstance(self._area, (SeenArea, RealtimeArea)):
+        if float(self.s.get("a_weight", 1.0)) == 0.0:          # A off: no A state
+            left = 0.0
+        elif isinstance(self._area, (SeenArea, RealtimeArea)):
             left = self._area.cover_now(env.t)                # share of the current region already covered
         else:
             k = self._area.window(env.t) if self._area is not None else N_WINDOWS + 1
             left = (k*WINDOW_S - env.t)/WINDOW_S if k <= N_WINDOWS else 0.0
-        return np.array([p.phi/p.phi_max, p.r/p.r_max, wrap(env.chi_tgt - p.pose[2])/np.pi, max(env.energy, 0.0)/env.power.budget,
-                         left, env.belief.mass, lo, hi], np.float32)
+        v = [p.phi/p.phi_max, p.r/p.r_max, wrap(env.chi_tgt - p.pose[2])/np.pi, max(env.energy, 0.0)/env.power.budget, left, env.belief.mass, lo, hi]
+        if scales is not None:                                # pos_norm: log(1 + divisor) of each map, / 10
+            v += [sc/10.0 for sc in scales]
+        return np.array(v, np.float32)
+
+
+def obs_layout(s: dict, maps=MAPS) -> tuple[dict, int]:
+    """Channels per map and vector length for the settings ``s``: 1.6 km map 5 (POS now, POS ahead, A, visibility, camera), others 4;
+    A off (a_weight 0) drops the A channel, rel_maps adds one (not with pos_norm), pos_norm adds one vector entry per map."""
+    a_off = float(s.get("a_weight", 1.0)) == 0.0
+    extra = 1 if (s.get("rel_maps") and not s.get("pos_norm")) else 0
+    ch = {name: (5 if k == 0 else 4) - (1 if a_off else 0) + extra for k, (name, _, _) in enumerate(maps)}
+    return ch, len(VEC_NAMES) + (len(maps) if s.get("pos_norm") else 0)
 
 
 def make_gym(cfg: RealRLConfig | None = None, seed: int = 0):
@@ -529,9 +558,9 @@ def make_gym(cfg: RealRLConfig | None = None, seed: int = 0):
             self.env = RealRLEnv(cfg, seed)
             c = self.env.cfg
             px = c.map_px
-            extra = 1 if self.env.s.get("rel_maps") else 0            # rel_maps: one more channel per map, the last one
-            maps = {name: spaces.Box(-1.0, np.inf, ((5 if k == 0 else 4) + extra, px, px), np.float32) for k, (name, _, _) in enumerate(c.maps)}
-            self.observation_space = spaces.Dict({**maps, "vec": spaces.Box(-2.0, 2.0, (len(VEC_NAMES),), np.float32)})
+            nch, nvec = obs_layout(self.env.s, c.maps)
+            maps = {name: spaces.Box(-1.0, np.inf, (nch[name], px, px), np.float32) for name, _, _ in c.maps}
+            self.observation_space = spaces.Dict({**maps, "vec": spaces.Box(-2.0, 2.0, (nvec,), np.float32)})
             self.action_space = spaces.Box(-1.0, 1.0, (1,), np.float32)
 
         def reset(self, *, seed=None, options=None):

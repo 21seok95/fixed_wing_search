@@ -1,6 +1,48 @@
-# local PC 안내 (2026-11-12 작성)
+# local PC 안내 (2026-11-12 작성, 2026-11-13 R8 추가)
 
 이 문서는 local PC에서 이 프로젝트를 이어 가는 사람이나 에이전트(Claude Code 등)에게 남기는 안내입니다.
+
+## 0. 최신 (2026-11-13): R8 — A 끄고 POS를 지도마다 정규화
+
+R7을 local PC에서 돌린 결과, 사막형에서 탐색이 잘 되지 않았습니다(사용자 보고).
+- 학습률과 엔트로피를 조절해 봤고, A 보상 가중치도 올려 봤지만 사막형은 여전히 원형으로 돌았습니다. 급선회는 아니었습니다.
+- 사용자와 논의해 다음 실험을 **R8**로 정했습니다. 순서와 확인 기준은 아래 1~9장(R7)과 같고, 바뀌는 것만 적습니다.
+
+| 바꾼 것 | 내용 | 이유 |
+|---|---|---|
+| A 끔 (`--a-weight 0`) | 보상은 1.5 × POS 증가 × 100만 씁니다. A 채널과 A 상태(벡터의 구역 비율)는 없습니다. A 값은 참고로만 재서 기록합니다 | A는 입자에서 나온 밀도라 새 정보가 없습니다. 또 칸 하나의 A 값이 "1 ÷ 구역 넓이"에 비례해서, 모인 경우 POS·A가 둘 다 크고 퍼진 경우 둘 다 작았습니다 |
+| 지도마다 POS 정규화 (`--pos-norm`) | 지도 4장 각각의 POS 채널(지금·예측)을 그 지도의 가장 큰 칸 값으로 나눈 log 값(0~1)으로 바꿉니다. 나누는 값에는 바닥(지금 평균 가중치의 입자 3개분)을 둡니다. 지도마다 나눈 값(log)은 벡터에 4개 더 들어갑니다 | 사막형처럼 넓게 퍼지거나 후반에 많이 찾은 분포도 또렷하게 보이게 합니다. 바닥은 흩어진 입자 몇 개가 가장 밝은 칸이 되는 것을 막습니다 |
+| 상대 POS 채널 뺌 (`--rel-maps` 없이) | 위 정규화와 겹칩니다 | |
+| 그대로 | 처음부터 학습, 환경 10개 × n_steps 307, 카메라 채널 × 선회율 계수(`--fp-rate`), 거리 인계, 지도 밖 허용, 유형별 학습 비율 조정, 검증 `mval` 15 | |
+
+**명령** (bash, 저장소 최상위)
+
+```bash
+DEF="--area-def realtime_t --area-roll-max 5 --blur-tau 3 --blur-dead-roll 5 --blur-tau-low 15 --area-sigma 75 --area-sigma-off 150 --area-img-min 0.75 --pos-w 1.5"
+# SAROPS 기준값: SAROPS도 POS만으로 계획하고 채점 (이름 realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5)
+python -m rl_search.scripts.rl_eval.sarops_ref --split mval --stages 3 $DEF --a-weight 0 --workers 8
+python -m rl_search.scripts.rl_eval.sarops_ref --split mtest --stages 3 $DEF --a-weight 0 --workers 8
+# 학습 (R7과 같은 학습 풀 rl_pool_multi_o150 사용. A 정의는 참고용 A 값에만 쓰임)
+python -m rl_search.scripts.rl_eval.train_rl --tag amboy_r8 --stage 3 --n-envs 10 --envs-per-proc 1 --n-steps 307 \
+  --eval-workers 2 --eval-every 100000 --save-every 500000 --stop-at 3000000 --device cuda --mask-cost 0.1 --multi \
+  --eval-split mval --handover-km 5 --no-edge $DEF --a-weight 0 --pos-norm --fp-rate
+# 시험 30개 (R8, 그리고 R7을 같은 POS 기준으로)
+python -m rl_search.scripts.rl_eval.eval_rl --model rl_search/data/rl_real/amboy_r8/best_stage3.zip --label r8_best --split mtest \
+  --stages 3 $DEF --handover-km 5 --no-edge --a-weight 0 --pos-norm --fp-rate --workers 8
+python -m rl_search.scripts.rl_eval.export_run --run amboy_r8
+```
+
+- **학습 중 점수:** 검증 점수와 SAROPS 대비 비율은 1.5 × POS 기준입니다(A 제외). R7·R6의 비율과 숫자를 직접 비교하지 마세요. 같은 기준에서 비교하려면 R7 모델도 위 시험 명령에 `--a-weight 0`을 붙여 채점합니다. R7 관측 옵션 `--rel-maps --fp-rate`도 붙입니다.
+- **꼭 볼 것:** 사막형의 POS(SAROPS 대비)와 비행 모양입니다. 비행 모양은 `flight_shape.csv`의 "A 인정 한계보다 빨리 돈 분"과 "360° 회전 수"를 봅니다. 참고용 A 값은 계속 기록되니 R7과 비교할 수 있습니다.
+- **사막형이 여전히 원형으로 돈다면,** 남은 원인은 POS의 재통과 보상입니다. 입자가 화면 밖에 5초 넘게 있다가 다시 들어오면, 남은 확률의 0.7배를 또 줍니다. 사용자가 정한 확인 실험은 두 가지입니다.
+  1. RL 경로에서 시작해 한 구간의 행동을 POS가 커지게 최적화합니다. 경로가 크게 바뀌는지 봅니다. 바뀌면 학습 부족이고, 거의 안 바뀌거나 여전히 돌면 보상 구조 문제입니다. 학습에 쓰지 않은 입자로도 확인합니다.
+  2. 정지 입자가 적은 경우를 봅니다. 지금은 분당 정지 0.05, 출발 0.16이라 약 24%가 멈춰 있습니다. 0.01로 낮추면 약 6%입니다. 같은 모델이 덜 도는지 봅니다.
+  - 두 실험 모두 아직 전용 스크립트가 없습니다. 만들기 전에 사용자와 상의하세요.
+- **엔트로피와 학습률은 기본값으로 둡니다.** 학습 중 흔들림이 커지면 직진을 유지하기 어려워서, 이번 변경의 효과와 섞입니다.
+- **맥에서 확인한 범위:**
+  - R8 환경은 맥에서 시험했습니다. 관측 형태, 보상 = 1.5 × POS 증가 × 100, 지도마다 최댓값 1을 확인했습니다.
+  - SAROPS를 POS만으로 계획하는 기준값 계산은 맥에서 계산을 멈춘 상태라 실제로 돌려 보지 못했습니다. 웹 화면에서 쓰던 POS 전용 계획 모드를 이용합니다.
+  - 그래서 첫 사례의 출력에서 오류가 없는지, 그리고 이름에 `_a0`이 붙는지 먼저 확인하세요.
 
 - local PC는 원래 작업 환경(맥북과 그동안의 대화)과 **연결되어 있지 않습니다.** 결과를 밖으로 옮기기도 어렵습니다.
 - 그래서 이 문서 하나만 읽고도 다음을 알 수 있게 정리했습니다.

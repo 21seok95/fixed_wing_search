@@ -117,10 +117,11 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
     key = ref_key_of(s)
     a_b = score_frames(terr, e.h, scen.track, scen.save_dt_s, X_WINDOW_REF if seen else x, [log], cfg)
     a_bel = env._area.A if seen else a_b["A"]
-    belief = dict(pos=float(info["POS"]), A=float(a_bel), total=float(a_bel + w*info["POS"]), A_window=float(a_b["A"]))
+    aw = float(s.get("a_weight", 1.0))                        # score a_weight x A + w x POS (a_weight 0: POS only, user 2026-11-13)
+    belief = dict(pos=float(info["POS"]), A=float(a_bel), total=float(aw*a_bel + w*info["POS"]), A_window=float(a_b["A"]))
     # the same actions on the hold-out particles (as sarops_ref)
     pos_h, a_h, a_win, _ = holdout_replay(s, terr, case, hold, [acts])
-    holdout = dict(pos=pos_h, A=float(a_h), total=float(a_h + w*pos_h), A_window=float(a_win), area_def=area_def, ref_key=key)
+    holdout = dict(pos=pos_h, A=float(a_h), total=float(aw*a_h + w*pos_h), A_window=float(a_win), area_def=area_def, ref_key=key)
     try:
         ref = sarops_refs(split, key).get((stage, k))
     except FileNotFoundError:                                  # SAROPS references of this split not made yet

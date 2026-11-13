@@ -1164,19 +1164,21 @@ function refKeyOf(j) {
   if (j.holdout && j.holdout.ref_key) return j.holdout.ref_key;
   const s = j.settings || {}, d = s.area_def || "window", tau = Number(s.blur_tau || 0), roll = Number(s.area_roll_max || 20), w = Number(s.area_w ?? 1);
   const dead = Number(s.blur_dead_roll || 0), low = Number(s.blur_tau_low || 0), sg = Number(s.area_sigma || 150), im = Number(s.area_img_min || 0);
-  const so = Number(s.area_sigma_off || 0);
+  const so = Number(s.area_sigma_off || 0), aw = Number(s.a_weight ?? 1);
   return (s.score === "pos" ? "pos:" : "") + d + (d === "realtime_t" ? String(roll) : "") +
     (tau ? "_d" + tau + (dead ? "z" + dead + (low ? "l" + low : "") : "") : "") + (d.startsWith("realtime") && sg !== 150 ? "_s" + sg : "") +
-    (d.startsWith("realtime") && so && so !== sg ? "_o" + so : "") + (d.startsWith("realtime") && im ? "_i" + im : "") + (w !== 1 ? "_w" + w : "");
+    (d.startsWith("realtime") && so && so !== sg ? "_o" + so : "") + (d.startsWith("realtime") && im ? "_i" + im : "") + (aw !== 1 ? "_a" + aw : "") +
+    (w !== 1 ? "_w" + w : "");
 }
 function condLabel(key) {
   const pos = key.startsWith("pos:"), k = pos ? key.slice(4) : key;
-  const m = k.match(/^(window|seen|realtime_q|realtime_t|realtime)(\d+)?(?:_d([\d.]+)(?:z([\d.]+)(?:l([\d.]+))?)?)?(?:_s([\d.]+))?(?:_o([\d.]+))?(?:_i([\d.]+))?(?:_w([\d.]+))?$/);
+  const m = k.match(/^(window|seen|realtime_q|realtime_t|realtime)(\d+)?(?:_d([\d.]+)(?:z([\d.]+)(?:l([\d.]+))?)?)?(?:_s([\d.]+))?(?:_o([\d.]+))?(?:_i([\d.]+))?(?:_a([\d.]+))?(?:_w([\d.]+))?$/);
   if (!m) return key;
   const A = { window: "A1 5분 창", realtime: "A3 실시간 영역", realtime_q: "A4 실시간·화면 품질", realtime_t: `A4t 실시간·롤 ${m[2] || 20}° 이하`, seen: "A2 본 particle" }[m[1]];
   const D = m[3] ? (m[4] ? (m[5] ? ` · D4 롤 ${m[4]}°까지 ω₀ ${m[5]}, 그 위 τ ${m[3]}` : ` · D3 롤 ${m[4]}°까지 1, ω₀ ${m[3]}`) : ` · D2 ω₀ ${m[3]}`) : " · D1";
   return (pos ? "POS만 · " : "") + A + D + (m[6] ? ` · σ ${m[6]} m` : "") + (m[7] ? ` · 도로 밖 σ ${m[7]} m` : "") +
-    (m[8] ? ` · 화면 위치 ${m[8]} 이상` : "") + (m[9] ? ` · A + ${m[9]} POS` : "");
+    (m[8] ? ` · 화면 위치 ${m[8]} 이상` : "") + (m[9] ? (Number(m[9]) === 0 ? " · POS만 (A 끔)" : ` · A 가중치 ${m[9]}`) : "") +
+    (m[10] ? ` · ${m[9] && Number(m[9]) === 0 ? "" : "A + "}${m[10]} POS` : "");
 }
 const jobScore = j => j.holdout ? j.holdout.total : (j.area != null ? j.area + Number((j.settings || {}).area_w ?? 1)*(j.final || 0) : (j.final || 0));
 function runMatch(j) {

@@ -120,6 +120,10 @@ def main():
     ap.add_argument("--rel-maps", action="store_true",
                     help="every map gets a last channel: the remaining POS now as a share of the remaining belief (with --init from a model "
                          "without it, the new channel's first-layer weights start at zero)")
+    ap.add_argument("--a-weight", type=float, default=1.0,
+                    help="reward and score a_weight x A + w x POS; 0 = A off (reward POS only, no A channel or A state; A still reported)")
+    ap.add_argument("--pos-norm", action="store_true",
+                    help="each map's POS channels divided by its largest cell (log, floor 3 particles at the mean weight), scales in the vector")
     ap.add_argument("--fp-rate", action="store_true",
                     help="the 1.6 km map's camera channel is multiplied by the detection's turn-rate factor at the current roll")
     ap.add_argument("--area-roll-max", type=float, default=20.0, help="realtime_t (A4t): roll limit (deg) for a searched cell")
@@ -153,7 +157,8 @@ def main():
         | ({"area_sigma_off": args.area_sigma_off} if args.area_sigma_off else {}) \
         | ({"handover_km": args.handover_km} if args.handover_km else {}) | ({"edge_mode": "none", "off_map_zero": True} if args.no_edge else {}) \
         | ({"area_img_min": args.area_img_min} if args.area_img_min else {}) | ({"big_map_m": args.big_map_km*1000.0} if args.big_map_km else {}) \
-        | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {})
+        | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {}) \
+        | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {})
     if args.multi:
         from pathlib import Path as _P
         from rl_search.rl_real import pool_dir_multi

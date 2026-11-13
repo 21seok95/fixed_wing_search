@@ -30,7 +30,7 @@ def settings() -> dict:
 
 
 def ref_key(area_def: str = "window", blur_tau: float = 0.0, roll_max: float | None = None, pos_w: float = 1.0, blur_dead: float = 0.0,
-            blur_low: float = 0.0, sigma: float | None = None, img_min: float = 0.0, sigma_off: float = 0.0) -> str:
+            blur_low: float = 0.0, sigma: float | None = None, img_min: float = 0.0, sigma_off: float = 0.0, a_weight: float = 1.0) -> str:
     """Name of a reference set: the A definition (with its roll limit for realtime_t), d<tau> with the exponential turn-rate factor (D2),
     then z<roll> when that factor is 1 up to the turn rate of this roll (D3) and l<tau_low> when it also falls below it (D4),
     s<sigma> for a real-time A region blurred with sigma != 150 m, o<sigma> for the off-road particles' own sigma, i<min> for the
@@ -41,13 +41,14 @@ def ref_key(area_def: str = "window", blur_tau: float = 0.0, roll_max: float | N
     sg = f"_s{sigma:g}" if sigma and float(sigma) != 150.0 and area_def.startswith("realtime") else ""
     sg += f"_o{float(sigma_off):g}" if sigma_off and float(sigma_off) != float(sigma or 150.0) and area_def.startswith("realtime") else ""
     im = f"_i{float(img_min):g}" if img_min and area_def.startswith("realtime") else ""     # image-position gate of a searched cell
-    return name + d + sg + im + (f"_w{pos_w:g}" if pos_w != 1 else "")
+    aw = f"_a{float(a_weight):g}" if float(a_weight) != 1.0 else ""            # A weight (a0: plan and score on POS only, user 2026-11-13)
+    return name + d + sg + im + aw + (f"_w{pos_w:g}" if pos_w != 1 else "")
 
 
 def ref_key_of(s: dict) -> str:
     return ref_key(s.get("area_def", "window"), float(s.get("blur_tau", 0.0)), float(s.get("area_roll_max", 20.0)), float(s.get("area_w", 1.0)),
                    float(s.get("blur_dead_roll", 0.0) or 0.0), float(s.get("blur_tau_low", 0.0) or 0.0), s.get("area_sigma"),
-                   float(s.get("area_img_min", 0.0) or 0.0), float(s.get("area_sigma_off", 0.0) or 0.0))
+                   float(s.get("area_img_min", 0.0) or 0.0), float(s.get("area_sigma_off", 0.0) or 0.0), float(s.get("a_weight", 1.0)))
 
 
 def ref_path(split: str, key: str = "window"):
@@ -94,6 +95,7 @@ def run_job(job):
     sigma = job[9] if len(job) > 9 else None
     img_min = job[10] if len(job) > 10 else 0.0
     sigma_off = job[11] if len(job) > 11 else 0.0
+    a_weight = job[12] if len(job) > 12 else 1.0
     warnings.filterwarnings("ignore")
     from dataclasses import asdict
     from rl_search.area_score import score_frames
@@ -113,12 +115,13 @@ def run_job(job):
     s = settings() | DEFS[area_def] | ({"blur_tau": blur_tau} if blur_tau else {}) | ({"area_roll_max": roll_max} if roll_max else {}) \
         | ({"area_w": pos_w} if pos_w else {}) | ({"blur_dead_roll": blur_dead} if blur_dead else {}) \
         | ({"blur_tau_low": blur_low} if blur_low else {}) | ({"area_sigma": sigma} if sigma and float(sigma) != 150.0 else {}) \
-        | ({"area_img_min": img_min} if img_min else {}) | ({"area_sigma_off": sigma_off} if sigma_off else {})
+        | ({"area_img_min": img_min} if img_min else {}) | ({"area_sigma_off": sigma_off} if sigma_off else {}) \
+        | ({"a_weight": float(a_weight)} if float(a_weight) != 1.0 else {}) | ({"score": "pos"} if float(a_weight) == 0.0 else {})
     view = dict(region=REGION, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
     out = run_case(REGION, scen, vres, vc, view, s, options=case.options(scen), terr=terr)
     pos_h, a_h, a_win, h = holdout_replay(s, terr, case, hold, out["actions"])          # the same actions on the hold-out particles
     drift = float(np.hypot(*(np.asarray(h["xy"][0][-1]) - np.asarray(out["paths"][0][-1]))))
-    holdout = dict(pos=pos_h, A=float(a_h), total=float(a_h + float(s["area_w"])*pos_h), A_window=float(a_win), area_def=s.get("area_def", "window"),
+    holdout = dict(pos=pos_h, A=float(a_h), total=float(float(s.get("a_weight", 1.0))*a_h + float(s["area_w"])*pos_h), A_window=float(a_win), area_def=s.get("area_def", "window"),
                    ref_key=ref_key_of(s))
     o = out["opt"]
     key = ref_key_of(s)
@@ -134,6 +137,8 @@ def run_job(job):
         method += f" · σ {float(sigma):g} m"
     if sigma_off:
         method += f" · 도로 밖 σ {float(sigma_off):g} m"
+    if float(a_weight) != 1.0:
+        method += " · POS만 (A 끔)" if float(a_weight) == 0.0 else f" · A 가중치 {float(a_weight):g}"
     if img_min:
         method += f" · 화면 위치 {float(img_min):g} 이상"
     if float(s.get("area_w", 1.0)) != 1:
@@ -160,6 +165,7 @@ def main():
     ap.add_argument("--area-sigma", type=float, default=None, help="blur width (m) of the real-time A region (default 150)")
     ap.add_argument("--area-img-min", type=float, default=0.0, help="a cell is searched only where the image-position factor is at least this")
     ap.add_argument("--area-sigma-off", type=float, default=0.0, help="blur width (m) of the off-road particles in the real-time A region (0 = same)")
+    ap.add_argument("--a-weight", type=float, default=1.0, help="score a_weight x A + w x POS; 0 = plan and score on POS only (A still reported)")
     ap.add_argument("--tag", default=None, help="suffix of the reference file and web runs (default: the A definition, plus d<tau> with --blur-tau)")
     ap.add_argument("--area-def", default="window", choices=("window", "realtime", "realtime_q", "realtime_t", "seen"),
                     help="A of the plan and the score (realtime: the window A every 10 s; seen: the particle option, x 80)")
@@ -167,9 +173,9 @@ def main():
     from rl_search.rl_eval_set import MULTI_N
     n = args.cases or MULTI_N.get(args.split) or (5 if args.split in ("val", "dval") else 30)
     jobs = [(args.split, st, k, args.area_def, args.blur_tau, args.area_roll_max, args.pos_w, args.blur_dead_roll, args.blur_tau_low, args.area_sigma,
-             args.area_img_min, args.area_sigma_off) for st in args.stages for k in range(n)]
+             args.area_img_min, args.area_sigma_off, args.a_weight) for st in args.stages for k in range(n)]
     key = ref_key(args.area_def, args.blur_tau, args.area_roll_max, args.pos_w, args.blur_dead_roll, args.blur_tau_low, args.area_sigma,
-                  args.area_img_min, args.area_sigma_off)
+                  args.area_img_min, args.area_sigma_off, args.a_weight)
     out = ref_path(args.split, key)
     rows = json.loads(out.read_text()) if out.exists() else []
     done = {r["id"] for r in rows}

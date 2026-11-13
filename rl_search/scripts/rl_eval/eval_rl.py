@@ -38,6 +38,8 @@ def main():
     ap.add_argument("--area-img-min", type=float, default=0.0, help="a cell is searched only where the POD's image-position factor is >= this")
     ap.add_argument("--big-map-km", type=float, default=0.0, help="side (km) of the model's largest observation map (0 = 51.2)")
     ap.add_argument("--rel-maps", action="store_true", help="the model's maps have the relative-POS channel (train_rl --rel-maps)")
+    ap.add_argument("--a-weight", type=float, default=1.0, help="the model's A weight (0 = A off, scored on POS only)")
+    ap.add_argument("--pos-norm", action="store_true", help="the model's maps use per-map POS normalisation (train_rl --pos-norm)")
     ap.add_argument("--fp-rate", action="store_true", help="the model's camera channel carries the turn-rate factor (train_rl --fp-rate)")
     args = ap.parse_args()
     from rl_search.scripts.rl_eval.sarops_ref import DEFS
@@ -49,7 +51,8 @@ def main():
         | ({"area_sigma_off": args.area_sigma_off} if args.area_sigma_off else {}) \
         | ({"handover_km": args.handover_km} if args.handover_km else {}) | ({"edge_mode": "none", "off_map_zero": True} if args.no_edge else {}) \
         | ({"area_img_min": args.area_img_min} if args.area_img_min else {}) | ({"big_map_m": args.big_map_km*1000.0} if args.big_map_km else {}) \
-        | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {})
+        | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {}) \
+        | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {})
     from rl_search.rl_real import preload
     from rl_search.rl_real_eval import eval_job, sarops_refs
     preload("amboy")
