@@ -45,7 +45,7 @@ def make_env(stage: int, seed: int, settings: dict | None = None, straight_bonus
         cfg = RealRLConfig(stage=stage, settings=dict(settings or {}), straight_bonus=straight_bonus, roll_reversal_cost=roll_cost,
                            roll_reversal_deg=roll_deg, diverse=diverse, pool=pool, mask_cost=mask_cost, straight_on_raw=straight_raw,
                            multi=multi, type_weights=type_weights)
-        return Monitor(make_gym(cfg, seed=seed), info_keywords=("A", "POS", "total", "bonus", "roll_rev", "mask_cut", "stage", "typ"))
+        return Monitor(make_gym(cfg, seed=seed), info_keywords=("A", "POS", "total", "bonus", "roll_rev", "mask_cut", "stage", "typ", "look"))
     return f
 
 
@@ -124,6 +124,11 @@ def main():
                     help="reward and score a_weight x A + w x POS; 0 = A off (reward POS only, no A channel or A state; A still reported)")
     ap.add_argument("--pos-norm", action="store_true",
                     help="each map's POS channels divided by its largest cell (log, floor 3 particles at the mean weight), scales in the vector")
+    ap.add_argument("--look-w", type=float, default=0.0,
+                    help="look reward (A'): this x particles seen per pass / n, every pass again (image centre, gentle turn); training only")
+    ap.add_argument("--type-fixed", default="", help="fixed shares of typed training, e.g. desert=0.5; the other types adapt in the rest")
+    ap.add_argument("--use-sde", action="store_true", help="state-dependent exploration (gSDE): smooth noise kept for --sde-freq decisions")
+    ap.add_argument("--sde-freq", type=int, default=8, help="decisions between new gSDE noise draws (8 = 40 s)")
     ap.add_argument("--fp-rate", action="store_true",
                     help="the 1.6 km map's camera channel is multiplied by the detection's turn-rate factor at the current roll")
     ap.add_argument("--area-roll-max", type=float, default=20.0, help="realtime_t (A4t): roll limit (deg) for a searched cell")
@@ -131,7 +136,15 @@ def main():
     ap.add_argument("--mask-cost", type=float, default=0.0, help="reward taken per unit the edge mask cuts off the action (training only)")
     ap.add_argument("--straight-raw", action="store_true", help="straight bonus from the policy's own action, not the masked one")
     ap.add_argument("--diverse", action="store_true", help="diverse training scenarios and stage 3 starts (rl_eval_set.DIVERSE)")
-    ap.add_argument("--eval-split", default="val", choices=("val", "dval", "mval"), help="validation set of the periodic evaluation")
+    ap.add_argument("--eval-split", default="val", choices=("val", "dval", "mval", "nval"),
+                    help="validation set of the periodic evaluation (nval: the mval cases with targets that never stop, for --no-stop)")
+    ap.add_argument("--no-stop", action="store_true",
+                    help="R10 (user 2026-11-14): typed targets that never stop and keep a steady speed of their own (rl_eval_set.NOSTOP); "
+                         "pool rl_pool_multi_ns (make_pool --multi --no-stop --no-area), validate on nval")
+    ap.add_argument("--no-area", action="store_true", help="no A at all in the env, not even for the report (needs --a-weight 0)")
+    ap.add_argument("--obs-r10", action="store_true",
+                    help="R10 map channels: particle positions now and after the lead (unweighted), POS now normalised per map and absolute, "
+                         "visibility, camera on the 1.6 km map (rl_real.RealRLEnv.observation, needs --a-weight 0)")
     ap.add_argument("--multi", action="store_true",
                     help="typed training scenarios (road / mixed / desert, rl_eval_set.MULTI, R5): equal shares first; after each evaluation on "
                          "mval the type furthest behind SAROPS gets 0.05 more share (0.2-0.5), written to <run>/type_weights.json")
@@ -158,13 +171,17 @@ def main():
         | ({"handover_km": args.handover_km} if args.handover_km else {}) | ({"edge_mode": "none", "off_map_zero": True} if args.no_edge else {}) \
         | ({"area_img_min": args.area_img_min} if args.area_img_min else {}) | ({"big_map_m": args.big_map_km*1000.0} if args.big_map_km else {}) \
         | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {}) \
-        | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {})
+        | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {}) \
+        | ({"look_w": args.look_w} if args.look_w else {}) | ({"no_stop": True} if args.no_stop else {}) \
+        | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {})
     if args.multi:
         from pathlib import Path as _P
         from rl_search.rl_real import pool_dir_multi
         if not any(_P(pool_dir_multi(area_over)).glob("*_s*.pkl")):
             raise SystemExit(f"no pool at {pool_dir_multi(area_over)}: build it with make_pool --multi"
-                             + (f" --area-sigma-off {args.area_sigma_off:g}" if args.area_sigma_off else ""))
+                             + (" --no-stop --no-area" if args.no_stop else f" --area-sigma-off {args.area_sigma_off:g}" if args.area_sigma_off else ""))
+    if args.no_stop and args.eval_split != "nval":
+        raise SystemExit("--no-stop trains on targets that never stop: validate on them too (--eval-split nval)")
 
     from rl_search.rl_real_eval import eval_job
     pool = get_context("fork").Pool(args.eval_workers)          # forked before the env workers and before CUDA is touched
@@ -172,7 +189,10 @@ def main():
     tw_path = out/"type_weights.json"
     if args.multi:
         from rl_search.rl_eval_set import MULTI
-        state.setdefault("type_weights", {t: 1/len(MULTI["types"]) for t in MULTI["types"]})
+        fixed = {k: float(v) for k, v in (kv.split("=") for kv in args.type_fixed.split(",") if kv)}     # e.g. desert=0.5 (user 2026-11-13)
+        rest = [t for t in MULTI["types"] if t not in fixed]
+        state.setdefault("type_weights", {t: fixed.get(t, (1 - sum(fixed.values()))/max(len(rest), 1)) for t in MULTI["types"]})
+        state["type_fixed"] = fixed
         tw_path.write_text(json.dumps(state["type_weights"]))
     env_fns = [make_env(state["stage"], args.seed*1000 + i, area_over, args.straight_bonus, args.roll_reversal_cost,
                         args.roll_reversal_deg, args.diverse, args.mask_cost, args.straight_raw, args.multi,
@@ -221,7 +241,7 @@ def main():
         model = PPO("MultiInputPolicy", venv, learning_rate=args.lr, n_steps=args.n_steps, batch_size=args.batch_size, n_epochs=args.n_epochs,
                     gamma=args.gamma, gae_lambda=args.gae_lambda, clip_range=args.clip, ent_coef=args.ent_coef, vf_coef=args.vf_coef,
                     max_grad_norm=args.max_grad_norm, target_kl=args.target_kl, policy_kwargs=pk, tensorboard_log=str(out/"tb"),
-                    seed=args.seed, device=device, verbose=1)
+                    seed=args.seed, device=device, verbose=1, use_sde=args.use_sde, sde_sample_freq=args.sde_freq if args.use_sde else -1)
         if args.value_init != "none":
             v0 = random_value_init(venv, args.gamma, 800, np.random.default_rng(args.seed)) if args.value_init == "auto" else float(args.value_init)
             with torch.no_grad():
@@ -242,7 +262,7 @@ def main():
 
         def _on_rollout_end(self):
             eps = list(self.model.ep_info_buffer)
-            for key in ("A", "POS", "total", "bonus", "roll_rev", "mask_cut"):
+            for key in ("A", "POS", "total", "bonus", "roll_rev", "mask_cut", "look"):
                 vals = [e[key] for e in eps if key in e]
                 if vals:
                     self.logger.record(f"episode/{key}", float(np.mean(vals)))
@@ -342,12 +362,15 @@ def main():
             recent = [h["type_ratio"] for h in hist[-2:] if "type_ratio" in h]
             sm = {t: float(np.mean([r[t] for r in recent if t in r])) for t in per}
             w = dict(state["type_weights"])
-            if len(hist) >= 3 and len(sm) == len(types):
-                worst = min(sm, key=sm.get)
-                donors = [t for t in types if t != worst and w[t] > 0.2 + 1e-9]   # (fix 11-12: a type at the 0.2 floor no longer blocks the move)
+            fixed = state.get("type_fixed", {})                 # --type-fixed: those shares stay, the others adapt in the rest
+            free = [t for t in types if t not in fixed]
+            cap = min(0.5, 1 - sum(fixed.values()) - 0.2*(len(free) - 1))
+            if len(hist) >= 3 and len(sm) == len(types) and len(free) > 1:
+                worst = min(free, key=sm.get)
+                donors = [t for t in free if t != worst and w[t] > 0.2 + 1e-9]   # (fix 11-12: a type at the 0.2 floor no longer blocks the move)
                 best = max(donors, key=sm.get) if donors else None
                 if best is not None and sm[best] - sm[worst] > 0.02:
-                    up = min(0.05, 0.5 - w[worst], w[best] - 0.2)
+                    up = min(0.05, cap - w[worst], w[best] - 0.2)
                     if up > 0:
                         w[worst] += up; w[best] -= up
             state["type_weights"] = w

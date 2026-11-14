@@ -49,7 +49,10 @@ POOL_DIR_MULTI = "rl_search/data/real/amboy/rl_pool_multi"      # typed scenario
 
 def pool_dir_multi(settings: dict | None = None) -> str:
     """Typed pool of these settings: the same scenarios with the region of the off-road sigma (``<POOL_DIR_MULTI>_o150``) when it is set,
-    so a running training on the plain pool is never handed regions of another definition."""
+    so a running training on the plain pool is never handed regions of another definition. ``no_stop`` (R10): targets that never stop,
+    scenarios only (no A region), ``<POOL_DIR_MULTI>_ns``."""
+    if (settings or {}).get("no_stop"):
+        return POOL_DIR_MULTI + "_ns"
     off = float((settings or {}).get("area_sigma_off") or 0.0)
     return POOL_DIR_MULTI + (f"_o{off:g}" if off else "")
 N_REF = 5000                       # particle units are scaled to this many particles
@@ -124,7 +127,17 @@ class RealRLEnv:
         self.env = team_env(self.s, cfg.region, self.terr, seed, area=True)        # the SAROPS reference env (AreaEnv)
         # reward and score a_weight x A + w x POS; a_weight 0 (user 2026-11-13): A off, reward POS only (A is still measured and reported)
         self.env.pos_w, self.env.area_w = float(self.s["area_w"]), float(self.s.get("a_weight", 1.0))
+        # look reward (A', user 2026-11-13): look_w x (particles seen per pass / n), every pass again, training only (not in the score);
+        # a particle is seen in the image centre (factor >= 0.75) while the turn is no faster than at the A roll limit (5 deg: 1.49 deg/s)
+        self.look_w = float(self.s.get("look_w", 0.0) or 0.0)
+        self.env.look_on = self.look_w > 0
+        self.env.look_img_min = 0.75
+        self.env.look_rate_max = float(np.degrees(9.80665*np.tan(np.radians(float(self.s.get("area_roll_max", 5.0))))/self.env.v))
         self.env._obs = lambda: None          # this instance only: skip the legacy maps that RLSearchEnv.reset builds (40-80 ms, unused here)
+        # no_area (R10, user 2026-11-14): no A at all, not even for the report (A is off in the reward since R8); the pool has no regions
+        self.no_area = bool(self.s.get("no_area"))
+        if self.no_area and float(self.s.get("a_weight", 1.0)) != 0.0:
+            raise ValueError("no_area needs a_weight 0")
         vc = vehicle_config()
         if cfg.particles is not None:
             vc = replace(vc, particles=int(cfg.particles))
@@ -212,6 +225,9 @@ class RealRLEnv:
             with open(files[int(self.rng.integers(len(files)))], "rb") as f:
                 d = pickle.load(f)
             scen = d["scen"]
+            if self.no_area:
+                self._area_cache = {}
+                return scen
             a = d.get({"seen": "seen", "realtime": "realtime", "realtime_q": "realtime", "realtime_t": "realtime"}.get(self.area_def, "area"))
             if isinstance(a, RealtimeArea):
                 self._rt_mode(a)
@@ -225,7 +241,7 @@ class RealRLEnv:
         seed = self.cfg.seed_base + int(self.rng.integers(0, 10**9))
         if self.cfg.multi:
             from rl_search.rl_eval_set import multi_training_scenario
-            return multi_training_scenario(self.vs, seed, self._typ)[0]
+            return multi_training_scenario(self.vs, seed, self._typ, nostop=bool(self.s.get("no_stop")))[0]
         if self.cfg.diverse:
             from rl_search.rl_eval_set import diverse_training_scenario
             return diverse_training_scenario(self.vs, seed)[0]
@@ -253,6 +269,8 @@ class RealRLEnv:
         a.img_min = float(self.s.get("area_img_min", 0.0) or 0.0)      # image-position gate of a searched cell (user 2026-11-12)
 
     def _area_score(self, scen):
+        if self.no_area:
+            return None
         key = id(scen.track)                                    # stage 3 starts replace the scenario but keep its track
         if key not in self._area_cache:
             if self.seen_mode:
@@ -313,7 +331,7 @@ class RealRLEnv:
         self.start_stage = int(options.get("stage", 3))
         self.start_info = options.get("start_info", {})
         self.steps = 0
-        self.A_cum = self.pos_cum = self.bonus_cum = self.mask_cum = 0.0
+        self.A_cum = self.pos_cum = self.bonus_cum = self.mask_cum = self.look_cum = 0.0
         self.roll_rev = 0
         phi = float(env.plant.phi) if hasattr(env.plant, "phi") else 0.0
         th = np.radians(self.cfg.roll_reversal_deg)
@@ -369,6 +387,8 @@ class RealRLEnv:
         d_total = float(info["dpos"])                          # AreaEnv: pos_w POS + area_w A of this step
         d_pos = (d_total - env.area_w*d_area)/env.pos_w
         self.A_cum += d_area
+        d_look = float(getattr(env, "_look_gain", 0.0)) if self.look_w else 0.0
+        self.look_cum += d_look
         self.pos_cum += d_pos
         self.steps += 1
         truncated = bool(not terminated and self.cfg.max_steps is not None and self.steps >= self.cfg.max_steps)
@@ -378,7 +398,7 @@ class RealRLEnv:
         self.bonus_cum += bonus
         n_rev = self._count_reversals(getattr(env, "last_samples", None))
         self.roll_rev += n_rev
-        reward = self.cfg.reward_scale*d_total + bonus - self.cfg.roll_reversal_cost*n_rev - self.cfg.mask_cost*cut
+        reward = self.cfg.reward_scale*(d_total + self.look_w*d_look) + bonus - self.cfg.roll_reversal_cost*n_rev - self.cfg.mask_cost*cut
         return reward, bool(terminated), truncated, self._info(d_area, d_pos, info["shield"])
 
     def _count_reversals(self, samples) -> int:
@@ -397,7 +417,7 @@ class RealRLEnv:
 
     def _info(self, d_area, d_pos, shield) -> dict:
         env = self.env
-        return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=env.area_w*self.A_cum + env.pos_w*self.pos_cum,
+        return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=env.area_w*self.A_cum + env.pos_w*self.pos_cum, look=self.look_cum,
                     bonus=self.bonus_cum, roll_rev=self.roll_rev, mask_cut=self.mask_cum, shield=bool(shield), energy_left=env.energy, stage=self.start_stage, steps=self.steps,
                     typ=getattr(self, "_typ", ""))
 
@@ -457,7 +477,10 @@ class RealRLEnv:
         val_now = w*det.visibility(P[:, 0], P[:, 1])*unit
         seen = isinstance(self._area, SeenArea)
         rt = isinstance(self._area, RealtimeArea)
-        if seen:                                              # what seeing each unseen particle now adds to A, at the particle
+        a_off = float(self.s.get("a_weight", 1.0)) == 0.0          # A off: no A channel, so no A cells to bin either
+        if a_off:
+            a_xy, a_val = np.zeros((0, 2)), np.zeros(0)
+        elif seen:                                            # what seeing each unseen particle now adds to A, at the particle
             v = self._area.value_now(t)
             m = (v > 0) & b.active(t)
             a_xy, a_val = b.positions(t)[m], v[m]
@@ -478,21 +501,41 @@ class RealRLEnv:
         # stray particles do not become the brightest cell), and log(1 + divisor) of every map goes to the vector (how much is there)
         norm = bool(self.s.get("pos_norm"))
         floor = 3.0*float(w.mean())*unit if len(w) else 1.0
-        a_off = float(self.s.get("a_weight", 1.0)) == 0.0          # A off: no A channel
+        # obs_r10 (user 2026-11-14): where the particles are (now and after the map's lead, unweighted) apart from how much is left (POS
+        # now, map-normalised and absolute). Particle units: one particle = 1 at N_REF particles (no POS weight); the absolute channels are
+        # divided by the fixed log(1 + N_REF) (1 = every particle in one cell), so the positions and the absolute POS share one scale and a
+        # cell not yet searched (and fully visible) reads the same in both
+        r10 = bool(self.s.get("obs_r10"))
+        if r10:
+            cu = N_REF/b.n
+            act = b.active(t)
+            P_all = b.positions(t)[act]
+            v_abs = val_now/env.pos_w
+            floor_abs = 3.0*float(w.mean())*cu if len(w) else 1.0
+            ln_ref = float(np.log1p(N_REF))
         scales = []
         c, s = np.cos(yaw), np.sin(yaw)
         obs = {}
         for k, (name, side, lead) in enumerate(cfg.maps):
-            now = self._bin(P, val_now, k)
-            fut = live & b.active(t + lead)
-            Pf = b.positions(t + lead)[fut]
-            pred = self._bin(Pf, b.w[fut]*det.visibility(Pf[:, 0], Pf[:, 1])*unit, k)
-            if norm:
-                ln = float(np.log1p(max(float(now.max()), float(pred.max()), floor)))
+            if r10:
+                cnt = self._bin(P_all, np.full(len(P_all), cu), k)
+                Pl = b.positions(t + lead)[b.active(t + lead)]
+                cnt_l = self._bin(Pl, np.full(len(Pl), cu), k)
+                now = self._bin(P, v_abs, k)
+                ln = float(np.log1p(max(float(now.max()), floor_abs)))
                 scales.append(ln)
-                ch = [np.log1p(now)/ln, np.log1p(pred)/ln]
+                ch = [np.log1p(cnt)/ln_ref, np.log1p(cnt_l)/ln_ref, np.log1p(now)/ln, np.log1p(now)/ln_ref]
             else:
-                ch = [np.log1p(now), np.log1p(pred)]
+                now = self._bin(P, val_now, k)
+                fut = live & b.active(t + lead)
+                Pf = b.positions(t + lead)[fut]
+                pred = self._bin(Pf, b.w[fut]*det.visibility(Pf[:, 0], Pf[:, 1])*unit, k)
+                if norm:
+                    ln = float(np.log1p(max(float(now.max()), float(pred.max()), floor)))
+                    scales.append(ln)
+                    ch = [np.log1p(now)/ln, np.log1p(pred)/ln]
+                else:
+                    ch = [np.log1p(now), np.log1p(pred)]
             fwd, right = self.offsets[k]
             wx, wy = x + fwd*c + right*s, y + fwd*s - right*c
             if a_off:
@@ -513,10 +556,10 @@ class RealRLEnv:
             ch.append(vis)
             if k == 0:
                 ch.append(self.footprint*fp_q)
-            if rel_unit is not None and not norm:             # last channel: remaining POS now as a share of the remaining belief
+            if rel_unit is not None and not norm and not r10:  # last channel: remaining POS now as a share of the remaining belief
                 ch.append(np.log1p(self._bin(P, val_now/unit*rel_unit, k)))
             obs[name] = np.stack(ch).astype(np.float32)
-        obs["vec"] = self.vector(scales if norm else None)
+        obs["vec"] = self.vector(scales if (norm or r10) else None)
         return obs
 
     def vector(self, scales=None) -> np.ndarray:
@@ -540,6 +583,10 @@ def obs_layout(s: dict, maps=MAPS) -> tuple[dict, int]:
     """Channels per map and vector length for the settings ``s``: 1.6 km map 5 (POS now, POS ahead, A, visibility, camera), others 4;
     A off (a_weight 0) drops the A channel, rel_maps adds one (not with pos_norm), pos_norm adds one vector entry per map."""
     a_off = float(s.get("a_weight", 1.0)) == 0.0
+    if s.get("obs_r10"):              # R10: positions now / ahead, POS now normalised / absolute, visibility (+ camera on the 1.6 km map)
+        if not a_off:
+            raise ValueError("obs_r10 has no A channel: needs a_weight 0")
+        return {name: (6 if k == 0 else 5) for k, (name, _, _) in enumerate(maps)}, len(VEC_NAMES) + len(maps)
     extra = 1 if (s.get("rel_maps") and not s.get("pos_norm")) else 0
     ch = {name: (5 if k == 0 else 4) - (1 if a_off else 0) + extra for k, (name, _, _) in enumerate(maps)}
     return ch, len(VEC_NAMES) + (len(maps) if s.get("pos_norm") else 0)

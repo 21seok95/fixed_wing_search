@@ -42,7 +42,8 @@ def settings_of(c: dict) -> dict:
         | ({"area_img_min": float(c["area_img_min"])} if c.get("area_img_min") else {}) \
         | ({"big_map_m": float(c["big_map_km"])*1000.0} if c.get("big_map_km") else {}) | ({"rel_maps": True} if c.get("rel_maps") else {}) \
         | ({"fp_rate": True} if c.get("fp_rate") else {}) | ({"a_weight": float(c["a_weight"])} if c.get("a_weight") is not None and float(c["a_weight"]) != 1.0 else {}) \
-        | ({"pos_norm": True} if c.get("pos_norm") else {})
+        | ({"pos_norm": True} if c.get("pos_norm") else {}) | ({"no_area": True} if c.get("no_area") else {}) \
+        | ({"obs_r10": True} if c.get("obs_r10") else {}) | ({"no_stop": True} if c.get("no_stop") else {})
 
 
 def fly(job) -> dict:

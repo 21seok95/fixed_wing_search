@@ -21,7 +21,8 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter
 
 REGION = "amboy"
 EVAL_DIR = Path("rl_search/data/real")/REGION/"rl_eval"
-SEED_BASE = {"val": 70000, "test": 80000, "dval": 90000, "dtest": 95000, "mval": 100000, "mtest": 110000}
+SEED_BASE = {"val": 70000, "test": 80000, "dval": 90000, "dtest": 95000, "mval": 100000, "mtest": 110000,
+             "nval": 100000, "ntest": 110000}     # nval / ntest: the mval / mtest cases with targets that never stop (NOSTOP)
 # Diverse cases (user, 2026-11-11; docs/rl_experiments.md): per case a random target model, a wider LKP area, a launch delay and a farther
 # launch, so the particles are spread by hand-over and the policy also meets flights where POS cannot be collected early.
 DIVERSE = dict(lkp_half_m=15000.0, p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0), fast_kmh=(20.0, 50.0), delay_s=(0.0, 1200.0),
@@ -38,8 +39,25 @@ MULTI_TYPES = dict(road=dict(p_leave_min=(0.0, 0.0), p_return_min=(1.0, 1.0)),
                    mixed=dict(p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0)),
                    desert=dict(p_leave_min=(0.05, 0.3), p_return_min=(0.0, 0.1), off_kmh=(10.0, 25.0)))
 TYPE_NAMES = dict(road="도로형", mixed="혼합형", desert="사막형")
-MULTI_SPLITS = ("mval", "mtest")
-MULTI_N = dict(mval=15, mtest=30)           # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
+MULTI_SPLITS = ("mval", "mtest", "nval", "ntest")
+MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30)   # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
+# Targets that never stop (R10, user 2026-11-14): no stops, and each particle drives at its own steady speed: a driver factor z (one per
+# particle, rl_search.vehicle) puts it at mean x (1 + 0.15 z) in every state (fast road, slow road, off road), kept within mean x (1 +- 0.3).
+# nval / ntest are the mval / mtest cases (same seeds, types, LKP, launch) with these targets; the training pool is rl_pool_multi_ns.
+NOSTOP = dict(std_frac=0.15, band=0.3)
+NOSTOP_SPLITS = ("nval", "ntest")
+SPLIT_NAMES = dict(nval="정지 없음 ", ntest="정지 없음 ")
+
+
+def nostop_vc(vc: dict) -> dict:
+    """Changes of a typed target model (multi_vc) for targets that never stop and keep a steady speed of their own (NOSTOP)."""
+    base = vehicle_config()
+    f, band = NOSTOP["std_frac"], NOSTOP["band"]
+    fast = float(vc.get("fast_kmh", base.fast_kmh))
+    slow = float(vc.get("slow_kmh", base.slow_kmh))
+    off = float(vc.get("off_kmh", base.off_kmh))
+    return vc | dict(p_stop_min=0.0, fast_std_kmh=f*fast, slow_std_kmh=f*slow, off_std_kmh=f*off, speed_band=band,
+                     speed_cap_kmh=(1 + band)*fast)
 FLIGHT_S = 3600.0
 HOLDOUT = 1_000_000
 CENTER_HALF_M = 1500.0
@@ -70,7 +88,7 @@ class Case:
     @property
     def label(self) -> str:
         d = f"{TYPE_NAMES.get(self.typ, '유형별')} " if self.split in MULTI_SPLITS else ("다양 " if self.split.startswith("d") else "")
-        return f"{d}{'검증' if self.split in ('val', 'dval', 'mval') else '시험'} {self.stage}단계 · 시나리오 {self.k + 1}"
+        return f"{SPLIT_NAMES.get(self.split, '')}{d}{'검증' if self.split.endswith('val') else '시험'} {self.stage}단계 · 시나리오 {self.k + 1}"
 
     def options(self, scen) -> dict:
         if self.stage in (1, 2):
@@ -286,6 +304,8 @@ def make_multi_case(vs, split: str, stage: int, k: int, seed: int, rng):
         s = seed + 10_000_000*attempt
         rng = rng if attempt == 0 else np.random.default_rng(s)
         vc = multi_vc(rng, typ)
+        if split in NOSTOP_SPLITS:                            # no random draws: the case keeps its LKP, heading, launch and start
+            vc = nostop_vc(vc)
         lkp = diverse_lkp(vs.net, rng)
         heading = float(rng.uniform(0.0, 360.0))
         half = float(vs.net.terr.axis[-1])
@@ -303,8 +323,9 @@ def make_multi_case(vs, split: str, stage: int, k: int, seed: int, rng):
     return case, scen, vres, hold
 
 
-def multi_training_scenario(vs, seed: int, typ: str):
-    """Training scenario of one type with the typed rules (own seeds): (scenario, its target model changes)."""
+def multi_training_scenario(vs, seed: int, typ: str, nostop: bool = False):
+    """Training scenario of one type with the typed rules (own seeds): (scenario, its target model changes). ``nostop``: targets that
+    never stop (NOSTOP, R10)."""
     from dataclasses import replace
     from rl_search.real_scenario import VehicleScenarios
     t_end = MULTI["delay_s"][1] + FLIGHT_S                    # the latest launch: the start of each episode is drawn later
@@ -312,6 +333,8 @@ def multi_training_scenario(vs, seed: int, typ: str):
         s = seed + 10_000_000*attempt
         rng = np.random.default_rng(s)
         vc = multi_vc(rng, typ)
+        if nostop:
+            vc = nostop_vc(vc)
         lkp = diverse_lkp(vs.net, rng)
         heading = float(rng.uniform(0.0, 360.0))
         vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=REGION, net=vs.net)

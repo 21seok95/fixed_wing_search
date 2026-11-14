@@ -6,8 +6,8 @@ Run from the repository root, then open the printed address in a browser:
 
 Only the Python standard library is used for the server, and the page (vehicle_web.html) draws with plain
 canvas code, so nothing is fetched from the internet. The simulation is rl_search.vehicle, unchanged; the
-browser only draws and plays back what the server returns. Search runs (SAROPS, web_optimize.py) go through a queue,
-each in its own process; finished runs are saved in rl_search/data/real/chungju/web_runs/ and can be replayed later. Settings are saved to the same file as the
+browser only draws and plays back what the server returns. Search runs (SAROPS, web_optimize.py) and RL policy flights (a trained
+checkpoint on the page's scenario, Amboy only, web_rl.py) go through a queue, each in its own process; finished runs are saved in rl_search/data/real/chungju/web_runs/ and can be replayed later. Settings are saved to the same file as the
 matplotlib tuner (rl_search/data/real/vehicle_params.json). The server listens on 127.0.0.1 only.
 """
 from __future__ import annotations
@@ -34,6 +34,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from rl_search.real_terrain import DATA, REGIONS
+from rl_search.scripts.real_map import web_rl
 from rl_search.scripts.real_map.web_optimize import AREA_DEFS, CAPS, FIELDS, SCORE_GROUP, SCORES, particles_payload, worker
 from rl_search.scripts.real_map.vehicle_tuner import DEFAULT_LKP, GROUPS, PARAMS, STATE_COLORS, load_settings, map_image
 from rl_search.real_scenario import chungju_preset
@@ -63,8 +64,9 @@ def save_run(rid: str, data: dict, meta: dict) -> None:
 
 
 class Jobs:
-    """Queue of SAROPS runs, each in its own process (about 1.5 GB, 1-3 min), at most ``max_jobs`` at once. A finished run is
-    saved under RUNS (run.json.gz = particles + flight for replay, meta.json = what the list shows) and survives a restart."""
+    """Queue of SAROPS runs and RL policy flights (``params["kind"] == "rl"``, web_rl.py), each in its own process (about 1.5 GB,
+    1-3 min), at most ``max_jobs`` at once. A finished run is saved under RUNS (run.json.gz = particles + flight for replay,
+    meta.json = what the list shows) and survives a restart."""
 
     def __init__(self, max_jobs: int):
         self.ctx, self.max = mp.get_context("spawn"), max_jobs
@@ -93,7 +95,8 @@ class Jobs:
                     break
                 if j["state"] == "queued":
                     q = self.ctx.Queue()
-                    j["proc"], j["t0"], j["state"] = self.ctx.Process(target=worker, args=(j["params"], q), daemon=True), time.time(), "running"
+                    target = web_rl.worker if j["params"].get("kind") == "rl" else worker
+                    j["proc"], j["t0"], j["state"] = self.ctx.Process(target=target, args=(j["params"], q), daemon=True), time.time(), "running"
                     j["proc"].start()
                     threading.Thread(target=self._pump, args=(j, j["proc"], q), daemon=True).start()
                     running += 1
@@ -123,7 +126,8 @@ class Jobs:
                 return
 
     def _save(self, j, data):
-        meta = run_meta(data["opt"], j["id"], j["label"], j["created"], j["params"]["view"], j["params"]["config"], group="web")
+        extra = data.pop("meta_extra", {})                   # RL flights: method, hold-out score, model, launch time
+        meta = run_meta(data["opt"], j["id"], j["label"], j["created"], j["params"]["view"], j["params"]["config"], group="web", **extra)
         save_run(j["id"], data, meta)
         with self.lock:
             for k in ("params", "proc", "t0", "stage", "t_min"):
@@ -271,7 +275,8 @@ class App:
         return particles_payload(res, cfg, view["heading"], auto, sim_s)
 
     def submit(self, d: dict):
-        """Queue runs: ``n_seeds`` particle seeds from the seed on the page, with the same settings."""
+        """Queue runs: ``n_seeds`` particle seeds from the seed on the page, with the same settings. ``kind`` "rl": an RL checkpoint
+        (``model``, one of web_rl.rl_models()) flies instead of SAROPS, launching ``launch_min`` minutes after the report."""
         cfg, view = self.config_from(d)
         reg = self.region(view["region"])
         start = d.get("start")
@@ -281,10 +286,24 @@ class App:
                 raise ValueError("출발점이 지도 밖입니다")
         n = max(1, int(d.get("n_seeds", 1)))
         name = (d.get("label") or "").strip() or f"{reg.name} · LKP {view['lkp'][0]/1000:.1f}, {view['lkp'][1]/1000:.1f} km"
+        rl = d.get("kind") == "rl"
+        if rl:
+            if view["region"] != web_rl.RL_REGION:
+                raise ValueError("RL 모델은 암보이 지도에서만 학습했습니다. 지도를 암보이로 바꾸세요")
+            models = {m["path"]: m for m in web_rl.rl_models()}
+            if d.get("model") not in models:
+                raise ValueError("RL 모델을 찾을 수 없습니다")
+            launch = float(d.get("launch_min", 0) or 0)
+            if not 0 <= launch <= 60:
+                raise ValueError("이륙 시각은 보고 후 0~60분입니다")
+            name += f" · RL {web_rl.model_label(Path(d['model']))} · 이륙 {launch:g}분"
         items = []
         for i in range(n):
             v = {**view, "seed": view["seed"] + i, "start": start}
-            items.append(dict(label=f"{name} · seed {v['seed']}", params=dict(config=asdict(cfg), view=v, opt=d.get("opt", {}))))
+            params = dict(config=asdict(cfg), view=v, opt=d.get("opt", {}))
+            if rl:
+                params |= dict(kind="rl", model=d["model"], launch_min=launch)
+            items.append(dict(label=f"{name} · seed {v['seed']}", params=params))
         return self.jobs.submit(items)
 
     def share(self, d: dict):
@@ -339,6 +358,8 @@ def make_handler(app: App):
                 self.send_json(app.meta())
             elif self.path == "/api/jobs":
                 self.send_json(app.jobs.list())
+            elif self.path == "/api/rl_models":
+                self.send_json({"models": web_rl.rl_models(), "region": web_rl.RL_REGION})
             elif self.path.startswith("/api/jobs/"):
                 try:
                     body = app.jobs.path(self.path.split("/")[3]).read_bytes()

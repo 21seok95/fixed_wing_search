@@ -52,6 +52,7 @@ class VehicleConfig:
     slow_std_kmh: float = 5.0
     off_kmh: float = 12.0
     off_std_kmh: float = 4.0
+    speed_band: float = 0.0            # > 0 (R10, user 2026-11-14): each state's speed stays within its mean x (1 +- band)
     # rates per minute
     p_leave_fast_min: float = 0.05     # fast road -> off-road (only where the roadside is open land)
     p_leave_slow_min: float = 0.05     # slow road -> off-road
@@ -386,7 +387,10 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
         v = np.zeros(n)
         for m in (FAST, SLOW, OFF):
             k = moving & (mode == m)
-            v[k] = np.clip(mean[m] + std[m]*driver[k], 0.8*KMH*3, cap)
+            lo, hi = 0.8*KMH*3, cap
+            if cfg.speed_band > 0:                       # the driver factor keeps a particle at the same place in every state's band
+                lo, hi = max(lo, mean[m]*(1 - cfg.speed_band)), min(hi, mean[m]*(1 + cfg.speed_band))
+            v[k] = np.clip(mean[m] + std[m]*driver[k], lo, hi)
 
         # ---------------- on the road: leave?
         road = moving & (mode != OFF)

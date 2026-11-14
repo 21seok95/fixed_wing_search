@@ -8,6 +8,9 @@ section too. The RL redesign agreed with the user item by item (MDP, model, trai
 `docs/rl_mdp_design.md`; its last section says how to continue on the Ubuntu PC. Every RL experiment (what changed, why, result, next
 decision) is logged in `docs/rl_experiments.md`, with names for the A definitions and reward versions; update it whenever a run starts or ends.
 
+**On the Ubuntu PC**, the next run (R10: targets that never stop, new map channels, no A) is set up in `docs/r10_ubuntu.md`: read it
+first. It holds the reasons, the decisions, the commands in order with checks, and what to report.
+
 **On the local PC** (a machine with no connection to the main work environment, where R7 is trained), read `local_pc.md` first: it
 holds the background, what R7 changes and why, the working rules agreed with the user, the order of work with checks, and what to
 leave behind. The commands are in `docs/run_on_pc.md`; results are packed into one zip with `scripts/rl_eval/export_run.py`.

@@ -625,7 +625,8 @@ class AreaEnv(TrackedEnv):
             team = self.area.team
             surv = self.surv if not team or len(team) < 2 else np.prod([e.surv for e in team], axis=0)
             self._area_gain += self.area.update(surv, float(ts[-1]))
-        return gain if self.area is None else self.pos_w*gain + self.area_w*self._area_gain
+        # no area (R10 trains without A, user 2026-11-14): pos_w x POS, as with an area whose gain is 0 (pos_w is 1 unless an RL env set it)
+        return self.pos_w*gain + self.area_w*self._area_gain
 
     def snapshot(self):
         s = super().snapshot()

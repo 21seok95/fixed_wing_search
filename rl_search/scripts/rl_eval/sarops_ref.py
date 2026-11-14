@@ -153,7 +153,7 @@ def run_job(job):
 def main():
     from rl_search.rl_eval_set import EVAL_DIR
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--split", default="val", choices=("val", "test", "dval", "dtest", "mval", "mtest"))
+    ap.add_argument("--split", default="val", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest"))
     ap.add_argument("--stages", type=int, nargs="*", default=[1, 2, 3])
     ap.add_argument("--cases", type=int, default=None, help="Cases per stage (default 5 for val, 30 for test)")
     ap.add_argument("--workers", type=int, default=5, help="Processes at once (each about 1.2 GB)")

@@ -155,6 +155,10 @@ class RLSearchEnv:
             self.passcap = PassCap(self.belief.n, self.detector.cfg)
             self.gimbal = None                            # created at the first sample with the UAV heading
             self.gimbal_target = None
+        # look reward (A', user 2026-11-13): a particle counts once per pass when it is in the image centre while the turn is gentle;
+        # the env only counts (unweighted, the movement model's particles), rl_real turns it into a small fixed reward
+        self.look_pass = np.zeros(self.belief.n, bool)
+        self._look_gain = 0.0
         self.seen[:] = False
         self.pos_cum = self.area_cum = 0.0
         self._zone_key = None
@@ -232,6 +236,7 @@ class RLSearchEnv:
             a, shield = self._geofence(a)
         self.a_applied = a                         # after the edge mask (rl_real's straight-flight bonus)
         self.chi_tgt = self.chi_tgt + a*self.turn
+        self._look_gain = 0.0                      # look reward count of this step (particles / n)
         out = self._interval()
         out["shield"] = shield
         self.k += 1
@@ -383,7 +388,16 @@ class RLSearchEnv:
                 p[near] = det.slice_pod(P[near, 0], P[near, 1], x, y, yaw, phi, max(abs(omega), float(los_rate[0])),
                                         frame=frame)
                 inside[near] = det.last_inside
+                if getattr(self, "look_on", False):        # look reward: image centre and a gentle turn, once per pass
+                    w_eff = max(abs(omega), float(los_rate[0]))
+                    if w_eff <= self.look_rate_max:
+                        hit = near[det.last_edge >= self.look_img_min]
+                        new = hit[~self.look_pass[hit]]
+                        self.look_pass[new] = True
+                        self._look_gain += len(new)/b.n
             b.w *= 1 - self.passcap.apply(p, inside)
+            if getattr(self, "look_on", False):            # out of every image for longer than the pass gap: the next entry is a new pass
+                self.look_pass[self.passcap.out > det.cfg.pass_gap_s] = False
             if self.sample_log is not None and self._nested == 0:
                 tg = self.gimbal_target if self.gimbal_target is not None else (np.nan, np.nan)
                 self.sample_log.append((t, x, y, yaw, phi, *frame[0][0], *frame[1][0], *frame[2][0], *tg))
@@ -447,6 +461,8 @@ class RLSearchEnv:
             s["oblique"] = (None if g is None else (g.los.copy(), g.gam.copy(), g.th.copy()),
                             self.passcap.acc.copy(), self.passcap.out.copy(), self.gimbal_target,
                             self.passcap.raw.copy())
+        if hasattr(self, "look_pass"):
+            s["look"] = (self.look_pass.copy(), self._look_gain)
         return s
 
     def restore(self, s: dict) -> None:
@@ -468,6 +484,8 @@ class RLSearchEnv:
                 self.gimbal.los, self.gimbal.gam, self.gimbal.th = gs[0].copy(), gs[1].copy(), gs[2].copy()
             self.passcap.acc[:], self.passcap.out[:], self.passcap.raw[:] = acc, out, raw
             self.gimbal_target = tgt
+        if "look" in s:
+            self.look_pass[:], self._look_gain = s["look"][0], s["look"][1]
 
     def preview(self, actions) -> float:
         """Probability that the action sequence would find from the current state (POS term only, map exits

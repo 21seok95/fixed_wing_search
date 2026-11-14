@@ -110,7 +110,7 @@
   .segs button { flex:1; border:0; border-radius:0; padding:5px 4px; }
   .segs button + button { border-left:1px solid var(--line); }
   .segs button.on { background:var(--accent); color:#fff; }
-  #submit { flex:1; padding:9px; }
+  #submit, #rlsubmit { flex:1; padding:9px; }
   #runname { flex:1; min-width:0; }
   .subtabs { display:flex; gap:4px; margin-bottom:8px; flex-wrap:wrap; }
   .subtabs button { padding:4px 10px; font-size:12px; }
@@ -213,7 +213,7 @@
       <div class="scroll">
         <div class="sec">
           <div class="head"><h2>탐색 계획</h2><button class="small" id="optdefaults">기본값으로</button></div>
-          <div class="ghelp">SAROPS가 무엇을 최대로 할지와 탐지·비행 조건을 정하고 실행합니다. 결과는 ③ 실행 목록에 쌓입니다.</div>
+          <div class="ghelp">SAROPS가 무엇을 최대로 할지와 탐지·비행 조건을 정하고 실행합니다. 맨 아래에서 같은 시나리오를 강화학습(RL) 모델로도 비행할 수 있습니다. 결과는 ③ 실행 목록에 쌓입니다.</div>
           <div id="optparams"></div>
         </div>
       </div>
@@ -223,6 +223,12 @@
           <label class="row" style="gap:4px">seed <select id="nseeds" title="seed를 하나씩 늘려 여러 시나리오를 함께 실행"><option>1</option><option>3</option><option>5</option><option>10</option></select>개</label>
         </div>
         <div class="row"><button class="primary" id="submit">탐색 계획 실행</button></div>
+        <div class="hint" style="margin:12px 0 4px">강화학습(RL) 정책으로 같은 시나리오를 비행합니다. 암보이 지도에서만 되고, 계획에 쓰지 않은 별도 particle로 채점합니다.</div>
+        <div class="row" style="gap:6px">
+          <select id="rlmodel" aria-label="RL 모델" style="flex:1; min-width:0"></select>
+          <label class="row" style="gap:4px" title="보고 후 몇 분 뒤에 이륙할지 (학습 범위 0~40분). SAROPS 실행은 항상 0분에 이륙합니다.">이륙 <input type="number" id="rllaunch" min="0" max="60" step="1" value="0" style="width:52px">분</label>
+        </div>
+        <div class="row" style="margin-top:6px"><button class="primary" id="rlsubmit">RL 비행 실행</button></div>
       </div>
     </div>
 
@@ -238,7 +244,7 @@
           <div class="filters">
             <select id="runfilter" aria-label="시험 종류">
             <option value="all">모든 종류</option><option value="web">웹에서 돌린 실행</option>
-            <option value="eval1">검증 1단계 (분포 근처 1~3 km)</option><option value="eval2">검증 2단계 (분포 밖 3~10 km)</option><option value="eval3">검증 3단계 (이륙)</option><option value="test3">시험 30개 (이륙)</option><option value="dval3">다양 검증 5개</option><option value="dtest3">다양 시험 30개</option><option value="mval3">유형별 검증 9개 (도로·혼합·사막)</option><option value="mtest3">유형별 시험 30개 (도로·혼합·사막)</option>
+            <option value="eval1">검증 1단계 (분포 근처 1~3 km)</option><option value="eval2">검증 2단계 (분포 밖 3~10 km)</option><option value="eval3">검증 3단계 (이륙)</option><option value="test3">시험 30개 (이륙)</option><option value="dval3">다양 검증 5개</option><option value="dtest3">다양 시험 30개</option><option value="mval3">유형별 검증 15개 (도로·혼합·사막)</option><option value="mtest3">유형별 시험 30개 (도로·혼합·사막)</option><option value="nval3">정지 없음 유형별 검증 15개 (R10)</option><option value="ntest3">정지 없음 유형별 시험 30개 (R10)</option>
             </select>
             <select id="runmethod" aria-label="방법"><option value="all">모든 방법</option><option value="sarops">SAROPS</option><option value="rl">RL</option><option value="web">웹 실행</option></select>
             <select id="runcond" aria-label="점수 조건"><option value="all">모든 점수 조건</option></select>
@@ -381,7 +387,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const V_UAV = 33, EXIT_STATE = 4;
 const TASK_COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#7A5195", "#B8860B", "#2F9FD8", "#A23B2A"];
 const taskColor = i => TASK_COLORS[i % TASK_COLORS.length];
-let META = null, RES = null, VALUES = {}, LKP = [0, 0], START = null, busy = false, pending = false;
+let META = null, RES = null, VALUES = {}, LKP = [0, 0], START = null, busy = false, pending = false, RL_REGION = "amboy";
 let frame = 0, simT = 0, playing = false, lastTs = 0, acc = 0, tab = "search", mode = "view", subtab = "";   // simT: shown time (s); frame: saved particle frame at or before it
 let OPT = null, viewing = null, JOBS = [], autoOpen = null, pollTimer = null, MAX_JOBS = 0;
 let REGION = "chungju", rectTouched = false;
@@ -1138,6 +1144,32 @@ async function submit() {
     showTab("runs"); refreshJobs();
   } catch (e) { status("실행을 넣지 못했습니다: " + e.message, true); }
 }
+async function loadRlModels() {
+  const sel = $("rlmodel");
+  try {
+    const d = await (await fetch("/api/rl_models")).json();
+    RL_REGION = d.region;
+    const runs = [...new Set(d.models.map(m => m.run))];        // one group per training run, newest run first
+    sel.innerHTML = d.models.length ? runs.map(r => `<optgroup label="${esc(r)}">` + d.models.filter(m => m.run === r)
+                                        .map(m => `<option value="${esc(m.path)}">${esc(m.label)}</option>`).join("") + `</optgroup>`).join("")
+                                    : `<option value="">학습된 RL 모델이 없습니다</option>`;
+  } catch (e) { sel.innerHTML = `<option value="">RL 모델 목록을 읽지 못했습니다</option>`; }
+  $("rlsubmit").disabled = !sel.value;
+}
+async function submitRL() {
+  if (!RES || !$("rlmodel").value) return;
+  if (REGION !== RL_REGION) { status("RL 모델은 암보이 지도에서만 학습했습니다. 지도를 암보이로 바꾸세요.", true); return; }
+  const n = Number($("nseeds").value);
+  const body = { ...payload(), start: START, kind: "rl", model: $("rlmodel").value, launch_min: Number($("rllaunch").value) || 0,
+                 n_seeds: n, label: $("runname").value };
+  try {
+    const r = await fetch("/api/jobs", { method: "POST", body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    autoOpen = n === 1 ? d.ids[0] : null;
+    showTab("runs"); refreshJobs();
+  } catch (e) { status("RL 비행을 넣지 못했습니다: " + e.message, true); }
+}
 async function refreshJobs() {
   clearTimeout(pollTimer);
   let d;
@@ -1155,10 +1187,11 @@ function kindMatch(j, f) {
   if (f === "all") return true;
   if (f === "web") return !j.group || j.group === "web";
   if (f.startsWith("test")) return j.group === "eval" && j.split === "test" && `test${j.stage}` === f;
-  if (/^(dval|dtest|mval|mtest)/.test(f)) return j.group === "eval" && `${j.split}${j.stage}` === f;
+  if (/^(dval|dtest|mval|mtest|nval|ntest)/.test(f)) return j.group === "eval" && `${j.split}${j.stage}` === f;
   return j.group === "eval" && (j.split || "val") === "val" && `eval${j.stage}` === f;
 }
-const methodType = j => !j.group || j.group !== "eval" ? "web" : ((j.method || "").startsWith("SAROPS") ? "sarops" : "rl");
+const methodType = j => (j.method || "").startsWith("RL") ? "rl"           // RL flights, from the validation scripts or the web
+  : !j.group || j.group !== "eval" ? "web" : ((j.method || "").startsWith("SAROPS") ? "sarops" : "rl");
 const METHOD_NAME = { sarops: "SAROPS", rl: "RL", web: "웹" };
 function refKeyOf(j) {
   if (j.holdout && j.holdout.ref_key) return j.holdout.ref_key;
@@ -1212,7 +1245,8 @@ function renderJobs() {
   shown.forEach(j => {
     const el = document.createElement("div"); el.className = "job" + (viewing === j.id ? " viewing" : "");
     let sub;
-    if (j.state === "done" && j.group === "eval" && j.holdout) sub = `별도 particle 점수 ${j.holdout.total.toFixed(3)} (POS ${j.holdout.pos.toFixed(3)} · A ${j.holdout.A.toFixed(3)}) · ${condLabel(refKeyOf(j))}`;
+    if (j.state === "done" && j.holdout) sub = `별도 particle 점수 ${j.holdout.total.toFixed(3)} (POS ${j.holdout.pos.toFixed(3)} · A ${j.holdout.A.toFixed(3)}) · ${condLabel(refKeyOf(j))}`
+      + (j.group === "web" ? ` · ${j.created}` : "");
     else if (j.state === "done") sub = `POS ${j.final.toFixed(3)}${j.area != null ? ` · A ${j.area.toFixed(3)}` : ""}${j.n_uav > 1 ? ` · ${j.n_uav}대` : ""} · 계획 ${j.plans}번 · ${condLabel(refKeyOf(j))} · ${j.created}`;
     else if (j.state === "running") sub = `${j.stage || "준비"} · ${(j.elapsed || 0).toFixed(0)}초` + (j.plans ? ` · 비행 ${j.t_min.toFixed(0)}분` : "");
     else sub = (STATE_TEXT[j.state] || j.state) + (j.msg ? ": " + j.msg.split("\n").slice(-2).join(" ") : "");
@@ -1269,8 +1303,10 @@ function fillSummary(meta) {
   $("s_title").textContent = j.label;
   $("s_badge").innerHTML = `<span class="mbadge ${mt}">${mt === "rl" ? "RL 정책" : mt === "sarops" ? "SAROPS" : "웹 실행"}</span>`;
   if (j.holdout) {
+    const aw = Number((j.settings || {}).a_weight ?? 1);
     $("s_total").textContent = j.holdout.total.toFixed(3);
-    $("s_total_l").textContent = "총점 A + POS (계획에 쓰지 않은 별도 particle로 채점)";
+    $("s_total_l").textContent = (aw === 0 ? `총점 ${w} × POS (A 끔)` : "총점 A + POS") + " · 계획에 쓰지 않은 별도 particle로 채점"
+      + (j.launch_min != null ? ` · 보고 후 ${j.launch_min}분 이륙` : "");
     $("s_pos").textContent = j.holdout.pos.toFixed(3); $("s_A").textContent = j.holdout.A.toFixed(3);
   } else {
     $("s_total").textContent = (A ? A.total : OPT.final).toFixed(3);
@@ -1566,6 +1602,7 @@ function makeMuted() {
   $("autoStart").onclick = () => { START = null; startChanged(); };
   $("run").onclick = run; $("save").onclick = save;
   $("submit").onclick = submit; $("replayclose").onclick = backToLive; $("share").onclick = share;
+  $("rlsubmit").onclick = submitRL; loadRlModels();
   ["runfilter", "runmethod", "runcond", "runsort"].forEach(id => $(id).onchange = renderJobs);
   $("runsearch").oninput = renderJobs;
   initSplitter(); initGuide();

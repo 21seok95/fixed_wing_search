@@ -233,6 +233,7 @@ class Detector:
         inside = front & (np.abs(uu) <= 1) & (np.abs(vv) <= 1)             # (M, N)
         self.last_inside = inside.any(axis=0)
         g = np.where(inside, cfg.edge_factor(uu, vv), 0.0)
+        self.last_edge = g.max(axis=0)                                      # image-position factor of each particle (best UAV)
         if cfg.use_resolution:
             slant = np.sqrt((px[None, :] - x[:, None])**2 + (py[None, :] - y[:, None])**2 + cfg.alt_m**2)
             g = g*np.where(inside, cfg.resolution_factor(slant), 0.0)
