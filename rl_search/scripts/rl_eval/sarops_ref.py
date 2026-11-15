@@ -52,8 +52,10 @@ def ref_key_of(s: dict) -> str:
 
 
 def ref_path(split: str, key: str = "window"):
-    from rl_search.rl_eval_set import EVAL_DIR
-    return EVAL_DIR/(f"sarops_ref_{split}.json" if key == "window" else f"sarops_ref_{split}_{key}.json")
+    from rl_search.rl_eval_set import eval_dir
+    d = eval_dir(split)                                       # rl_eval of the split's map (Barstow cases: mojave)
+    d.mkdir(parents=True, exist_ok=True)
+    return d/(f"sarops_ref_{split}.json" if key == "window" else f"sarops_ref_{split}_{key}.json")
 
 
 def holdout_replay(s: dict, terr, case, hold, actions):
@@ -61,11 +63,11 @@ def holdout_replay(s: dict, terr, case, hold, actions):
     replay env carries a ``SeenArea`` of the hold-out particles; the window A comes from the camera frames either way."""
     from rl_search.area_score import RealtimeArea, SeenArea, score_frames
     from rl_search.multi import run_team_launch
-    from rl_search.rl_eval_set import REGION
     from rl_search.scripts.real_map.web_optimize import X_WINDOW_REF, team_env
     adef = s.get("area_def", "window")
     seen = adef != "window"
-    env = team_env(s, REGION, terr, case.seed, area=seen)
+    region = getattr(case, "region", "amboy")
+    env = team_env(s, region, terr, case.seed, area=seen)
     if adef == "seen":
         env.area = SeenArea(hold.track, hold.exit_step, hold.save_dt_s, float(s["area_x"]), float(s["seen_pod"]))
     elif adef in ("realtime", "realtime_q", "realtime_t"):
@@ -73,7 +75,7 @@ def holdout_replay(s: dict, terr, case, hold, actions):
         from rl_search.scripts.real_map.web_optimize import area_sigma, realtime_kw
         env.area = RealtimeArea(terr, area_sigma(s, env.h), hold.track, hold.exit_step, hold.save_dt_s, float(s["area_x"]), quality=adef == "realtime_q",
                                 window=flight_window(case.options(hold)),
-                                roll_max_deg=float(s.get("area_roll_max", 20.0)) if adef == "realtime_t" else None, **realtime_kw(s, REGION))
+                                roll_max_deg=float(s.get("area_roll_max", 20.0)) if adef == "realtime_t" else None, **realtime_kw(s, region))
         env.area.img_min = float(s.get("area_img_min", 0.0) or 0.0)
     if seen:
         env.pos_w, env.area_w = 1.0, 1.0
@@ -101,15 +103,16 @@ def run_job(job):
     from rl_search.area_score import score_frames
     from rl_search.multi import run_team_launch
     from rl_search.real_scenario import VehicleScenarios, chungju_preset, terrain_path
-    from rl_search.rl_eval_set import REGION, case_dict, case_vc, make_case, vehicle_config
+    from rl_search.rl_eval_set import case_dict, case_vc, make_case, split_region, vehicle_config
     from rl_search.scenario import ScenarioSampler
     from rl_search.scripts.real_map import vehicle_web as vw
     from rl_search.scripts.real_map.web_optimize import run_case, team_env
     from rl_search.terrain import load_terrain
     t0 = time.perf_counter()
-    terr = load_terrain(terrain_path(REGION))
+    region = split_region(split)                                      # the Barstow cases are on mojave (R10 on two maps)
+    terr = load_terrain(terrain_path(region))
     vc = vehicle_config()
-    vs = VehicleScenarios(ScenarioSampler(terr, chungju_preset().scenario), vc, region=REGION)
+    vs = VehicleScenarios(ScenarioSampler(terr, chungju_preset().scenario), vc, region=region)
     case, scen, vres, hold = make_case(vs, split, stage, k)
     vc = case_vc(case)                                                # the case's own target model (diverse cases)
     s = settings() | DEFS[area_def] | ({"blur_tau": blur_tau} if blur_tau else {}) | ({"area_roll_max": roll_max} if roll_max else {}) \
@@ -117,8 +120,8 @@ def run_job(job):
         | ({"blur_tau_low": blur_low} if blur_low else {}) | ({"area_sigma": sigma} if sigma and float(sigma) != 150.0 else {}) \
         | ({"area_img_min": img_min} if img_min else {}) | ({"area_sigma_off": sigma_off} if sigma_off else {}) \
         | ({"a_weight": float(a_weight)} if float(a_weight) != 1.0 else {}) | ({"score": "pos"} if float(a_weight) == 0.0 else {})
-    view = dict(region=REGION, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
-    out = run_case(REGION, scen, vres, vc, view, s, options=case.options(scen), terr=terr)
+    view = dict(region=region, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
+    out = run_case(region, scen, vres, vc, view, s, options=case.options(scen), terr=terr)
     pos_h, a_h, a_win, h = holdout_replay(s, terr, case, hold, out["actions"])          # the same actions on the hold-out particles
     drift = float(np.hypot(*(np.asarray(h["xy"][0][-1]) - np.asarray(out["paths"][0][-1]))))
     holdout = dict(pos=pos_h, A=float(a_h), total=float(float(s.get("a_weight", 1.0))*a_h + float(s["area_w"])*pos_h), A_window=float(a_win), area_def=s.get("area_def", "window"),
@@ -151,9 +154,8 @@ def run_job(job):
 
 
 def main():
-    from rl_search.rl_eval_set import EVAL_DIR
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--split", default="val", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest"))
+    ap.add_argument("--split", default="val", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest", "bval", "btest"))
     ap.add_argument("--stages", type=int, nargs="*", default=[1, 2, 3])
     ap.add_argument("--cases", type=int, default=None, help="Cases per stage (default 5 for val, 30 for test)")
     ap.add_argument("--workers", type=int, default=5, help="Processes at once (each about 1.2 GB)")

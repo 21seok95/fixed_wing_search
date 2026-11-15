@@ -20,7 +20,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--label", required=True, help="step or name shown in the web run id")
-    ap.add_argument("--split", default="test", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest"))
+    ap.add_argument("--split", default="test", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest", "bval", "btest"))
     ap.add_argument("--stages", type=int, nargs="+", default=[3])
     ap.add_argument("--cases", type=int, default=None, help="per stage (default 5 for val, 30 for test)")
     ap.add_argument("--workers", type=int, default=4)
@@ -62,8 +62,8 @@ def main():
         | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {})
     from rl_search.rl_real import preload
     from rl_search.rl_real_eval import eval_job, sarops_refs
-    preload("amboy")
-    from rl_search.rl_eval_set import MULTI_N
+    from rl_search.rl_eval_set import MULTI_N, split_region
+    preload(split_region(args.split))                     # the Barstow cases are on mojave
     n = args.cases or MULTI_N.get(args.split) or (5 if args.split in ("val", "dval") else 30)
     label = int(args.label) if args.label.isdigit() else args.label
     ks = args.ks if args.ks is not None else list(range(args.first, n))

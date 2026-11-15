@@ -37,23 +37,29 @@ def run_area_def(run_dir) -> str:
                    float(c.get("blur_tau_low", 0.0) or 0.0) if dead else 0.0, c.get("area_sigma") or None, float(c.get("area_img_min", 0.0) or 0.0))
 
 
+CASE_KEEP = 4      # cases kept per process (about 0.1 GB each; with 30 validation cases on two maps a worker kept up to 3 GB, 2026-11-14)
+
+
 def _case(split: str, stage: int, k: int):
     key = ("case", split, stage, k)
     if key not in _CACHE:
+        for old in [c for c in _CACHE if isinstance(c, tuple) and c[0] == "case"][:-CASE_KEEP + 1 or None]:
+            del _CACHE[old]                              # the oldest first (dicts keep the insertion order)
         from rl_search.real_scenario import VehicleScenarios
-        from rl_search.rl_eval_set import REGION, make_case, vehicle_config
+        from rl_search.rl_eval_set import make_case, split_region, vehicle_config
         from rl_search.rl_real import preload
-        st = preload(REGION)
-        vs = VehicleScenarios(st["sampler"], vehicle_config(), region=REGION, net=st["net"])
+        region = split_region(split)                     # the Barstow cases are on mojave (R10 on two maps)
+        st = preload(region)
+        vs = VehicleScenarios(st["sampler"], vehicle_config(), region=region, net=st["net"])
         _CACHE[key] = make_case(vs, split, stage, k)
     return _CACHE[key]
 
 
-def _env(settings: dict | None = None):
-    key = ("env", json.dumps(settings or {}, sort_keys=True))
+def _env(settings: dict | None = None, region: str = "amboy"):
+    key = ("env", region, json.dumps(settings or {}, sort_keys=True))
     if key not in _CACHE:
         from rl_search.rl_real import RealRLConfig, RealRLEnv
-        _CACHE[key] = RealRLEnv(RealRLConfig(settings=dict(settings or {})), seed=0)
+        _CACHE[key] = RealRLEnv(RealRLConfig(region=region, settings=dict(settings or {})), seed=0)
     return _CACHE[key]
 
 
@@ -76,7 +82,7 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
     scenario, scripts/real_map/web_rl.py); ``web``: return the replay payload as ``out["data"]`` and the run-list fields as
     ``out["meta_extra"]`` instead of saving a web run; ``progress(stage, minutes)`` is called once a simulated minute."""
     from rl_search.area_score import RealtimeArea, SeenArea, score_frames
-    from rl_search.rl_eval_set import REGION, case_dict
+    from rl_search.rl_eval_set import case_dict
     from rl_search.scripts.real_map import vehicle_web as vw
     from rl_search.scripts.real_map.web_optimize import X_WINDOW_REF, b64, footprints, particles_payload, realtime_payload, seen_payload
     from rl_search.scripts.rl_eval.sarops_ref import holdout_replay
@@ -85,7 +91,7 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
     if launch_s is not None:
         from dataclasses import replace
         case = replace(case, t_launch_s=float(launch_s), info=dict(case.info) | {"delay_s": float(launch_s), "delay_case_s": float(case.t_launch_s)})
-    model, env = _model(model_path), _env(settings)
+    model, env = _model(model_path), _env(settings, case.region)
     e = env.env
     e.sample_log = []
     obs, info = env.reset(options=case.options(scen))
@@ -171,7 +177,7 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
         opt = dict(T=T, N=int(n), dt_s=float(dt), weight=b64(W), uavs=[uav], start=[float(v) for v in start], lkp=[float(v) for v in scen.lkp],
                    pos_t=np.round(np.asarray(pos_t), 1).tolist(), pos=np.round(np.asarray(pos), 4).tolist(), final=belief["pos"],
                    escaped=float(e.belief.escaped), no_clear=0, area=area, sec=round(out["sec"], 1), settings=s)
-        view = dict(region=REGION, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
+        view = dict(region=case.region, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
         rid = f"eval-{split}-s{stage}-k{k}-rl-{step}"
         from rl_search.rl_eval_set import case_vc
         vc = built[4] if built is not None and len(built) > 4 else case_vc(case)    # the case's own target model (diverse cases)

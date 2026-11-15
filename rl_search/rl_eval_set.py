@@ -22,7 +22,10 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter
 REGION = "amboy"
 EVAL_DIR = Path("rl_search/data/real")/REGION/"rl_eval"
 SEED_BASE = {"val": 70000, "test": 80000, "dval": 90000, "dtest": 95000, "mval": 100000, "mtest": 110000,
-             "nval": 100000, "ntest": 110000}     # nval / ntest: the mval / mtest cases with targets that never stop (NOSTOP)
+             "nval": 100000, "ntest": 110000,     # nval / ntest: the mval / mtest cases with targets that never stop (NOSTOP)
+             "bval": 120000, "btest": 130000}     # bval / btest: Barstow (mojave) cases, never stop, varied routes (ROUTE)
+# Map of a split (R10 on two maps, user 2026-11-14): the Barstow cases are on the mojave map, all others on Amboy.
+SPLIT_REGION = dict(bval="mojave", btest="mojave")
 # Diverse cases (user, 2026-11-11; docs/rl_experiments.md): per case a random target model, a wider LKP area, a launch delay and a farther
 # launch, so the particles are spread by hand-over and the policy also meets flights where POS cannot be collected early.
 DIVERSE = dict(lkp_half_m=15000.0, p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0), fast_kmh=(20.0, 50.0), delay_s=(0.0, 1200.0),
@@ -39,14 +42,34 @@ MULTI_TYPES = dict(road=dict(p_leave_min=(0.0, 0.0), p_return_min=(1.0, 1.0)),
                    mixed=dict(p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0)),
                    desert=dict(p_leave_min=(0.05, 0.3), p_return_min=(0.0, 0.1), off_kmh=(10.0, 25.0)))
 TYPE_NAMES = dict(road="도로형", mixed="혼합형", desert="사막형")
-MULTI_SPLITS = ("mval", "mtest", "nval", "ntest")
-MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30)   # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
+MULTI_SPLITS = ("mval", "mtest", "nval", "ntest", "bval", "btest")
+MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30, bval=15, btest=30)   # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
 # Targets that never stop (R10, user 2026-11-14): no stops, and each particle drives at its own steady speed: a driver factor z (one per
 # particle, rl_search.vehicle) puts it at mean x (1 + 0.15 z) in every state (fast road, slow road, off road), kept within mean x (1 +- 0.3).
 # nval / ntest are the mval / mtest cases (same seeds, types, LKP, launch) with these targets; the training pool is rl_pool_multi_ns.
 NOSTOP = dict(std_frac=0.15, band=0.3)
-NOSTOP_SPLITS = ("nval", "ntest")
-SPLIT_NAMES = dict(nval="정지 없음 ", ntest="정지 없음 ")
+NOSTOP_SPLITS = ("nval", "ntest", "bval", "btest")
+SPLIT_NAMES = dict(nval="정지 없음 ", ntest="정지 없음 ", bval="바스토 ", btest="바스토 ")
+# Varied routes (R10 on two maps, user 2026-11-14): every training scenario and the Barstow cases draw the route settings of the target
+# model (the web tuner's group "경로·시작") uniformly in these ranges, from a stream of their own so the other draws stay as they were.
+# Off-road slope limit: 30 deg for every type (vehicle_config.json, the user's maximum).
+ROUTE = dict(heading_std_deg=(10.0, 60.0), reorient_std_deg_min=(0.0, 5.0), p_detour=(0.0, 0.15), goal_sector_deg=(10.0, 30.0))
+ROUTE_SPLITS = ("bval", "btest")
+
+
+def route_vc(seed: int) -> dict:
+    """Route settings of a target model (ROUTE), drawn from their own stream of ``seed``."""
+    rng = np.random.default_rng([int(seed), 31])
+    return {k: float(rng.uniform(*r)) for k, r in ROUTE.items()}
+
+
+def split_region(split: str | None) -> str:
+    return SPLIT_REGION.get(split or "", REGION)
+
+
+def eval_dir(split: str | None = None) -> Path:
+    """Folder of the SAROPS references of a split: rl_eval of the split's map (the target model base stays Amboy's, EVAL_DIR)."""
+    return Path("rl_search/data/real")/split_region(split)/"rl_eval"
 
 
 def nostop_vc(vc: dict) -> dict:
@@ -84,6 +107,7 @@ class Case:
     t_launch_s: float = 0.0       # stage 3: launch this long after the LKP report (diverse cases)
     vc: dict = field(default_factory=dict)     # target model changes against vehicle_config() (diverse cases)
     typ: str = ""                 # target type of a typed case (MULTI_TYPES key)
+    region: str = REGION          # map of the case (SPLIT_REGION)
 
     @property
     def label(self) -> str:
@@ -218,7 +242,9 @@ def start_stage3(lkp, rng, half: float, ring: tuple = (8000.0, 20000.0)):
 
 
 def make_case(vs, split: str, stage: int, k: int):
-    """(Case, planner scenario, its simulate_vehicle result, hold-out scenario). ``vs``: real_scenario.VehicleScenarios on Amboy."""
+    """(Case, planner scenario, its simulate_vehicle result, hold-out scenario). ``vs``: real_scenario.VehicleScenarios on the split's map."""
+    if getattr(vs, "region", REGION) != split_region(split):
+        raise ValueError(f"{split} cases are on {split_region(split)}, the scenarios given are on {vs.region}")
     seed = SEED_BASE[split] + 1000*stage + k
     rng = np.random.default_rng(seed)
     if split in DIVERSE_SPLITS:
@@ -306,12 +332,14 @@ def make_multi_case(vs, split: str, stage: int, k: int, seed: int, rng):
         vc = multi_vc(rng, typ)
         if split in NOSTOP_SPLITS:                            # no random draws: the case keeps its LKP, heading, launch and start
             vc = nostop_vc(vc)
+        if split in ROUTE_SPLITS:                             # own stream: the other draws stay as they were
+            vc = vc | route_vc(s)
         lkp = diverse_lkp(vs.net, rng)
         heading = float(rng.uniform(0.0, 360.0))
         half = float(vs.net.terr.axis[-1])
         delay = float(rng.uniform(*MULTI["delay_s"]))
         _, start, info = start_stage3(lkp, rng, half, MULTI["ring_m"])
-        vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=REGION, net=vs.net)
+        vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=getattr(vs, "region", REGION), net=vs.net)
         scen, vres = vs2.make_at(s, lkp, heading, start=start[:2], with_res=True)
         out = out_share(scen, delay + FLIGHT_S)
         if out <= MULTI["max_out"]:
@@ -319,13 +347,14 @@ def make_multi_case(vs, split: str, stage: int, k: int, seed: int, rng):
     lkp = np.asarray(scen.lkp, float)
     hold = vs2.make_at(s + HOLDOUT, lkp, heading, start=start[:2])
     info = info | dict(delay_s=delay, out_share=out, tries=attempt + 1, type=typ)
-    case = Case(split, stage, k, s, [float(v) for v in lkp], heading, 0.0, start, info, t_launch_s=delay, vc=vc, typ=typ)
+    case = Case(split, stage, k, s, [float(v) for v in lkp], heading, 0.0, start, info, t_launch_s=delay, vc=vc, typ=typ,
+                region=getattr(vs, "region", REGION))
     return case, scen, vres, hold
 
 
-def multi_training_scenario(vs, seed: int, typ: str, nostop: bool = False):
+def multi_training_scenario(vs, seed: int, typ: str, nostop: bool = False, route: bool = False):
     """Training scenario of one type with the typed rules (own seeds): (scenario, its target model changes). ``nostop``: targets that
-    never stop (NOSTOP, R10)."""
+    never stop (NOSTOP, R10); ``route``: varied route settings (ROUTE); the map is the one of ``vs``."""
     from dataclasses import replace
     from rl_search.real_scenario import VehicleScenarios
     t_end = MULTI["delay_s"][1] + FLIGHT_S                    # the latest launch: the start of each episode is drawn later
@@ -335,9 +364,11 @@ def multi_training_scenario(vs, seed: int, typ: str, nostop: bool = False):
         vc = multi_vc(rng, typ)
         if nostop:
             vc = nostop_vc(vc)
+        if route:
+            vc = vc | route_vc(s)
         lkp = diverse_lkp(vs.net, rng)
         heading = float(rng.uniform(0.0, 360.0))
-        vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=REGION, net=vs.net)
+        vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=getattr(vs, "region", REGION), net=vs.net)
         scen = vs2.make_at(s, lkp, heading, start=(0.0, 0.0))
         if out_share(scen, t_end) <= MULTI["max_out"]:
             break

@@ -47,12 +47,14 @@ POOL_DIR_DIVERSE = "rl_search/data/real/amboy/rl_pool_diverse"
 POOL_DIR_MULTI = "rl_search/data/real/amboy/rl_pool_multi"      # typed scenarios, files <type>_s<seed>.pkl
 
 
-def pool_dir_multi(settings: dict | None = None) -> str:
+def pool_dir_multi(settings: dict | None = None, region: str = "amboy") -> str:
     """Typed pool of these settings: the same scenarios with the region of the off-road sigma (``<POOL_DIR_MULTI>_o150``) when it is set,
     so a running training on the plain pool is never handed regions of another definition. ``no_stop`` (R10): targets that never stop,
-    scenarios only (no A region), ``<POOL_DIR_MULTI>_ns``."""
+    scenarios only (no A region), ``<POOL_DIR_MULTI>_ns``; with ``route_var`` (varied routes, rl_eval_set.ROUTE) ``..._ns_rt``.
+    Another map (``region``) has its pool in its own folder, rl_search/data/real/<region>/."""
     if (settings or {}).get("no_stop"):
-        return POOL_DIR_MULTI + "_ns"
+        base = POOL_DIR_MULTI.replace("/amboy/", f"/{region}/")
+        return base + "_ns" + ("_rt" if (settings or {}).get("route_var") else "")
     off = float((settings or {}).get("area_sigma_off") or 0.0)
     return POOL_DIR_MULTI + (f"_o{off:g}" if off else "")
 N_REF = 5000                       # particle units are scaled to this many particles
@@ -185,10 +187,14 @@ class RealRLEnv:
 
     # ------------------------------------------------------------------ scenarios and starts
     def _pool_files(self) -> list:
-        if not hasattr(self, "_pool"):
+        import time
+        now = time.monotonic()
+        # read again every 10 min: training may start while the pool is still being built (user 2026-11-14), new files join as they come
+        if not hasattr(self, "_pool") or now - self._pool_t > 600.0:
             from pathlib import Path
             d = Path(self.cfg.pool) if self.cfg.pool else None
             self._pool = sorted(d.glob("*_s*.pkl" if self.cfg.multi else "s*.pkl")) if d is not None and d.is_dir() else []
+            self._pool_t = now
         return self._pool
 
     def _pick_type(self) -> str:
@@ -241,7 +247,7 @@ class RealRLEnv:
         seed = self.cfg.seed_base + int(self.rng.integers(0, 10**9))
         if self.cfg.multi:
             from rl_search.rl_eval_set import multi_training_scenario
-            return multi_training_scenario(self.vs, seed, self._typ, nostop=bool(self.s.get("no_stop")))[0]
+            return multi_training_scenario(self.vs, seed, self._typ, nostop=bool(self.s.get("no_stop")), route=bool(self.s.get("route_var")))[0]
         if self.cfg.diverse:
             from rl_search.rl_eval_set import diverse_training_scenario
             return diverse_training_scenario(self.vs, seed)[0]
@@ -419,7 +425,7 @@ class RealRLEnv:
         env = self.env
         return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=env.area_w*self.A_cum + env.pos_w*self.pos_cum, look=self.look_cum,
                     bonus=self.bonus_cum, roll_rev=self.roll_rev, mask_cut=self.mask_cum, shield=bool(shield), energy_left=env.energy, stage=self.start_stage, steps=self.steps,
-                    typ=getattr(self, "_typ", ""))
+                    typ=getattr(self, "_typ", ""), region=self.cfg.region)
 
     # ------------------------------------------------------------------ observation
     def _bin(self, pts, vals, k):

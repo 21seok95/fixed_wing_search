@@ -37,15 +37,17 @@ STAGE_BUDGET = (3_000_000, 3_000_000, 6_000_000)
 
 
 def make_env(stage: int, seed: int, settings: dict | None = None, straight_bonus: float = 0.0, roll_cost: float = 0.0, roll_deg: float = 10.0,
-             diverse: bool = False, mask_cost: float = 0.0, straight_raw: bool = False, multi: bool = False, type_weights: str | None = None):
+             diverse: bool = False, mask_cost: float = 0.0, straight_raw: bool = False, multi: bool = False, type_weights: str | None = None,
+             region: str = "amboy"):
     def f():
         from stable_baselines3.common.monitor import Monitor
         from rl_search.rl_real import POOL_DIR, POOL_DIR_DIVERSE, RealRLConfig, make_gym, pool_dir_multi
-        pool = pool_dir_multi(settings) if multi else POOL_DIR_DIVERSE if diverse else POOL_DIR
-        cfg = RealRLConfig(stage=stage, settings=dict(settings or {}), straight_bonus=straight_bonus, roll_reversal_cost=roll_cost,
+        pool = pool_dir_multi(settings, region) if multi else POOL_DIR_DIVERSE if diverse else POOL_DIR
+        cfg = RealRLConfig(region=region, stage=stage, settings=dict(settings or {}), straight_bonus=straight_bonus, roll_reversal_cost=roll_cost,
                            roll_reversal_deg=roll_deg, diverse=diverse, pool=pool, mask_cost=mask_cost, straight_on_raw=straight_raw,
                            multi=multi, type_weights=type_weights)
-        return Monitor(make_gym(cfg, seed=seed), info_keywords=("A", "POS", "total", "bonus", "roll_rev", "mask_cut", "stage", "typ", "look"))
+        return Monitor(make_gym(cfg, seed=seed), info_keywords=("A", "POS", "total", "bonus", "roll_rev", "mask_cut", "stage", "typ", "look",
+                                                                 "region"))
     return f
 
 
@@ -136,8 +138,13 @@ def main():
     ap.add_argument("--mask-cost", type=float, default=0.0, help="reward taken per unit the edge mask cuts off the action (training only)")
     ap.add_argument("--straight-raw", action="store_true", help="straight bonus from the policy's own action, not the masked one")
     ap.add_argument("--diverse", action="store_true", help="diverse training scenarios and stage 3 starts (rl_eval_set.DIVERSE)")
-    ap.add_argument("--eval-split", default="val", choices=("val", "dval", "mval", "nval"),
-                    help="validation set of the periodic evaluation (nval: the mval cases with targets that never stop, for --no-stop)")
+    ap.add_argument("--eval-split", nargs="+", default=["val"], choices=("val", "dval", "mval", "nval", "bval"),
+                    help="validation sets of the periodic evaluation (nval: the mval cases with targets that never stop, for --no-stop; "
+                         "bval: Barstow cases, never stop, varied routes); with several sets the ratio to SAROPS is over all their cases")
+    ap.add_argument("--regions", nargs="+", default=["amboy"],
+                    help="maps of the training envs (R10 on two maps: amboy mojave); env i is on regions[i %% len], each with its own pool")
+    ap.add_argument("--route-var", action="store_true",
+                    help="varied route settings of the targets (rl_eval_set.ROUTE, user 2026-11-14); pool <region>/rl_pool_multi_ns_rt")
     ap.add_argument("--no-stop", action="store_true",
                     help="R10 (user 2026-11-14): typed targets that never stop and keep a steady speed of their own (rl_eval_set.NOSTOP); "
                          "pool rl_pool_multi_ns (make_pool --multi --no-stop --no-area), validate on nval")
@@ -160,7 +167,8 @@ def main():
     state_path = out/"state.json"
     state = json.loads(state_path.read_text()) if args.resume and state_path.exists() else \
         dict(stage=args.stage, stage_start=0, history={}, best={}, switches=[])
-    preload("amboy")                                     # terrain and road network, shared by every forked process
+    for region in args.regions:                          # terrain and road network, shared by every forked process
+        preload(region)
     from rl_search.scripts.rl_eval.sarops_ref import DEFS
     area_over = ({} if args.area_def == "window" else dict(DEFS[args.area_def])) | ({"blur_tau": args.blur_tau} if args.blur_tau else {}) \
         | ({"area_roll_max": args.area_roll_max} if args.area_def == "realtime_t" else {}) | ({"area_w": args.pos_w} if args.pos_w != 1 else {}) \
@@ -173,15 +181,19 @@ def main():
         | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {}) \
         | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {}) \
         | ({"look_w": args.look_w} if args.look_w else {}) | ({"no_stop": True} if args.no_stop else {}) \
-        | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {})
+        | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {}) \
+        | ({"route_var": True} if args.route_var else {})
     if args.multi:
         from pathlib import Path as _P
         from rl_search.rl_real import pool_dir_multi
-        if not any(_P(pool_dir_multi(area_over)).glob("*_s*.pkl")):
-            raise SystemExit(f"no pool at {pool_dir_multi(area_over)}: build it with make_pool --multi"
-                             + (" --no-stop --no-area" if args.no_stop else f" --area-sigma-off {args.area_sigma_off:g}" if args.area_sigma_off else ""))
-    if args.no_stop and args.eval_split != "nval":
-        raise SystemExit("--no-stop trains on targets that never stop: validate on them too (--eval-split nval)")
+        for region in args.regions:
+            if not any(_P(pool_dir_multi(area_over, region)).glob("*_s*.pkl")):
+                raise SystemExit(f"no pool at {pool_dir_multi(area_over, region)}: build it with make_pool --multi --region {region}"
+                                 + (" --no-stop --no-area" + (" --route-var" if args.route_var else "") if args.no_stop else
+                                    f" --area-sigma-off {args.area_sigma_off:g}" if args.area_sigma_off else ""))
+    from rl_search.rl_eval_set import NOSTOP_SPLITS
+    if args.no_stop and any(sp not in NOSTOP_SPLITS for sp in args.eval_split):
+        raise SystemExit("--no-stop trains on targets that never stop: validate on them too (--eval-split nval [bval])")
 
     from rl_search.rl_real_eval import eval_job
     pool = get_context("fork").Pool(args.eval_workers)          # forked before the env workers and before CUDA is touched
@@ -196,7 +208,7 @@ def main():
         tw_path.write_text(json.dumps(state["type_weights"]))
     env_fns = [make_env(state["stage"], args.seed*1000 + i, area_over, args.straight_bonus, args.roll_reversal_cost,
                         args.roll_reversal_deg, args.diverse, args.mask_cost, args.straight_raw, args.multi,
-                        str(tw_path) if args.multi else None) for i in range(args.n_envs)]
+                        str(tw_path) if args.multi else None, args.regions[i % len(args.regions)]) for i in range(args.n_envs)]
     if args.envs_per_proc > 1:                       # several envs per worker process (rl_search.vec_group, user 2026-11-12)
         from rl_search.vec_group import GroupedSubprocVecEnv
         venv = GroupedSubprocVecEnv(env_fns, args.envs_per_proc, start_method="fork")
@@ -271,6 +283,11 @@ def main():
                     vals = [e["total"] for e in eps if e.get("typ") == t]
                     if vals:
                         self.logger.record(f"episode_type/{t}", float(np.mean(vals)))
+            if len(args.regions) > 1:                            # training episodes per map
+                for region in args.regions:
+                    vals = [e["total"] for e in eps if e.get("region") == region]
+                    if vals:
+                        self.logger.record(f"episode_region/{region}", float(np.mean(vals)))
                 for t, v in state["type_weights"].items():
                     self.logger.record(f"type_share/{t}", float(v))
             self.logger.record("curriculum/stage", state["stage"])
@@ -294,7 +311,7 @@ def main():
             # --save-every (user 2026-11-12, disk): the checkpoint and the web runs are kept only when a multiple of it was passed;
             # the evaluation itself still runs every --eval-every (it also drives the curriculum and the type shares)
             keep = not args.save_every or step//args.save_every > (step - args.eval_every)//args.save_every
-            jobs = [(str(path), args.eval_split, st, k, label, bool(keep), area_over) for k in range(MULTI_N.get(args.eval_split, 5))]
+            jobs = [(str(path), sp, st, k, label, bool(keep), area_over) for sp in args.eval_split for k in range(MULTI_N.get(sp, 5))]
             self.pending.append((step, st, path, pool.map_async(eval_job, jobs), keep))
             state_path.write_text(json.dumps(state, indent=1))
 
@@ -321,15 +338,22 @@ def main():
             sar = np.array([r["sarops"]["total"] for r in rows])
             ratio = float(rl.mean()/sar.mean())
             hist = state["history"].setdefault(str(st), [])
+            splits = [r["split"] for r in rows]
+            by_split = {sp: float(rl[[i for i, x in enumerate(splits) if x == sp]].mean()/sar[[i for i, x in enumerate(splits) if x == sp]].mean())
+                        for sp in args.eval_split}
             hist.append(dict(step=step, ratio=ratio, rl=rl.tolist(), sarops=sar.tolist(), pos=[r["holdout"]["pos"] for r in rows],
-                             A=[r["holdout"]["A"] for r in rows], belief=[r["belief"]["total"] for r in rows]))
+                             A=[r["holdout"]["A"] for r in rows], belief=[r["belief"]["total"] for r in rows], split=splits, k=[r["k"] for r in rows],
+                             by_split=by_split))
             tbe.add_scalar(f"eval_s{st}/ratio_to_sarops", ratio, step)
             tbe.add_scalar(f"eval_s{st}/rl_total", float(rl.mean()), step)
             tbe.add_scalar(f"eval_s{st}/rl_pos", float(np.mean(hist[-1]["pos"])), step)
             tbe.add_scalar(f"eval_s{st}/rl_A", float(np.mean(hist[-1]["A"])), step)
             tbe.add_scalar(f"eval_s{st}/paired_diff", float((rl - sar).mean()), step)
-            for k in range(len(rl)):
-                tbe.add_scalar(f"eval_s{st}/case{k + 1}", float(rl[k]), step)
+            for i, r in enumerate(rows):
+                tbe.add_scalar(f"eval_s{st}/{r['split']}_case{r['k'] + 1}", float(rl[i]), step)
+            if len(by_split) > 1:
+                for sp, v in by_split.items():
+                    tbe.add_scalar(f"eval_s{st}/ratio_{sp}", v, step)
             tbe.add_scalar("curriculum/stage", st, step)
             tbe.flush()
             recent = [h["ratio"] for h in hist[-3:]]
@@ -340,6 +364,8 @@ def main():
                 shutil.copy(path, out/f"best_stage{st}.zip")
             print(f"eval stage {st} at {step:,}: RL {rl.mean():.3f} vs SAROPS {sar.mean():.3f} (ratio {ratio:.3f}, last-3 mean {score:.3f}), "
                   f"per case {np.round(rl, 3).tolist()}, {max(r['sec'] for r in rows):.0f} s", flush=True)
+            if len(by_split) > 1:
+                print("  by split (ratio to SAROPS): " + ", ".join(f"{sp} {v:.3f}" for sp, v in by_split.items()), flush=True)
             if args.multi:
                 self._type_shares(step, rows, rl, sar, hist)
             if st == state["stage"]:
@@ -352,10 +378,9 @@ def main():
             furthest behind gets +0.05 share, taken from the type furthest ahead among those still above the 0.2 floor (shares 0.2-0.5)."""
             from rl_search.rl_eval_set import case_type
             types = MULTI["types"]
-            ks = [r["k"] for r in rows]
             per = {}
             for t in types:
-                idx = [i for i, k in enumerate(ks) if case_type(args.eval_split, k) == t]
+                idx = [i for i, r in enumerate(rows) if case_type(r["split"], r["k"]) == t]
                 if idx:
                     per[t] = float(rl[idx].mean()/sar[idx].mean())
             hist[-1]["type_ratio"] = per

@@ -139,3 +139,72 @@ R10="--handover-km 5 --no-edge --a-weight 0 --fp-rate --look-w 0.01 --type-fixed
 - 정지를 없애 분포가 넓어지면 원 선회가 줄어드는지.
 - R9의 흔들림(엔트로피 0.01, 사막형 50% 때문인지)이 R10에서도 나오는지.
 - 시험 30개(`ntest`) 기준값과 평가를 할지, 언제 할지.
+
+## 7. 우분투에서 바꾼 것: R10 두 지도 (2026-11-14, 사용자)
+
+사용자가 우분투에서 R10을 시작하며 더한 것. 실행 이름은 `r10_2map`이다(맥 계획의 `amboy_r10`과 구분).
+
+| 항목 | 내용 |
+|---|---|
+| 지도 | 암보이 + 바스토(`mojave`, `make_real_terrain --region mojave --cell 25`로 공개 자료를 내려받아 만듦). 환경 i는 `--regions amboy mojave`의 i % 2번째 지도 |
+| 학습 시나리오 | 지도마다 1000개, 풀 `rl_search/data/real/<지도>/rl_pool_multi_ns_rt`(장당 26.5 MB, A 영역 없음). 바스토 seed는 10 500 000 + i |
+| 경로 변수 (모든 학습 시나리오) | `--route-var`, `rl_eval_set.ROUTE`: 방향 퍼짐 10~60°(전에 20), 방향 흔들림 0~5°/√분(0), 교차로 다른 길 0~15%(5%), 목적지 구간 10~30°(28). 다른 뽑기와 따로인 흐름에서 뽑음 |
+| 도로 밖 경사 한계 | 모든 유형 30°(이미 `vehicle_config.json` 값, 사용자: 30° 고정) |
+| 검증 | `nval` 15(그대로, R8·R9와 비교) + `bval` 15(바스토, 정지 없음, 경로 변수 무작위). 비율은 30개 합, 유형 비율 조정도 30개로. 로그에 `by split` 줄 |
+| 환경 수 | 업데이트 약 3,070 결정 유지, 환경 수는 메모리가 허락하는 최대, n_steps = 3,070 ÷ 환경 수 |
+| 평가 | 사례가 30개라 400k마다(작업자 2) |
+
+```bash
+python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --route-var --n 1000 --region amboy --workers 4
+python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --route-var --n 1000 --region mojave --workers 4
+python -m rl_search.scripts.rl_eval.sarops_ref --split nval --stages 3 --workers 3 $REF
+python -m rl_search.scripts.rl_eval.sarops_ref --split bval --stages 3 --workers 4 $REF
+N_ENVS=20 ENVS_PER_PROC=2 rl_search/data/rl_real/r10_2map_start.sh       # train_rl ... --eval-split nval bval --regions amboy mojave --route-var
+python -m rl_search.scripts.rl_eval.r10_refs                                  # SAROPS 기준값 그림 (mval / nval / bval)
+```
+
+- 메모리 16 GB: SAROPS 작업자 4개와 지형 만들기가 겹치면 systemd-oomd가 작업을 죽인다(작업자 3개면 약 5 GB).
+- 풀이 다 차기 전에 학습을 시작해도 된다: 환경이 10분마다 풀 폴더를 다시 읽는다(`RealRLEnv._pool_files`).
+
+## 8. R10~R12 결과와 맥에서 이어서 분석하기 (2026-11-15)
+
+자세한 경과와 숫자는 `docs/rl_experiments.md`(R10 두 지도, R11, R12 줄과 11-14 ~ 11-15 메모). 요약:
+
+| 실행 | 무엇 | 결과 (검증 nval 15 + bval 15, RL POS 합 / SAROPS POS 합) |
+|---|---|---|
+| R10 두 지도 `r10_2map` | 처음부터 600만 (400만 + 같은 설정으로 이어 200만) | 400만 1.223, 600만 1.236 (최근 3번 평균 1.243) |
+| R11 `r11_2map` | R10 400만에서 미니배치 770·target_kl 0.03으로 200만 | 200만(= 총 600만) **1.279** (최근 3번 1.263), 같은 총 스텝의 R10보다 사례별 POS +0.009 ± 0.003 |
+| R12 `r12_2map` | R11 설정으로 처음부터 600만 | 600만 1.253 (최근 3번 1.227), R10과 같음 (−0.005 ± 0.004) → PPO 업데이트 크기는 병목이 아님 |
+
+지금까지 가장 높은 모델은 R11 200만(`rl_search/data/rl_real/r11_2map/ckpt/model_2000000.zip`). 다음 방향은 아직 정하지 않았다(사용자와 정함).
+
+**git에 넣은 것** (`git add -f`): 코드와 그림 스크립트(`r10_eval_figure`, `r10_curve`, `r11_compare`, `r12_compare`, `case_tracks`,
+`r10_refs`), 실행 폴더 세 개의 `config.json`·`state.json`(검증 기록, 사례별 POS)·`type_weights.json`·`tb/`·`tb_eval/`, 모델
+(R10 400만·600만, R11 200만, R12 600만), 학습 로그(`rl_search/data/rl_real/{r10_2map,r11,r12}_train.log`, PPO 조기 중단 비율을 여기서 셈),
+시작 스크립트(`rl_search/data/rl_real/*.sh`), SAROPS 기준값(nval: `real/amboy/rl_eval/sarops_ref_nval_...json`, bval:
+`real/mojave/rl_eval/sarops_ref_bval_...json`), R8·R9 기준선 평가(`amboy_r8/ckpt/eval_*.json`, `amboy_r9/ckpt/eval_*.json`), 그림과 표
+(`real/amboy/rl_eval/report/`), 바스토 원자료(`real/mojave/raw/`, 22 MB: 맥에서도 같은 지도를 내려받기 없이 만듦).
+
+**git에 없는 것**: 학습 시나리오 풀(지도마다 25 GB, 학습에만 필요), 웹 비행 기록(`real/chungju/web_runs/`, 모델 한 스텝에 약 340 MB),
+나머지 체크포인트, 실패한 실행(`r12_2map_oom1/`, `r12_2map_w1/`).
+
+맥에서 (저장소 최상위에서):
+
+```bash
+git pull
+python -m rl_search.scripts.make_real_terrain --region mojave --cell 25        # raw가 있으므로 내려받지 않고 같은 지도
+DEF="--area-def realtime_t --area-roll-max 5 --blur-tau 3 --blur-dead-roll 5 --blur-tau-low 15 --area-sigma 75 --area-sigma-off 150 --area-img-min 0.75 --pos-w 1.5"
+NEW="--handover-km 5 --no-edge --a-weight 0 --fp-rate --no-area --obs-r10"   # R10~R12 모델 (R8·R9는 --no-area --obs-r10 대신 --pos-norm)
+# 그림과 표 (계산 가벼움)
+python -m rl_search.scripts.rl_eval.r12_compare                                  # report/r12_vs_r10.png
+python -m rl_search.scripts.rl_eval.r11_compare                                  # report/r11_vs_r10.png
+python -m rl_search.scripts.rl_eval.r10_eval_figure --run r11_2map --step 2000000 --name "R11"
+# 웹에서 비행을 보려면 비행 기록을 다시 만든다 (사례 30개에 몇십 분)
+python -m rl_search.scripts.rl_eval.eval_rl --model rl_search/data/rl_real/r11_2map/ckpt/model_2000000.zip --label r11_2map-2000000 \
+    --split nval --stages 3 --workers 3 $DEF $NEW                                # bval도 같은 식 (--split bval)
+python -m rl_search.scripts.rl_eval.sarops_ref --split nval --stages 3 --workers 3 $DEF --a-weight 0   # SAROPS 비행 기록 (기준값 파일도 다시 씀)
+```
+
+- `eval_rl`의 점수는 학습 중 검증과 같은 방식이다(같은 사례, 같은 별도 particle). 맥에서 처음 돌릴 때 학습 로그의 사례별 값과 같은지 한 번 확인한다
+  (우분투에서는 확인하지 않음).
+- 웹 비행 기록 이름은 `eval-<split>-s3-k<k>-rl-<label>`이다(`case_tracks`, `compare_flights`가 이 이름으로 찾음).

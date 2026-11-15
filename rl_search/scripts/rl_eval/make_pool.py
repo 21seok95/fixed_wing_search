@@ -12,6 +12,11 @@ scenario and its area score for the SAROPS reference settings, pickled: ``seen``
 R10 (targets that never stop, no A, about 26 MB per scenario, 600 = about 16 GB):
 
     python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --n 600 --workers 8
+
+R10 on two maps (user 2026-11-14: varied routes, 1000 scenarios per map):
+
+    python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --route-var --n 1000 --region amboy --workers 6
+    python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --route-var --n 1000 --region mojave --workers 6
 """
 from __future__ import annotations
 
@@ -26,7 +31,7 @@ from pathlib import Path
 _W = {}
 
 
-def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, src=None, no_stop=False, no_area=False):
+def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, src=None, no_stop=False, no_area=False, route=False):
     warnings.filterwarnings("ignore")
     from rl_search.real_scenario import VehicleScenarios
     from rl_search.rl_eval_set import vehicle_config
@@ -38,7 +43,7 @@ def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, s
     env = team_env(s, region, st["terr"], 0, area=True)
     _W.update(st=st, s=s, h=env.h, R=env.lrc_R, vs=VehicleScenarios(st["sampler"], vehicle_config(), region=region, net=st["net"]),
               diverse=diverse, sigma=float(sigma) if sigma else env.h, sigma_off=float(sigma_off or 0.0), src=src, region=region,
-              no_stop=no_stop, no_area=no_area)
+              no_stop=no_stop, no_area=no_area, route=route)
 
 
 def job(args):
@@ -60,7 +65,7 @@ def job(args):
         scen = old["scen"]
     elif typ:                                 # typed scenario (R5)
         from rl_search.rl_eval_set import multi_training_scenario
-        scen, vc = multi_training_scenario(_W["vs"], seed, typ, nostop=bool(_W.get("no_stop")))
+        scen, vc = multi_training_scenario(_W["vs"], seed, typ, nostop=bool(_W.get("no_stop")), route=bool(_W.get("route")))
     elif _W.get("diverse"):
         from rl_search.rl_eval_set import diverse_training_scenario
         scen = diverse_training_scenario(_W["vs"], seed)[0]
@@ -105,15 +110,19 @@ def main():
                     help="R10 (user 2026-11-14): typed targets that never stop and keep a steady speed of their own (rl_eval_set.NOSTOP); "
                          "with --multi the pool goes to rl_pool_multi_ns")
     ap.add_argument("--no-area", action="store_true", help="store the scenario only, no A region (R10 trains without A)")
+    ap.add_argument("--route-var", action="store_true",
+                    help="varied route settings per scenario (rl_eval_set.ROUTE: heading spread, heading drift, detours, goal sector; "
+                         "user 2026-11-14); with --multi --no-stop the pool goes to <region>/rl_pool_multi_ns_rt")
     args = ap.parse_args()
     if args.diverse and str(args.out) == POOL_DIR:
         args.out = Path(POOL_DIR_DIVERSE)
     if args.multi and str(args.out) == POOL_DIR:
-        args.out = Path(pool_dir_multi({"area_sigma_off": args.area_sigma_off, "no_stop": args.no_stop}))
+        args.out = Path(pool_dir_multi({"area_sigma_off": args.area_sigma_off, "no_stop": args.no_stop, "route_var": args.route_var}, args.region))
         if args.area_sigma_off and args.src is None and not args.no_stop:
             args.src = Path(POOL_DIR_MULTI)
     args.out.mkdir(parents=True, exist_ok=True)
-    base = RealRLConfig().seed_base
+    # another map draws its own scenarios (seeds 10 500 000 + i on mojave), not the Amboy draws on other roads
+    base = RealRLConfig().seed_base + {"amboy": 0, "mojave": 500_000}.get(args.region, 0)
     if args.multi:                           # <type>_s<seed>.pkl, the types in turn so every type has n / 3
         from rl_search.rl_eval_set import MULTI
         types = MULTI["types"]
@@ -132,7 +141,8 @@ def main():
         from rl_search.area_score import road_mask
         road_mask(args.region)                              # build the road cells once before the workers fork
     with get_context("fork").Pool(args.workers, initializer=_init, initargs=(args.region, args.area_def, args.diverse, args.area_sigma,
-                                                                             args.area_sigma_off, args.src, args.no_stop, args.no_area)) as pool:
+                                                                             args.area_sigma_off, args.src, args.no_stop, args.no_area,
+                                                                             args.route_var)) as pool:
         for i, (seed, sec) in enumerate(pool.imap_unordered(job, todo, chunksize=1), 1):
             if i % 25 == 0 or i == len(todo):
                 el = time.perf_counter() - t0

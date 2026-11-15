@@ -71,11 +71,12 @@ def main():
     ap.add_argument("--b", required=True, help='"name=<web run label>" of the second set')
     ap.add_argument("--out", type=Path, required=True, help="folder of the two pictures")
     args = ap.parse_args()
-    plt.rcParams["font.family"] = ["AppleGothic", "NanumGothic", "Noto Sans CJK KR", "sans-serif"]
-    plt.rcParams["axes.unicode_minus"] = False
     INK, MUTED, GRID, BG = "#1f1f1e", "#6b6b67", "#e4e3de", "#fcfcfb"
     (na, la), (nb, lb) = (args.a.split("=", 1), args.b.split("=", 1))
     A, B = shapes(args.split, la), shapes(args.split, lb)
+    # after shapes(): the web code it imports sets AppleGothic only (no Korean on Ubuntu)
+    plt.rcParams["font.family"] = ["AppleGothic", "NanumGothic", "Noto Sans CJK KR", "sans-serif"]
+    plt.rcParams["axes.unicode_minus"] = False
     ks = sorted(set(A) & set(B))
     if not ks:
         raise SystemExit(f"no common cases: {la} {len(A)}, {lb} {len(B)}")

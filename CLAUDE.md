@@ -9,7 +9,8 @@ section too. The RL redesign agreed with the user item by item (MDP, model, trai
 decision) is logged in `docs/rl_experiments.md`, with names for the A definitions and reward versions; update it whenever a run starts or ends.
 
 **On the Ubuntu PC**, the next run (R10: targets that never stop, new map channels, no A) is set up in `docs/r10_ubuntu.md`: read it
-first. It holds the reasons, the decisions, the commands in order with checks, and what to report.
+first. It holds the reasons, the decisions, the commands in order with checks, and what to report. Its last section (8) has the R10, R11 and R12 results
+(2026-11-15) and how to continue the analysis on the Mac (what is in git, what is not, the commands).
 
 **On the local PC** (a machine with no connection to the main work environment, where R7 is trained), read `local_pc.md` first: it
 holds the background, what R7 changes and why, the working rules agreed with the user, the order of work with checks, and what to
