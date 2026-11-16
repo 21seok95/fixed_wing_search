@@ -12,7 +12,8 @@ decision) is logged in `docs/rl_experiments.md`, with names for the A definition
 first. It holds the reasons, the decisions, the commands in order with checks, and what to report. Section 8 has the R10, R11 and R12 results
 (2026-11-15) and how to continue the analysis on the Mac (what is in git, what is not, the commands); section 9 sets up R13
 (a fifth 102.4 km map and the look reward A' at 0.1, decided 2026-11-16, with R10's PPO settings); R13 is run on the local PC from the slim branch `local-pc-r13` (only the files R13 needs, one commit with no shared history; never
-merge it into feat/rl-env), see `local_pc.md` section 0.
+merge it into feat/rl-env), see `local_pc.md` section 0. Updates for the local PC are made on feat/rl-env and copied over with
+`python -m rl_search.scripts.sync_local_pc` (shows the changes and any imported module missing there; `--add`, `--commit`, `--push`).
 
 **On the local PC** (a machine with no connection to the main work environment), read `local_pc.md` first; its section 0 is the current
 work (R13: background since R8, what changes and why, commands in order with checks, what to analyse and report). The rest

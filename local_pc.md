@@ -53,6 +53,8 @@ R13="$NEW --look-w 0.1 --type-fixed desert=0.5 --ent-coef 0.01 --no-stop --extra
    - 들어 있는 것: 지도 만들기·점검·학습 풀·학습·평가·분석·내보내기 코드와 웹 보기(`vehicle_web`), 두 지도 원자료, SAROPS 기준값,
      R10·R12의 설정·검증 기록·TensorBoard·학습 로그, R12 600만 모델, R13 근거 그림, 이 문서들. R11, R10 모델, 그 밖의 실행과 그림은 `feat/rl-env`에만 있습니다.
    - 이 브랜치는 `feat/rl-env`와 역사가 이어져 있지 않으므로 합치지 않습니다. 결과는 9번의 zip으로 가져옵니다.
+   - 맥에서 `feat/rl-env`의 변경을 이 브랜치로 옮겨 올리면, local PC에서는 `git pull`로 받습니다.
+     local PC에서 코드를 고쳐 올렸다면, 맥에서 그 변경을 `feat/rl-env`에 먼저 옮긴 뒤 다음 갱신을 합니다(옮기는 스크립트가 덮어쓰기를 막습니다).
    - 설치는 `docs/run_on_pc.md` 1장에서 `git clone`·`git checkout` 줄만 빼고 그대로 합니다.
 2. **[ ] 지도 두 개:** `python -m rl_search.scripts.make_real_terrain --region amboy --cell 25`, 같은 명령에 `--region mojave`(원자료가 저장소에 있어 내려받지 않음).
    - 확인: `python -c "from rl_search.rl_real import preload; preload('amboy'); preload('mojave'); print('ok')"`
