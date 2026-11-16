@@ -119,6 +119,9 @@ def main():
     ap.add_argument("--no-edge", action="store_true", help="no edge mask and no end of the flight off the map; the maps show 0 off the map")
     ap.add_argument("--area-img-min", type=float, default=0.0, help="a cell is searched only where the POD's image-position factor is >= this")
     ap.add_argument("--big-map-km", type=float, default=0.0, help="side (km) of the largest observation map (0 = 51.2), same 64 x 64 cells")
+    ap.add_argument("--extra-map-km", type=float, default=0.0,
+                    help="R13 (user 2026-11-16): a fifth observation map of this side (km, e.g. 102.4), same channels and 64 x 64 cells")
+    ap.add_argument("--extra-map-lead", type=float, default=600.0, help="prediction lead (s) of the fifth map's lead channel")
     ap.add_argument("--rel-maps", action="store_true",
                     help="every map gets a last channel: the remaining POS now as a share of the remaining belief (with --init from a model "
                          "without it, the new channel's first-layer weights start at zero)")
@@ -178,6 +181,7 @@ def main():
         | ({"area_sigma_off": args.area_sigma_off} if args.area_sigma_off else {}) \
         | ({"handover_km": args.handover_km} if args.handover_km else {}) | ({"edge_mode": "none", "off_map_zero": True} if args.no_edge else {}) \
         | ({"area_img_min": args.area_img_min} if args.area_img_min else {}) | ({"big_map_m": args.big_map_km*1000.0} if args.big_map_km else {}) \
+        | ({"extra_map_m": args.extra_map_km*1000.0, "extra_map_lead_s": args.extra_map_lead} if args.extra_map_km else {}) \
         | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {}) \
         | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {}) \
         | ({"look_w": args.look_w} if args.look_w else {}) | ({"no_stop": True} if args.no_stop else {}) \

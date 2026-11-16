@@ -195,7 +195,8 @@ class App:
         self.available = available_regions()
         self.regions = {}
         saved = self.view.get("region", "chungju")
-        self.default = region or (saved if saved in self.available else "chungju")
+        fallback = "chungju" if "chungju" in self.available or not self.available else self.available[0]   # e.g. a PC with Amboy and Barstow only
+        self.default = region or (saved if saved in self.available else fallback)
         self.region(self.default)
 
     def region(self, key: str):

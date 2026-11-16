@@ -40,7 +40,8 @@ def settings_of(c: dict) -> dict:
         | ({"handover_km": float(c["handover_km"])} if c.get("handover_km") else {}) \
         | ({"edge_mode": "none", "off_map_zero": True} if c.get("no_edge") else {}) \
         | ({"area_img_min": float(c["area_img_min"])} if c.get("area_img_min") else {}) \
-        | ({"big_map_m": float(c["big_map_km"])*1000.0} if c.get("big_map_km") else {}) | ({"rel_maps": True} if c.get("rel_maps") else {}) \
+        | ({"big_map_m": float(c["big_map_km"])*1000.0} if c.get("big_map_km") else {}) \
+        | ({"extra_map_m": float(c["extra_map_km"])*1000.0, "extra_map_lead_s": float(c.get("extra_map_lead") or 600.0)} if c.get("extra_map_km") else {}) | ({"rel_maps": True} if c.get("rel_maps") else {}) \
         | ({"fp_rate": True} if c.get("fp_rate") else {}) | ({"a_weight": float(c["a_weight"])} if c.get("a_weight") is not None and float(c["a_weight"]) != 1.0 else {}) \
         | ({"pos_norm": True} if c.get("pos_norm") else {}) | ({"no_area": True} if c.get("no_area") else {}) \
         | ({"obs_r10": True} if c.get("obs_r10") else {}) | ({"no_stop": True} if c.get("no_stop") else {})

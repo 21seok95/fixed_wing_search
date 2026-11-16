@@ -7,6 +7,7 @@
 3. Speed of the env without A (5 s steps flown straight).
 
     python -m rl_search.scripts.rl_eval.check_r10
+    python -m rl_search.scripts.rl_eval.check_r10 --extra-map-km 102.4      # R13: also the fifth map (5 maps, vector 13)
 """
 from __future__ import annotations
 
@@ -23,6 +24,10 @@ STOP = 3
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--extra-map-km", type=float, default=0.0, help="R13: check the fifth map of this side too")
+    args = ap.parse_args()
     warnings.filterwarnings("ignore")
     from rl_search.real_scenario import VehicleScenarios
     from rl_search.rl_eval_set import NOSTOP, REGION, make_case, vehicle_config
@@ -51,14 +56,16 @@ def main():
             print(f"      state {m}: mean {mean:.1f} km/h, spread {np.std(v)/mean:.0%} of the mean, inside the band {inside:.1%} "
                   f"(the rest: particles that changed state within the 5 s step before the record)")
             ok &= inside > 0.9
-    s = settings_of(R10_CONFIG)
-    ch, nvec = obs_layout(s)
-    print(f"2. R10 observation: channels {ch}, vector {nvec}")
+    cfg = R10_CONFIG | ({"extra_map_km": args.extra_map_km, "extra_map_lead": 600.0} if args.extra_map_km else {})
+    s = settings_of(cfg)
     env = _env(s)
+    ch, nvec = obs_layout(s, env.cfg.maps)
+    print(f"2. R10 observation: channels {ch}, vector {nvec}")
     cn, scen, vres, hold = make_case(vs, "nval", 3, 0)
     obs, info = env.reset(options=cn.options(scen))
     print(f"   A in the env: {env._area}")
-    ok &= env._area is None and ch == {"m1600": 6, "m6400": 5, "m25600": 5, "m51200": 5} and nvec == 12
+    want = {"m1600": 6, "m6400": 5, "m25600": 5, "m51200": 5} | ({f"m{int(round(args.extra_map_km*1000))}": 5} if args.extra_map_km else {})
+    ok &= env._area is None and ch == want and nvec == 8 + len(want)
     t0, n = time.perf_counter(), 0
     while n < 120:
         obs, r, term, trunc, info = env.step(np.array([0.0], np.float32))
@@ -66,7 +73,7 @@ def main():
         if term or trunc:
             break
     dt = (time.perf_counter() - t0)/n
-    for name in ("m1600", "m6400", "m25600", "m51200"):
+    for name in ch:
         o = obs[name]
         assert o.shape[0] == ch[name] and o.shape[1:] == (64, 64)
         below = bool((o[3] <= o[0] + 1e-6).all())

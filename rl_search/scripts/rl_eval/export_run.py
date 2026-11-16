@@ -163,16 +163,24 @@ def main():
     hist = [h for st in sorted(state.get("history", {})) for h in state["history"][st]]
     with open(out/"eval_history.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["step", "ratio", "rl_mean", "sarops_mean"] + [f"ratio_{t}" for t in TYPES] + [f"rl_k{k}" for k in range(len(hist[0]["rl"]) if hist else 0)])
+        splits = sorted({sp for h in hist for sp in h.get("by_split", {})})          # two maps (R10 on): nval / bval
+        cases = ([f"rl_{sp}{k + 1}" for sp, k in zip(hist[0]["split"], hist[0]["k"])] if hist and hist[0].get("split")
+                 else [f"rl_k{k}" for k in range(len(hist[0]["rl"]) if hist else 0)])
+        w.writerow(["step", "ratio", "rl_mean", "sarops_mean"] + [f"ratio_{t}" for t in TYPES] + [f"ratio_{sp}" for sp in splits] + cases)
         for h in hist:
             w.writerow([h["step"], h.get("ratio"), np.mean(h["rl"]), np.mean(h["sarops"]) if h.get("sarops") else ""]
-                       + [h.get("type_ratio", {}).get(t, "") for t in TYPES] + list(h["rl"]))
+                       + [h.get("type_ratio", {}).get(t, "") for t in TYPES] + [h.get("by_split", {}).get(sp, "") for sp in splits] + list(h["rl"]))
     tb = tb_scalars(run)
     with open(out/"tb_scalars.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["source", "tag", "step", "value"])
         w.writerows(tb)
     evals = sorted(run.glob("ckpt/eval_*.json")) + sorted(run.glob("eval_*.json"))
+    report = Path("rl_search/data/real/amboy/rl_eval/report")                    # circle_check / r12_compare outputs of this run
+    extra = sorted(report.glob(f"circle_{args.run}-*")) + sorted(report.glob(f"*_vs_*.md")) + sorted(report.glob(f"*_vs_*.png"))
+    for e in extra:
+        if args.run.split("_")[0] in e.name or e.name.startswith(f"circle_{args.run}"):
+            shutil.copy2(e, out/e.name)
     for e in evals:
         shutil.copy2(e, out/e.name)
     tag_label = f"{args.run}" if (cfg.get("init") or cfg.get("multi")) else ""
@@ -199,11 +207,12 @@ def main():
         L += ["## 검증 (SAROPS 대비 비율)", "", f"- 마지막 평가 {last['step']:,} 스텝: {last.get('ratio') or float('nan'):.3f}, 최근 3번 평균 {r3:.3f}",
               f"- 최고: {best['step']:,} 스텝 {best['ratio']:.3f}" if best else "- 최고: 없음",
               "- 유형별(마지막): " + ", ".join(f"{TN[t]} {last.get('type_ratio', {}).get(t, float('nan')):.3f}" for t in TYPES), "",
-              "| 스텝 | 전체 | 도로형 | 혼합형 | 사막형 |", "|---|---|---|---|---|"]
+              "| 스텝 | 전체 | 도로형 | 혼합형 | 사막형 |" + "".join(f" {sp} |" for sp in splits), "|---|---|---|---|---|" + "---|"*len(splits)]
         for h in hist:
             tr = h.get("type_ratio", {})
             ratio = "-" if h.get("ratio") is None else format(h["ratio"], ".3f")
-            L.append(f"| {h['step']:,} | {ratio} | " + " | ".join(format(tr.get(t, float("nan")), ".3f") for t in TYPES) + " |")
+            L.append(f"| {h['step']:,} | {ratio} | " + " | ".join(format(tr.get(t, float("nan")), ".3f") for t in TYPES) + " |"
+                     + "".join(f" {h.get('by_split', {}).get(sp, float('nan')):.3f} |" for sp in splits))
         L.append("")
     for e in evals:
         try:
@@ -227,6 +236,7 @@ def main():
     L += ["## 들어 있는 파일", "", "- `config.json`, `state.json`, `type_weights.json`: 학습 설정과 검증 기록 원본",
           "- `eval_history.csv`: 검증마다 비율, 유형별 비율, 사례별 점수", "- `tb_scalars.csv`: TensorBoard 값 전부(학습 곡선, KL, 유형 비율 등)",
           "- `flight_shape.csv`: 저장된 검증 비행의 선회 지표", "- `eval_*.json`: eval_rl 결과(시험 평가 등)", "- `curves.png`: 위 내용 그림",
+          "- `circle_<run>-<스텝>*`: circle_check 결과(분당 원 선회, POS 증가, 지도 밖 확률), `*_vs_*`: r12_compare 결과(있을 때)",
           "- `best_stage3.zip`, `model_<스텝>.zip`: 모델 가중치(PPO.load로 불러옴)"]
     (out/"summary.md").write_text("\n".join(L), encoding="utf-8")
     z = shutil.make_archive(str(out), "zip", root_dir=out.parent, base_dir=out.name)

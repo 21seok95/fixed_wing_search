@@ -154,6 +154,11 @@ class RealRLEnv:
             maps = list(cfg.maps)
             maps[-1] = (maps[-1][0], big, maps[-1][2])
             cfg.maps = tuple(maps)
+        # extra_map_m (R13, user 2026-11-16): a fifth, wider map after the four (the same channels, 64 x 64 cells), so the remaining belief
+        # beyond the 51.2 km map shows when the UAV is near the terrain edge (up to 29 % of it in the R12 validation flights)
+        extra = float(self.s.get("extra_map_m", 0.0) or 0.0)
+        if extra > 0 and len(cfg.maps) == len(MAPS):
+            cfg.maps = tuple(cfg.maps) + ((f"m{int(round(extra))}", extra, float(self.s.get("extra_map_lead_s", 600.0) or 600.0)),)
         self._prepare_static()
 
     # ------------------------------------------------------------------ static parts of the observation
