@@ -1,0 +1,6 @@
+# Optional RL stack for fw-train (already installed via conda/pip on this machine).
+gymnasium>=0.29
+stable-baselines3>=2.3
+tensorboard>=2.14
+# Install torch separately for CPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
