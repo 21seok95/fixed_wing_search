@@ -69,7 +69,7 @@ def main():
     ap.add_argument("--split", default="nval")
     ap.add_argument("--a", required=True, help='"name=<web run label>" of the first set (e.g. the older model)')
     ap.add_argument("--b", required=True, help='"name=<web run label>" of the second set')
-    ap.add_argument("--out", type=Path, required=True, help="folder of the two pictures")
+    ap.add_argument("--out", type=Path, default=Path("rl_search/data/real/amboy/rl_eval/report"), help="folder of the two pictures")
     args = ap.parse_args()
     INK, MUTED, GRID, BG = "#1f1f1e", "#6b6b67", "#e4e3de", "#fcfcfb"
     (na, la), (nb, lb) = (args.a.split("=", 1), args.b.split("=", 1))
@@ -124,30 +124,34 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     tag = re.sub(r"[^\w.-]+", "_", f"{lb}_vs_{la}")
     p1 = args.out/f"compare_{args.split}_{tag}.png"; fig.savefig(p1, dpi=110, facecolor=BG); print("saved", p1)
-    # desert tracks
-    g = np.load("rl_search/data/real/amboy/road_graph_25m.npz")
+    # desert tracks, on the roads of the split's map (bval: Barstow = mojave)
+    from rl_search.rl_eval_set import split_region
+    g = np.load(f"rl_search/data/real/{split_region(args.split)}/road_graph_25m.npz")
     p_, o_ = g["edge_poly"].astype(float)/1000, g["edge_poly_offset"]
     roads = [p_[o_[i]:o_[i + 1]] for i in range(len(o_) - 1)]
     dk = [k for k in ks if TYPES[k % 3] == "desert"]
-    fig, axs = plt.subplots(2, len(dk), figsize=(4.1*len(dk), 8.9), facecolor=BG, layout="constrained", squeeze=False)
-    for j, k in enumerate(dk):
-        allp = np.vstack([A[k]["P"], A[k]["xy"], B[k]["xy"]])
-        lo, hi = np.percentile(allp, 1, axis=0), np.percentile(allp, 99, axis=0)
-        mid, half = (lo + hi)/2, max((hi - lo).max()/2 + .8, 2.0)
-        for i, (name, D) in enumerate([(na, A), (nb, B)]):
-            ax = axs[i, j]; ax.set_facecolor(BG)
-            ax.add_collection(LineCollection(roads, colors="#d9d8d3", linewidths=.7, zorder=1))
-            ax.scatter(D[k]["P"][:, 0], D[k]["P"][:, 1], s=1.5, color="#c9772e", alpha=.3, lw=0, zorder=2)
-            xy, wv = D[k]["xy"], D[k]["w"]
-            seg = np.stack([xy[:-1], xy[1:]], axis=1); fast = wv[:-1] > 1.49
-            ax.add_collection(LineCollection(seg[~fast], colors="#2a6db0", linewidths=1.1, zorder=3))
-            ax.add_collection(LineCollection(seg[fast], colors="#d6336c", linewidths=1.1, zorder=4))
-            ax.set_xlim(mid[0] - half, mid[0] + half); ax.set_ylim(mid[1] - half, mid[1] + half); ax.set_aspect("equal")
-            ax.tick_params(colors=MUTED, labelsize=7, length=0); [sp.set_color("#d9d8d3") for sp in ax.spines.values()]
-            ax.set_title(f"{name} · 사막형 시나리오 {k + 1}\nPOS {D[k]['pos']:.3f}" + (f" (SAROPS {sar[k]:.3f})" if k in sar else "")
-                         + f" · 빠른 선회 {D[k]['fast']:.0f}분 · 360° {D[k]['loops']}번", fontsize=9.5, color=INK, loc="left")
-    fig.suptitle("사막형 검증: 파랑 = 1.49°/s 이하로 비행, 빨강 = 더 빨리 선회, 주황 = 이륙 시각의 입자, 회색 = 도로", x=.01, ha="left", color=INK, fontsize=11.5)
-    p2 = args.out/f"tracks_desert_{args.split}_{tag}.png"; fig.savefig(p2, dpi=105, facecolor=BG); print("saved", p2)
+    if not dk:
+        print("no desert case in both sets: no track picture")
+    else:
+        fig, axs = plt.subplots(2, len(dk), figsize=(4.1*len(dk), 8.9), facecolor=BG, layout="constrained", squeeze=False)
+        for j, k in enumerate(dk):
+            allp = np.vstack([A[k]["P"], A[k]["xy"], B[k]["xy"]])
+            lo, hi = np.percentile(allp, 1, axis=0), np.percentile(allp, 99, axis=0)
+            mid, half = (lo + hi)/2, max((hi - lo).max()/2 + .8, 2.0)
+            for i, (name, D) in enumerate([(na, A), (nb, B)]):
+                ax = axs[i, j]; ax.set_facecolor(BG)
+                ax.add_collection(LineCollection(roads, colors="#d9d8d3", linewidths=.7, zorder=1))
+                ax.scatter(D[k]["P"][:, 0], D[k]["P"][:, 1], s=1.5, color="#c9772e", alpha=.3, lw=0, zorder=2)
+                xy, wv = D[k]["xy"], D[k]["w"]
+                seg = np.stack([xy[:-1], xy[1:]], axis=1); fast = wv[:-1] > 1.49
+                ax.add_collection(LineCollection(seg[~fast], colors="#2a6db0", linewidths=1.1, zorder=3))
+                ax.add_collection(LineCollection(seg[fast], colors="#d6336c", linewidths=1.1, zorder=4))
+                ax.set_xlim(mid[0] - half, mid[0] + half); ax.set_ylim(mid[1] - half, mid[1] + half); ax.set_aspect("equal")
+                ax.tick_params(colors=MUTED, labelsize=7, length=0); [sp.set_color("#d9d8d3") for sp in ax.spines.values()]
+                ax.set_title(f"{name} · 사막형 시나리오 {k + 1}\nPOS {D[k]['pos']:.3f}" + (f" (SAROPS {sar[k]:.3f})" if k in sar else "")
+                             + f" · 빠른 선회 {D[k]['fast']:.0f}분 · 360° {D[k]['loops']}번", fontsize=9.5, color=INK, loc="left")
+        fig.suptitle("사막형 검증: 파랑 = 1.49°/s 이하로 비행, 빨강 = 더 빨리 선회, 주황 = 이륙 시각의 입자, 회색 = 도로", x=.01, ha="left", color=INK, fontsize=11.5)
+        p2 = args.out/f"tracks_desert_{args.split}_{tag}.png"; fig.savefig(p2, dpi=105, facecolor=BG); print("saved", p2)
     for name, D in ((na, A), (nb, B)):
         print(name, " | ".join(f"{TN[t]} POS {np.mean([D[k]['pos'] for k in ks if TYPES[k % 3] == t]):.3f} 빠른 선회 "
                                f"{np.mean([D[k]['fast'] for k in ks if TYPES[k % 3] == t]):.1f}분 360° "

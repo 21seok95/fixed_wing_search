@@ -1,6 +1,8 @@
 # 다른 PC에서 R7 학습하고 비교하기 (2026-11-12)
 
 > 2026-11-16: 지금 할 일은 **R13**입니다. 순서와 명령은 저장소 최상위 `local_pc.md` 0장에 모두 있습니다. 아래 1장(설치)은 그대로 쓰고, 나머지 R7 내용은 이전 기록입니다.
+> R13은 필요한 파일만 담은 브랜치 `local-pc-r13`을 씁니다. 1장의 `git clone`·`git checkout` 두 줄 대신
+> `git clone --branch local-pc-r13 --single-branch https://github.com/21seok95/fixed_wing_search.git fixed_wing_search_r13 && cd fixed_wing_search_r13`.
 
 local PC에서 R7을 학습하고, SAROPS·R6와 비교하고, 결과를 파일 하나로 꺼내는 순서입니다.
 명령은 저장소 최상위에서 **bash**로 실행합니다. zsh에서는 `$DEF`가 낱말로 나뉘지 않으므로 `${=DEF}`로 쓰세요.

@@ -46,7 +46,14 @@ NEW="--handover-km 5 --no-edge --a-weight 0 --fp-rate --no-area --obs-r10"      
 R13="$NEW --look-w 0.1 --type-fixed desert=0.5 --ent-coef 0.01 --no-stop --extra-map-km 102.4 --extra-map-lead 600"
 ```
 
-1. **[ ] 코드:** `git fetch && git checkout feat/rl-env && git pull`. 설치는 `docs/run_on_pc.md` 1장.
+1. **[ ] 코드:** R13에 필요한 파일만 담은 브랜치 **`local-pc-r13`**을 새 폴더에 받습니다(커밋 1개, 받는 양 약 53 MB, 풀면 약 80 MB).
+   ```bash
+   git clone --branch local-pc-r13 --single-branch https://github.com/21seok95/fixed_wing_search.git fixed_wing_search_r13 && cd fixed_wing_search_r13
+   ```
+   - 들어 있는 것: 지도 만들기·점검·학습 풀·학습·평가·분석·내보내기 코드와 웹 보기(`vehicle_web`), 두 지도 원자료, SAROPS 기준값,
+     R10·R12의 설정·검증 기록·TensorBoard·학습 로그, R12 600만 모델, R13 근거 그림, 이 문서들. R11, R10 모델, 그 밖의 실행과 그림은 `feat/rl-env`에만 있습니다.
+   - 이 브랜치는 `feat/rl-env`와 역사가 이어져 있지 않으므로 합치지 않습니다. 결과는 9번의 zip으로 가져옵니다.
+   - 설치는 `docs/run_on_pc.md` 1장에서 `git clone`·`git checkout` 줄만 빼고 그대로 합니다.
 2. **[ ] 지도 두 개:** `python -m rl_search.scripts.make_real_terrain --region amboy --cell 25`, 같은 명령에 `--region mojave`(원자료가 저장소에 있어 내려받지 않음).
    - 확인: `python -c "from rl_search.rl_real import preload; preload('amboy'); preload('mojave'); print('ok')"`
 3. **[ ] 점검:** `python -m rl_search.scripts.rl_eval.check_r10 --extra-map-km 102.4` → 마지막 줄 `ALL CHECKS PASSED`(지도 5장, 벡터 13).
@@ -111,6 +118,9 @@ R13="$NEW --look-w 0.1 --type-fixed desert=0.5 --ent-coef 0.01 --no-stop --extra
    python -m rl_search.scripts.rl_eval.compare_flights --split bval --a "R12 600만=r12_2map-6000000" --b "R13 600만=r13_2map-6000000"
    ```
 5. **학습 신호:** TensorBoard의 유형별·지도별 학습 비행 POS, 행동 표준편차, approx KL을 R10과 비교합니다(r12_compare 그림에 일부 있음).
+6. **웹으로 보기:** `python -m rl_search.scripts.real_map.vehicle_web` → 브라우저 `http://127.0.0.1:8000`. 학습이 끝난 뒤 켭니다(R12 첫 시작은 웹을 켜 둔 채 평가하다 메모리 부족으로 죽었음).
+   - 실행 목록에서 검증 비행(`eval-nval-s3-k<번호>-rl-r13_2map-<스텝>`, `eval-bval-…`, 6번에서 만든 `…-rl-r12_2map-6000000`)을 다시 봅니다.
+   - ② 패널에서 R13 체크포인트를 고르면 화면의 시나리오(암보이)로 새로 날려 봅니다.
 
 ### 0-5. 보고 양식 (zip을 못 꺼내면 손으로라도)
 
