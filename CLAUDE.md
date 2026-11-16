@@ -11,7 +11,8 @@ decision) is logged in `docs/rl_experiments.md`, with names for the A definition
 **On the Ubuntu PC**, the next run (R10: targets that never stop, new map channels, no A) is set up in `docs/r10_ubuntu.md`: read it
 first. It holds the reasons, the decisions, the commands in order with checks, and what to report. Section 8 has the R10, R11 and R12 results
 (2026-11-15) and how to continue the analysis on the Mac (what is in git, what is not, the commands); section 9 sets up R13
-(a fifth 102.4 km map and the look reward A' at 0.1, decided 2026-11-16, with R10's PPO settings); R13 is run on the local PC from the slim branch `local-pc-r13` (only the files R13 needs, one commit with no shared history; never
+(a fifth 102.4 km map and the look reward A' at 0.1, decided 2026-11-16, with R10's PPO settings); section 10 sets up R14 (R10 two maps trained on
+one target type only: road-only, then desert-only, 4M each, run on the Ubuntu PC the night of 2026-11-16). R13 is run on the local PC from the slim branch `local-pc-r13` (only the files R13 needs, one commit with no shared history; never
 merge it into feat/rl-env), see `local_pc.md` section 0. Updates for the local PC are made on feat/rl-env and copied over with
 `python -m rl_search.scripts.sync_local_pc` (shows the changes and any imported module missing there; `--add`, `--commit`, `--push`).
 
