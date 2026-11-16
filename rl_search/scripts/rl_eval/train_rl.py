@@ -144,6 +144,9 @@ def main():
     ap.add_argument("--eval-split", nargs="+", default=["val"], choices=("val", "dval", "mval", "nval", "bval"),
                     help="validation sets of the periodic evaluation (nval: the mval cases with targets that never stop, for --no-stop; "
                          "bval: Barstow cases, never stop, varied routes); with several sets the ratio to SAROPS is over all their cases")
+    ap.add_argument("--eval-types", nargs="+", default=None, choices=("road", "mixed", "desert"),
+                    help="validate on the cases of these target types only (case k has type k %% 3; R14 type specialists, user 2026-11-16: "
+                         "a third of the evaluation time)")
     ap.add_argument("--regions", nargs="+", default=["amboy"],
                     help="maps of the training envs (R10 on two maps: amboy mojave); env i is on regions[i %% len], each with its own pool")
     ap.add_argument("--route-var", action="store_true",
@@ -311,11 +314,12 @@ def main():
             self.model.save(path)
             st = state["stage"]
             label = f"{args.tag}-{step}" if (args.init or state.get("init") or args.multi) else step   # web run names stay apart between runs
-            from rl_search.rl_eval_set import MULTI_N
+            from rl_search.rl_eval_set import MULTI_N, case_type
             # --save-every (user 2026-11-12, disk): the checkpoint and the web runs are kept only when a multiple of it was passed;
             # the evaluation itself still runs every --eval-every (it also drives the curriculum and the type shares)
             keep = not args.save_every or step//args.save_every > (step - args.eval_every)//args.save_every
-            jobs = [(str(path), sp, st, k, label, bool(keep), area_over) for sp in args.eval_split for k in range(MULTI_N.get(sp, 5))]
+            jobs = [(str(path), sp, st, k, label, bool(keep), area_over) for sp in args.eval_split for k in range(MULTI_N.get(sp, 5))
+                    if not args.eval_types or case_type(sp, k) in args.eval_types]
             self.pending.append((step, st, path, pool.map_async(eval_job, jobs), keep))
             state_path.write_text(json.dumps(state, indent=1))
 
