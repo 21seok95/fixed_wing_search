@@ -28,8 +28,8 @@ TERRAIN = {25.0: Path("rl_search/data/terrain_real_chungju_60km_25m.npz")}
 
 
 def terrain_path(region: str = "chungju", cell_m: float = 25.0) -> Path:
-    sfx = "" if cell_m == 50 else f"_{cell_m:g}m"
-    return Path("rl_search/data")/f"terrain_real_{region}_60km{sfx}.npz"
+    from rl_search.real_terrain import terrain_file
+    return terrain_file(region, cell_m)
 
 
 # planner sensor (user 2026-11-06): lane width = the oblique camera's footprint width (trapezoid 171-209 m, 190 m
@@ -81,7 +81,7 @@ class VehicleScenarios:
         exit_step = res.exit_step.astype(np.int16)
         metrics = scenario_metrics(track, exit_step, vc.save_dt_s, start, cfg)
         scen = Scenario(seed, res.lkp_road, float(heading), vc.fast_kmh/3.6, start, start_heading, track, exit_step,
-                        vc.save_dt_s, metrics, time.perf_counter() - t0)
+                        vc.save_dt_s, metrics, time.perf_counter() - t0, exits_move=bool(vc.exit_straight))
         return (scen, res) if with_res else scen
 
     def make(self, seed: int, particles: int = 2000) -> Scenario:
@@ -102,7 +102,7 @@ class VehicleScenarios:
         metrics.update(off_share=float((res.state[:k_end + 1][live] == OFF).mean()),
                        stop_share=float((res.state[:k_end + 1][live] == STOP).mean()))
         return Scenario(seed, res.lkp_road, heading, vc.fast_kmh/3.6, start, start_heading, track, exit_step,
-                        vc.save_dt_s, metrics, time.perf_counter() - t0)
+                        vc.save_dt_s, metrics, time.perf_counter() - t0, exits_move=bool(vc.exit_straight))
 
 
 def make_env(seed: int = 0, tracked: bool = True, lead_m: float = 0.0, prelook_s: float = 0.0, detection=None,

@@ -77,6 +77,26 @@ class RLConfig:
 MAP_NAMES = ("near", "mid", "wide", "global")
 
 
+_PASSABLE: dict = {}
+
+
+def passable_grid(terr, cell_m: float) -> np.ndarray:
+    """Passable cells on the env's reference grid of ``cell_m`` over the terrain, made once per terrain and grid and shared read-only
+    (2026-11-17: every env worker made its own; made in rl_real.preload before the fork, the workers share one)."""
+    key = (id(terr), float(cell_m))
+    hit = _PASSABLE.get(key)
+    if hit is None or hit[0] is not terr:
+        tc = float(terr.axis[1] - terr.axis[0])
+        lo, half = float(terr.axis[0] - tc/2), float(terr.axis[-1] + tc/2)
+        n = int(np.ceil((2*half)/cell_m))
+        centres = lo + (np.arange(n) + .5)*cell_m
+        tidx = np.clip(np.round((centres - terr.axis[0])/tc).astype(int), 0, len(terr.axis)-1)
+        p = ~terr.forbidden[np.ix_(tidx, tidx)]
+        p.flags.writeable = False
+        _PASSABLE[key] = hit = (terr, p)
+    return hit[1]
+
+
 class RLSearchEnv:
     def __init__(self, terr: Terrain, preset, cfg: RLConfig | None = None, seed: int = 0):
         self.terr, self.preset, self.cfg = terr, preset, cfg or RLConfig()
@@ -101,9 +121,7 @@ class RLSearchEnv:
         self.lo = float(terr.axis[0] - tc/2)
         self.half_map = float(terr.axis[-1] + tc/2)
         self.n = int(np.ceil((2*self.half_map)/c.cell_m))
-        centres = self.lo + (np.arange(self.n) + .5)*c.cell_m
-        tidx = np.clip(np.round((centres - terr.axis[0])/tc).astype(int), 0, len(terr.axis)-1)
-        self.passable = ~terr.forbidden[np.ix_(tidx, tidx)]
+        self.passable = passable_grid(terr, c.cell_m)
         self.seen = np.zeros((self.n, self.n), bool)
         self.fp_along, self.fp_cross = self.search.fov_along_m, self.search.fov_cross_m
         self.h = self.search.bandwidth_m
@@ -147,7 +165,9 @@ class RLSearchEnv:
         scen = options.get("scenario") or self._next_scenario()
         self.scen = scen
         self.stage = int(options.get("stage", self.cfg.stage))
-        self.belief = ParticleBelief(scen.track, scen.save_dt_s, scen.exit_step, True)
+        # particles that left the map: out of the belief, unless they keep moving out there (scenarios of 2026-11-17 on: user, probability
+        # that disappears at the edge is a wrong signal; the UAV cannot follow them, so they stay as probability it cannot find)
+        self.belief = ParticleBelief(scen.track, scen.save_dt_s, scen.exit_step, not getattr(scen, "exits_move", False))
         self._pass_p = np.zeros(self.belief.n)            # "lrc": LRC already applied in the current pass
         self._last_in = np.full(self.belief.n, -np.inf)   # "lrc": last time within range
         if self.oblique:

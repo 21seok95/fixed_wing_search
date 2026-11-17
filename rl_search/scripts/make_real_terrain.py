@@ -4,7 +4,7 @@ Run from the repository root:
     python -m rl_search.scripts.make_real_terrain --region chungju
 
 Raw downloads are cached in rl_search/data/real/<region>/raw (use --refresh to fetch again).
-Outputs: rl_search/data/terrain_real_<region>_60km[_<cell>m].npz (no suffix for 50 m),
+Outputs: rl_search/data/terrain_real_<region>_<size>km[_<cell>m].npz (no suffix for 50 m; size 60, or 120 for amboy120 / mojave120),
 rl_search/data/real/<region>/road_graph.npz and figures / stats in rl_search/data/real/<region>/
 (file names end in _<cell>m for cells other than 50 m).
 """
@@ -24,7 +24,7 @@ from matplotlib.patches import Patch, Rectangle
 from scipy.ndimage import label
 
 from rl_search.plotting import draw_terrain
-from rl_search.real_terrain import DATA, HIGHWAY_CODES, REGIONS, build_real_terrain, fetch_raw
+from rl_search.real_terrain import DATA, HIGHWAY_CODES, REGIONS, build_real_terrain, fetch_raw, terrain_file
 from rl_search.terrain import BASE_LAYERS, EXTRA_LAYERS, load_terrain, save_terrain
 
 plt.rcParams["font.family"] = ["AppleGothic", "sans-serif"]
@@ -70,7 +70,7 @@ def main():
     raw = fetch_raw(region, refresh=args.refresh)
     terr, g, lc = build_real_terrain(region, raw, cell_m=args.cell)
 
-    path = Path("rl_search/data")/f"terrain_real_{region.key}_60km{sfx}.npz"
+    path = terrain_file(region.key, args.cell)
     save_terrain(path, terr)
     np.savez_compressed(out_dir/f"road_graph{sfx}.npz", **g)
     np.savez_compressed(out_dir/f"landcover{sfx}.npz", lc=lc)          # WorldCover classes, for the detection model
@@ -119,7 +119,7 @@ def main():
     ax.contourf(a, a, terr.built.astype(float), levels=[.5, 2], colors=["#c9a0a6"], alpha=.8, zorder=6)
     draw_roads(ax, g)
     draw_city(ax, terr)
-    ax.set_title(f"실제 지형 {region.name_ko}: 60 km × 60 km, 중심 {region.lat:.2f}°N {region.lon:.2f}°E, "
+    ax.set_title(f"실제 지형 {region.name_ko}: {region.size_km:g} km × {region.size_km:g} km, 중심 {region.lat:.2f}°N {region.lon:.2f}°E, "
                  f"{terr.cell:g} m 격자\n"
                  f"숲 {stats['forest']:.0%}, 물 {stats['water']:.1%}, 급경사 통과 불가 {stats['steep_nogo']:.1%}, "
                  f"큰 도시 {stats['city']:.1%}, 다리 {stats['bridge_groups']}곳")

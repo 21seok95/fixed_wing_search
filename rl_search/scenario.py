@@ -11,6 +11,7 @@ the fixed-seed evaluation set is written to disk.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from functools import cached_property
 from pathlib import Path
 import json
 import time
@@ -53,6 +54,7 @@ class Scenario:
     save_dt_s: float
     metrics: dict
     gen_s: float = 0.0
+    exits_move: bool = False              # particles that leave the map keep moving (VehicleConfig.exit_straight): the belief keeps them
 
     def meta(self) -> dict:
         return dict(seed=self.seed, lkp=self.lkp.tolist(), heading_deg=self.heading_deg,
@@ -67,14 +69,21 @@ class ScenarioSampler:
 
     def __init__(self, terr: Terrain, cfg: ScenarioConfig):
         self.terr, self.cfg = terr, cfg
+        self.perimeter = self.perimeter_points(terr.axis, cfg)
+
+    @cached_property
+    def lkp_cells(self) -> np.ndarray:
+        """Cells the synthetic scenarios draw their LKP from; made when first used (the real-map scenarios draw theirs on the roads,
+        and the list with the clearance layer it needs took about 80 MB per 60 km map)."""
+        terr, cfg = self.terr, self.cfg
         ok = (terr.clearance >= cfg.lkp_clearance_m)
         inner = np.abs(terr.axis) <= terr.axis[-1] - cfg.lkp_margin_m
         ok &= inner[:, None] & inner[None, :]
         ok &= self._perimeter_dist(terr, cfg) <= cfg.start_dist_m[1]   # some launch point is close enough
-        self.lkp_cells = np.flatnonzero(ok)
-        if not len(self.lkp_cells):
+        cells = np.flatnonzero(ok)
+        if not len(cells):
             raise ValueError("No passable LKP cell with the requested clearance")
-        self.perimeter = self.perimeter_points(terr.axis, cfg)
+        return cells
 
     @staticmethod
     def perimeter_points(axis, cfg: ScenarioConfig) -> np.ndarray:

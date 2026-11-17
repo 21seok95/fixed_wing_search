@@ -108,6 +108,22 @@ class DetectionConfig:
         return np.clip(f, self.rate_floor, 1.0)
 
 
+VIS_FIELDS = ("vis_open", "vis_shrub", "vis_village", "vis_forest_edge", "vis_forest", "forest_edge_m", "road_full_view")
+_VIS: dict = {}
+
+
+def shared_visibility(terr, landcover: np.ndarray, cfg: DetectionConfig) -> np.ndarray:
+    """``visibility_map``, made once per terrain, land cover and visibility settings (VIS_FIELDS) and shared read-only by the
+    detectors of a process (and by forked workers when made before the fork, rl_real.preload)."""
+    key = (id(terr), id(landcover)) + tuple(getattr(cfg, f) for f in VIS_FIELDS)
+    hit = _VIS.get(key)
+    if hit is None or hit[0] is not terr or hit[1] is not landcover:
+        A = visibility_map(terr, landcover, cfg)
+        A.flags.writeable = False
+        _VIS[key] = hit = (terr, landcover, A)
+    return hit[2]
+
+
 def visibility_map(terr, landcover: np.ndarray, cfg: DetectionConfig) -> np.ndarray:
     """Terrain visibility A on the terrain grid (float32)."""
     lc = landcover
@@ -205,14 +221,21 @@ class Detector:
     cfg: DetectionConfig = field(default_factory=DetectionConfig)
 
     def __post_init__(self):
-        self.A = visibility_map(self.terr, self.landcover, self.cfg)
+        self.A = shared_visibility(self.terr, self.landcover, self.cfg)
 
     def visibility(self, px, py):
         t = self.terr
         n = len(t.axis)
-        r = np.clip(np.rint((py - t.axis[0])/t.cell).astype(int), 0, n - 1)
-        c = np.clip(np.rint((px - t.axis[0])/t.cell).astype(int), 0, n - 1)
-        return self.A[r, c]
+        rf, cf = np.rint((py - t.axis[0])/t.cell), np.rint((px - t.axis[0])/t.cell)
+        r = np.clip(rf.astype(int), 0, n - 1)
+        c = np.clip(cf.astype(int), 0, n - 1)
+        v = self.A[r, c]
+        off = getattr(self, "off_map_vis", None)      # (user 2026-11-17 test) visibility off the terrain; None: the nearest edge cell's
+        if off is not None:
+            out = (rf < 0) | (rf > n - 1) | (cf < 0) | (cf > n - 1)
+            if np.any(out):
+                v = np.where(out, np.float32(off), v)
+        return v
 
     def slice_pod(self, px, py, x, y, yaw, roll, omega_dps, rng=None, az_world=None, eps=None, frame=None):
         """Detection probability of each particle in one time slice of ``cfg.dt_s`` under M UAVs: (N,).
@@ -378,7 +401,21 @@ class PassCap:
         return -np.expm1(-h)
 
 
+_LANDCOVER: dict = {}
+
+
 def load_landcover(region: str = "chungju", cell_m: float = 25.0) -> np.ndarray:
-    from pathlib import Path
-    sfx = "" if cell_m == 50 else f"_{cell_m:g}m"
-    return np.load(Path("rl_search/data/real")/region/f"landcover{sfx}.npz")["lc"]
+    """Land cover of a region, read once per process and shared read-only (2026-11-17: every RL env worker read its own copy; read
+    before the fork, in rl_real.preload, the workers now share one)."""
+    from rl_search.stretch import base_of
+    base, k = base_of(region)
+    if k != 1.0:                                   # a stretched map (rl_search.stretch): the base map's cells, read k times larger
+        return load_landcover(base, float(cell_m)/k)
+    key = (region, float(cell_m))
+    if key not in _LANDCOVER:
+        from pathlib import Path
+        sfx = "" if cell_m == 50 else f"_{cell_m:g}m"
+        lc = np.load(Path("rl_search/data/real")/region/f"landcover{sfx}.npz")["lc"]
+        lc.flags.writeable = False
+        _LANDCOVER[key] = lc
+    return _LANDCOVER[key]

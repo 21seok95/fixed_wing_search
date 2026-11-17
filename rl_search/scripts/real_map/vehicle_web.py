@@ -36,14 +36,14 @@ import matplotlib.pyplot as plt
 from rl_search.real_terrain import DATA, REGIONS
 from rl_search.scripts.real_map import web_rl
 from rl_search.scripts.real_map.web_optimize import AREA_DEFS, CAPS, FIELDS, SCORE_GROUP, SCORES, particles_payload, worker
-from rl_search.scripts.real_map.vehicle_tuner import DEFAULT_LKP, GROUPS, PARAMS, STATE_COLORS, load_settings, map_image
+from rl_search.scripts.real_map.vehicle_tuner import DEFAULT_LKP, GROUPS, HELP, PARAMS, STATE_COLORS, load_settings, map_image
 from rl_search.real_scenario import chungju_preset
 from rl_search.scenario import ScenarioSampler
-from rl_search.vehicle import STATE_NAMES, VehicleConfig, load_net, simulate_vehicle
+from rl_search.vehicle import EARLIER_RULES, NO_BACKTRACK, STATE_NAMES, VehicleConfig, load_net, simulate_vehicle
 
 HTML = Path(__file__).with_name("vehicle_web.html")
 RUNS = DATA/"chungju"/"web_runs"
-DESERTS = ("mojave", "amboy")                            # regions where the off-road state is not "paddy fields"
+DESERTS = ("mojave", "amboy", "mojave120", "amboy120")    # regions where the off-road state is not "paddy fields"
 WEB_STATE = DATA/"chungju"/"web_state.json"     # what the page is set to now (rewritten at every particle run)
 
 
@@ -236,15 +236,20 @@ class App:
             v[t.forest | t.water | t.fords] = 255
             v[t.surface > 0] = 254
             v[t.city] = 255
+            if getattr(t, "military", None) is not None:
+                v[t.military] = 255
             r.slope_gz = gzip.compress(v.tobytes(), 5)
         return r.slope_gz
 
     def meta(self):
-        groups = {g: [{"name": n, "label": lab, "min": lo, "max": hi, "step": st} for n, lab, lo, hi, st in items]
-                  for g, items in GROUPS.items()}
+        kinds = {f.name: f.type for f in fields(VehicleConfig)}
+        groups = {g: [{"name": n, "label": lab, "min": lo, "max": hi, "step": st, "kind": "bool" if kinds.get(n) in ("bool", bool) else "num",
+                       "help": HELP.get(n, "")} for n, lab, lo, hi, st in items] for g, items in GROUPS.items()}
         values = {f.name: getattr(self.cfg, f.name) for f in fields(self.cfg)}
         values.update(heading=self.view["heading"], seed=self.view["seed"], duration_min=self.cfg.duration_s/60)
-        return {"groups": groups, "values": values, "lkp": self.default_lkp(self.default), "extent": self.region(self.default).extent,
+        presets = {"되돌아옴": [{"label": "예전 규칙 (11-17 전)", "values": EARLIER_RULES},
+                             {"label": "합의한 새 규칙 (11-17)", "values": NO_BACKTRACK}]}
+        return {"groups": groups, "presets": presets, "values": values, "lkp": self.default_lkp(self.default), "extent": self.region(self.default).extent,
                 "region": self.default, "regions": [dict(key=k, name=REGIONS[k].name_ko, off_name="도로 밖" if k in DESERTS else "논밭") for k in self.available],
                 "states": list(STATE_NAMES), "colors": [STATE_COLORS[s] for s in range(len(STATE_NAMES))],
                 "params_file": str(PARAMS), "opt_fields": FIELDS, "opt_caps": CAPS, "opt_scores": SCORES, "opt_area_defs": AREA_DEFS, "opt_score_group": SCORE_GROUP}
@@ -254,10 +259,11 @@ class App:
         kw = {k: v for k, v in d.items() if k in known}
         if "duration_min" in d:
             kw["duration_s"] = float(d["duration_min"])*60
-        if "particles" in kw:
-            kw["particles"] = int(kw["particles"])
-        if "respect_oneway" in kw:
-            kw["respect_oneway"] = bool(kw["respect_oneway"])
+        for f in fields(VehicleConfig):                          # the page sends JSON numbers and true / false
+            if f.name in kw and f.type in ("bool", bool):
+                kw[f.name] = bool(kw[f.name])
+            elif f.name in kw and f.type in ("int", int):
+                kw[f.name] = int(kw[f.name])
         cfg = replace(self.cfg, **kw)
         view = {"heading": float(d.get("heading", self.view["heading"])), "seed": int(d.get("seed", self.view["seed"])),
                 "lkp": [float(v) for v in d.get("lkp", self.view["lkp"])], "region": d.get("region", self.view.get("region", "chungju"))}
@@ -289,8 +295,7 @@ class App:
         name = (d.get("label") or "").strip() or f"{reg.name} · LKP {view['lkp'][0]/1000:.1f}, {view['lkp'][1]/1000:.1f} km"
         rl = d.get("kind") == "rl"
         if rl:
-            if view["region"] != web_rl.RL_REGION:
-                raise ValueError("RL 모델은 암보이 지도에서만 학습했습니다. 지도를 암보이로 바꾸세요")
+            # any built map (2026-11-17): on maps a model was not trained on the flight shows how it generalises
             models = {m["path"]: m for m in web_rl.rl_models()}
             if d.get("model") not in models:
                 raise ValueError("RL 모델을 찾을 수 없습니다")

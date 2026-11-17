@@ -25,7 +25,9 @@ policy needs on top:
   docs/rl_experiments.md): the roll swings from beyond +``roll_reversal_deg`` to beyond -``roll_reversal_deg`` or back, counted on the 1 s
   samples; the last side is kept across steps (the roll itself is in the observation vector). Training only, reported as ``roll_rev``.
 - starts (section 6): training scenarios drawn like the validation cases (LKP on a road in the central 3 km square, rl_eval_set) but
-  with their own seeds, reused for ``reuse`` episodes with new starts; curriculum stage 1 / 2 / 3 starts mixed by ``stage_mix``.
+  with their own seeds, reused for ``reuse`` episodes with new starts; curriculum stage 1 / 2 / 3 starts mixed by ``stage_mix``. With the
+  redesigned scenarios (``scen_v2``, 2026-11-17): launches (stage 3, 10-40 km, outside military land) and mid-flight starts from states
+  that earlier launch flights saved (stage 4, ``MID_KINDS``), 70 / 30.
   ``reset(options=case.options(scen))`` starts exactly like a SAROPS reference flight.
 - end: energy spent = terminated (60 min flight); ``max_steps`` cuts an episode early = truncated.
 
@@ -51,7 +53,10 @@ def pool_dir_multi(settings: dict | None = None, region: str = "amboy") -> str:
     """Typed pool of these settings: the same scenarios with the region of the off-road sigma (``<POOL_DIR_MULTI>_o150``) when it is set,
     so a running training on the plain pool is never handed regions of another definition. ``no_stop`` (R10): targets that never stop,
     scenarios only (no A region), ``<POOL_DIR_MULTI>_ns``; with ``route_var`` (varied routes, rl_eval_set.ROUTE) ``..._ns_rt``.
-    Another map (``region``) has its pool in its own folder, rl_search/data/real/<region>/."""
+    Another map (``region``) has its pool in its own folder, rl_search/data/real/<region>/. ``scen_v2`` (the redesigned scenarios, user
+    2026-11-17): <region>/rl_pool_v2."""
+    if (settings or {}).get("scen_v2"):
+        return f"rl_search/data/real/{region}/rl_pool_v2"
     if (settings or {}).get("no_stop"):
         base = POOL_DIR_MULTI.replace("/amboy/", f"/{region}/")
         return base + "_ns" + ("_rt" if (settings or {}).get("route_var") else "")
@@ -61,6 +66,18 @@ N_REF = 5000                       # particle units are scaled to this many part
 VEC_NAMES = ("roll", "turn_rate_state", "course_minus_heading", "energy_left", "window_time_left", "prob_left", "allowed_low",
              "allowed_high")
 STAGE_MIX = {1: {1: 1.0}, 2: {2: 0.75, 1: 0.25}, 3: {3: 0.7, 2: 0.15, 1: 0.15}}   # default start mix by curriculum stage
+# Mid-flight starts (start stage 4, user 2026-11-17, docs/scenario_redesign.md): a launch flight saves its state once, at a time drawn in
+# MID_SAVE_MIN (minutes after the launch: the belief it searched, the UAV, its energy, the time); a later episode starts from a saved state
+# with the UAV at one of MID_KINDS, in equal shares: where it was / in the heaviest piece of the remaining probability / in an almost empty
+# place among particles / 3-6 km outside the particles / 10-15 km from them. The redesigned scenarios (scen_v2) mix launches and these
+# starts by rl_eval_set.V2["midflight"]; until an env has a saved state its stage 4 draws launch instead.
+MID_KINDS = ("kept", "heavy", "empty", "edge", "far")
+MID_SAVE_MIN = (10.0, 50.0)
+MID_KEEP = 4                       # saved states kept per env, each used once (the oldest goes first)
+MID_CELL_M = 1000.0                # remaining probability on 1 km cells: pieces = connected cells above MID_EMPTY
+MID_EMPTY = 0.0005                 # a cell with less remaining probability than this is "almost empty" (midstart_inside_def.png)
+MID_RING_M = {"heavy": (0.0, 1000.0), "empty": (0.0, 1000.0), "edge": (3000.0, 6000.0), "far": (10000.0, 15000.0)}
+MID_MARGIN_M = 2000.0              # start points at least this far inside the terrain
 
 
 _STATIC: dict = {}
@@ -73,9 +90,25 @@ def preload(region: str = "amboy") -> dict:
     if region not in _STATIC:
         from rl_search.real_scenario import chungju_preset
         from rl_search.scenario import ScenarioSampler
+        from rl_search.stretch import base_of, stretch_terrain
         from rl_search.vehicle import load_net
-        net = load_net(region)
-        _STATIC[region] = dict(net=net, terr=net.terr, sampler=ScenarioSampler(net.terr, chungju_preset().scenario))
+        base, k = base_of(region)
+        if k != 1.0:
+            # stretched map (rl_search.stretch, user 2026-11-17): the env flies on the base terrain read k times larger; the road network
+            # stays the base map's (real metres) and only makes the targets (``base_sampler``), whose tracks are then scaled
+            b = preload(base)
+            terr = stretch_terrain(b["terr"], k)
+            _STATIC[region] = dict(net=b["net"], terr=terr, sampler=ScenarioSampler(terr, chungju_preset().scenario),
+                                   base_sampler=b["sampler"], base=base, k=k)
+        else:
+            net = load_net(region)
+            _STATIC[region] = dict(net=net, terr=net.terr, sampler=ScenarioSampler(net.terr, chungju_preset().scenario))
+        net, terr = _STATIC[region]["net"], _STATIC[region]["terr"]
+        # the RL env's static grids, made here so the forked env workers share them instead of making one each (2026-11-17)
+        from rl_search.detection import DetectionConfig, load_landcover, shared_visibility
+        from rl_search.rl_env import RLConfig, passable_grid
+        shared_visibility(terr, load_landcover(region, float(terr.cell)), DetectionConfig())
+        passable_grid(terr, RLConfig().cell_m)
     return _STATIC[region]
 
 
@@ -136,6 +169,8 @@ class RealRLEnv:
         self.env.look_img_min = 0.75
         self.env.look_rate_max = float(np.degrees(9.80665*np.tan(np.radians(float(self.s.get("area_roll_max", 5.0))))/self.env.v))
         self.env._obs = lambda: None          # this instance only: skip the legacy maps that RLSearchEnv.reset builds (40-80 ms, unused here)
+        if self.s.get("off_map_vis") is not None:   # (user 2026-11-17 test) the detection off the terrain sees this visibility, as the observation
+            self.env.detector.off_map_vis = float(self.s["off_map_vis"])
         # no_area (R10, user 2026-11-14): no A at all, not even for the report (A is off in the reward since R8); the pool has no regions
         self.no_area = bool(self.s.get("no_area"))
         if self.no_area and float(self.s.get("a_weight", 1.0)) != 0.0:
@@ -143,12 +178,18 @@ class RealRLEnv:
         vc = vehicle_config()
         if cfg.particles is not None:
             vc = replace(vc, particles=int(cfg.particles))
-        self.vs = VehicleScenarios(st["sampler"], vc, region=cfg.region, net=st["net"])
+        # targets are made on the road network's own map (a stretched region: the base map in real metres, then scaled; rl_search.stretch)
+        self.k = float(st.get("k", 1.0))
+        self.vs = VehicleScenarios(st.get("base_sampler", st["sampler"]), vc, region=st.get("base", cfg.region), net=st["net"])
         self.rng = np.random.default_rng(seed)
         self.half = float(self.terr.axis[-1])
         self._scen = self._area = None
         self._uses = 0
         self._area_cache = {}
+        self._mid = []                                          # saved flight states for mid-flight starts (stage 4)
+        self._save_at = None                                    # this launch flight saves its state at this time (s), or None
+        self.start_kind = ""                                    # "launch", "stage1", "stage2" or "mid_<kind>"
+        self._ep_typ = ""
         big = float(self.s.get("big_map_m", 0.0) or 0.0)             # (user 2026-11-12) side of the largest map; same key and 64 x 64 cells
         if big > 0:
             maps = list(cfg.maps)
@@ -168,7 +209,8 @@ class RealRLEnv:
         self.vis_grids = []                                     # (stride, grid of cell means) per map
         for _, side, _ in self.cfg.maps:
             f = max(int(round(side/px/self.terr.cell)), 1)
-            g = uniform_filter(det.A.astype(np.float32), size=f, mode="nearest")[::f, ::f] if f > 1 else det.A.astype(np.float32)
+            A = det.A.astype(np.float32, copy=False)            # the detector's own array (no copy: 2026-11-17)
+            g = uniform_filter(A, size=f, mode="nearest")[::f, ::f] if f > 1 else A
             self.vis_grids.append((f, g))
         # map frame: row 0 = farthest ahead, column 0 = farthest left; centre offsets (forward, right) per cell
         self.offsets = []
@@ -250,6 +292,12 @@ class RealRLEnv:
             self._area_cache = {id(scen.track): a} if ok else {}
             return scen
         seed = self.cfg.seed_base + int(self.rng.integers(0, 10**9))
+        if self.s.get("scen_v2") and self.k != 1.0:            # stretched map: made on the base map at the speeds / k, then scaled
+            from rl_search.stretch import stretched_training_scenario
+            return stretched_training_scenario(self.vs, seed, self._typ or "road", self.k)[0]
+        if self.s.get("scen_v2"):                               # redesigned scenarios (rl_eval_set.V2), generated when the pool is empty
+            from rl_search.rl_eval_set import v2_training_scenario
+            return v2_training_scenario(self.vs, seed, self._typ or "road")[0]
         if self.cfg.multi:
             from rl_search.rl_eval_set import multi_training_scenario
             return multi_training_scenario(self.vs, seed, self._typ, nostop=bool(self.s.get("no_stop")), route=bool(self.s.get("route_var")))[0]
@@ -310,28 +358,47 @@ class RealRLEnv:
         elif stage == 2:
             t0, start, info = start_stage2(scen, self.rng, self.half)
         else:
-            from rl_search.rl_eval_set import DIVERSE, MULTI
-            rule = MULTI if self.cfg.multi else DIVERSE if self.cfg.diverse else None
+            from rl_search.rl_eval_set import DIVERSE, MULTI, V2
+            rule = V2 if self.s.get("scen_v2") else MULTI if self.cfg.multi else DIVERSE if self.cfg.diverse else None
             ring = rule["ring_m"] if rule else (8000.0, 20000.0)
-            t0, start, info = start_stage3(np.asarray(scen.lkp, float), self.rng, self.half, ring)
+            t0, start, info = start_stage3(np.asarray(scen.lkp, float), self.rng, self.half, ring, terr=self.terr if rule is V2 else None)
             scen = replace(scen, start=np.array(start[:2], float), start_heading_deg=float(np.degrees(start[2])))
             out = dict(scenario=scen, stage=3, start_info=info)
-            if rule:                                            # launch 0-20 min (diverse) or 0-40 min (typed) after the report
+            if rule and "delay_s" in rule:                      # launch 0-20 min (diverse) or 0-40 min (typed) after the report; V2: at it
                 out["t_launch_s"] = float(self.rng.uniform(*rule["delay_s"]))
             return out
         return dict(scenario=scen, stage=stage, t0_s=t0, start_pose=np.array(start, float), start_info=info)
 
+    def start_mix(self) -> dict:
+        """{start stage: share} of the curriculum starts: ``stage_mix``; else, with the redesigned scenarios (scen_v2) from stage 3 on,
+        launches and mid-flight starts (stage 4) by rl_eval_set.V2["midflight"]; else STAGE_MIX of the stage."""
+        if self.cfg.stage_mix:
+            return self.cfg.stage_mix
+        if self.s.get("scen_v2") and self.cfg.stage >= 3:
+            from rl_search.rl_eval_set import V2
+            m = float(V2["midflight"])
+            return {3: 1.0 - m, 4: m}
+        return STAGE_MIX[self.cfg.stage]
+
     def reset(self, seed: int | None = None, options: dict | None = None):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
+        self._save_at = None
+        mid_on = False
         if options is None:
             if self._scen is None or self._uses >= self.cfg.reuse:
                 self._scen, self._uses = self._new_scenario(), 0
             self._uses += 1
-            mix = self.cfg.stage_mix or STAGE_MIX[self.cfg.stage]
+            mix = self.start_mix()
             stages = sorted(mix)
             st = int(self.rng.choice(stages, p=np.array([mix[k] for k in stages], float)/sum(mix.values())))
-            options = self.curriculum_options(self._scen, st)
+            mid_on = mix.get(4, 0.0) > 0
+            if mid_on and not self.no_area:
+                raise ValueError("mid-flight starts (stage 4) need no_area: the A state of a flight is not saved")
+            if st == 4 and self._mid:
+                self._uses -= 1                                 # this env's scenario keeps its launches
+                return self._mid_start()
+            options = self.curriculum_options(self._scen, min(st, 3))     # stage 4 with no saved state yet: a launch
         scen = options["scenario"]
         env = self.env
         env.area = self._area = self._area_score(scen)         # attached before the reset, as in the SAROPS runs (hand-over sweeps)
@@ -341,6 +408,19 @@ class RealRLEnv:
         env.reset(options={k: v for k, v in options.items() if k != "start_info"})
         self.start_stage = int(options.get("stage", 3))
         self.start_info = options.get("start_info", {})
+        self.start_kind = {1: "stage1", 2: "stage2"}.get(self.start_stage, "launch")
+        self._ep_typ = getattr(self, "_typ", "")
+        self._begin_episode()
+        if mid_on and self.start_stage == 3:                    # this launch flight saves its state once for later mid-flight starts
+            self._save_at = float(env.launch_track[0][0]) + 60.0*float(self.rng.uniform(*MID_SAVE_MIN))
+        hk = float(self.s.get("handover_km", 0.0) or 0.0)
+        if hk > 0 and self.start_stage == 3:
+            self._transit(hk*1000.0, float(self.s.get("transit_max_s", 1800.0)))
+        return self.observation(), self._info(0.0, 0.0, False)
+
+    def _begin_episode(self) -> None:
+        """Episode counters from the env's state at the start: rewards, A and POS count from here."""
+        env = self.env
         self.steps = 0
         self.A_cum = self.pos_cum = self.bonus_cum = self.mask_cum = self.look_cum = 0.0
         self.roll_rev = 0
@@ -350,10 +430,120 @@ class RealRLEnv:
         self._window = None
         self.transit_actions, self.transit_track = [], []
         self.transit_start = (env.t, float(env.plant.pose[0]), float(env.plant.pose[1]))
-        hk = float(self.s.get("handover_km", 0.0) or 0.0)
-        if hk > 0 and self.start_stage == 3:
-            self._transit(hk*1000.0, float(self.s.get("transit_max_s", 1800.0)))
+
+    # ------------------------------------------------------------------ mid-flight starts (stage 4)
+    def _save_state(self) -> None:
+        """Keep this launch flight's state now (the belief it searched, the UAV, energy, time) for a later mid-flight start."""
+        env = self.env
+        snap = env.snapshot()
+        env._nested = max(0, env._nested - 1)                  # a kept state, not a planner's look ahead (RLSearchEnv.snapshot counts those)
+        t_l = float(env.launch_track[0][0])
+        self._mid.append(dict(scen=env.scen, snap=snap, typ=self._ep_typ, save_min=(env.t - t_l)/60.0, roll_side=self._roll_side,
+                              pos=self.pos_cum, launch=dict(self.start_info)))
+        if len(self._mid) > MID_KEEP:
+            self._mid.pop(0)
+        self._save_at = None
+
+    def _mid_start(self, m: dict | None = None, kind: str | None = None):
+        """Stage 4: an episode from a saved flight state ``m`` (else one of this env's, drawn and used up) with the UAV at a start point of
+        ``kind`` (else drawn, equal shares). The energy and the time are the saved flight's; rewards count from here."""
+        if m is None:
+            m = self._mid.pop(int(self.rng.integers(len(self._mid))))
+        if kind is None:
+            kind = MID_KINDS[int(self.rng.integers(len(MID_KINDS)))]
+        env, snap = self.env, m["snap"]
+        env.area = self._area = None
+        # bind the env to the saved flight's scenario without a launch transit (a stage 2 reset), then put back the state it saved
+        env.reset(options=dict(scenario=m["scen"], stage=2, t0_s=float(snap["t"]), start_pose=snap["plant"]["pose"]))
+        env.restore(snap)
+        env.stage, env.pos_cum, env.area_cum = 4, 0.0, 0.0
+        info = dict(kind=kind, save_min=float(m["save_min"]), remaining=float(env.belief.mass), found_before=float(m["pos"]),
+                    seed=int(m["scen"].seed), fallback=False)
+        roll_side = m["roll_side"]
+        if kind != "kept":
+            pt = self._mid_point(kind)
+            if pt is None:
+                info["fallback"] = True                         # no such place on this belief: the flight goes on where it was
+            else:
+                env.plant.reset(pt)
+                env.chi_tgt = float(pt[2])
+                if env.oblique:                                 # a new camera view at the new place: every particle seen next is a new pass
+                    env.gimbal = env.gimbal_target = None
+                    env.passcap.acc[:] = 0.0
+                    env.passcap.raw[:] = 0.0
+                    env.passcap.out[:] = np.inf
+                env.look_pass[:] = False
+                env._pass_p[:] = 0.0
+                env._last_in[:] = -np.inf
+                roll_side = 0
+        b = env.belief
+        P = b.positions(env.t)[b.w > 0]
+        info["dist_km"] = float(np.hypot(*(P - env.plant.pose[:2]).T).min()/1000.0) if len(P) else float("nan")
+        env.launch_track = [(env.t, *env.plant.pose[:2])]
+        self.start_stage, self.start_kind, self.start_info, self._ep_typ = 4, f"mid_{kind}", info, m["typ"]
+        self._begin_episode()
+        self._roll_side = roll_side
         return self.observation(), self._info(0.0, 0.0, False)
+
+    def _mid_point(self, kind: str):
+        """(x, y, heading) of a start point of ``kind`` on the current belief, or None when there is none. The remaining probability is
+        summed on 1 km cells; pieces are the connected cells (8 neighbours) above MID_EMPTY.
+          heavy: 0-1 km from a particle of the heaviest piece, drawn by remaining weight
+          empty: 0-1 km from a particle in an almost empty cell (drawn without weights), in an almost empty cell itself
+          edge / far: 3-6 / 10-15 km from the nearest particle (all particles still in the belief)
+        Inside the terrain by MID_MARGIN_M; the heading is drawn."""
+        from scipy import ndimage
+        from scipy.spatial import cKDTree
+        env, rng, half = self.env, self.rng, self.half
+        b = env.belief
+        P = b.positions(env.t)
+        p = b.w/b.n
+        live = np.flatnonzero(p > 0)
+        inmap = live[(np.abs(P[live, 0]) <= half) & (np.abs(P[live, 1]) <= half)]
+        if not len(inmap):
+            return None
+        nc = int(np.ceil(2*half/MID_CELL_M))
+
+        def rc(xy):
+            q = np.clip(np.floor((np.atleast_2d(xy) + half)/MID_CELL_M).astype(int), 0, nc - 1)
+            return q[:, 1], q[:, 0]
+
+        G = np.zeros((nc, nc))
+        np.add.at(G, rc(P[inmap]), p[inmap])
+        need_empty = False
+        if kind == "heavy":
+            lab, nlab = ndimage.label(G > MID_EMPTY, structure=np.ones((3, 3)))
+            pool = inmap
+            if nlab:
+                big = int(np.argmax(ndimage.sum(G, lab, index=np.arange(1, nlab + 1)))) + 1
+                pool = inmap[lab[rc(P[inmap])] == big]
+            src = p[pool]/p[pool].sum()
+        elif kind == "empty":
+            g = G[rc(P[inmap])]
+            pool, need_empty = inmap[g < MID_EMPTY], True
+            if not len(pool):                                   # nothing almost empty yet: the lightest tenth of the occupied cells
+                pool, need_empty = inmap[g <= np.quantile(g, 0.1)], False
+            src = None
+        else:
+            pool = inmap
+            src = p[pool]/p[pool].sum()
+        r0, r1 = MID_RING_M[kind]
+        tree = cKDTree(P[live]) if kind in ("edge", "far") else None
+        lim = half - MID_MARGIN_M
+        for _ in range(20):
+            i = rng.choice(pool, size=256, p=src)
+            r, a = rng.uniform(r0, r1, 256), rng.uniform(-np.pi, np.pi, 256)
+            xy = P[i] + np.stack([r*np.cos(a), r*np.sin(a)], 1)
+            ok = (np.abs(xy) <= lim).all(1)
+            if need_empty:
+                ok &= G[rc(xy)] < MID_EMPTY
+            if tree is not None:
+                d, _ = tree.query(xy)
+                ok &= (d >= r0) & (d <= r1)
+            if ok.any():
+                j = int(np.flatnonzero(ok)[0])
+                return np.array([xy[j, 0], xy[j, 1], float(rng.uniform(-np.pi, np.pi))])
+        return None
 
     def _transit(self, dist_m: float, max_s: float) -> None:
         """Distance hand-over (user 2026-11-12, instead of handing over 2 min after the launch whatever the distance): fly by rule toward
@@ -410,6 +600,8 @@ class RealRLEnv:
         n_rev = self._count_reversals(getattr(env, "last_samples", None))
         self.roll_rev += n_rev
         reward = self.cfg.reward_scale*(d_total + self.look_w*d_look) + bonus - self.cfg.roll_reversal_cost*n_rev - self.cfg.mask_cost*cut
+        if self._save_at is not None and env.t >= self._save_at - 1e-9 and not terminated:
+            self._save_state()
         return reward, bool(terminated), truncated, self._info(d_area, d_pos, info["shield"])
 
     def _count_reversals(self, samples) -> int:
@@ -430,7 +622,7 @@ class RealRLEnv:
         env = self.env
         return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=env.area_w*self.A_cum + env.pos_w*self.pos_cum, look=self.look_cum,
                     bonus=self.bonus_cum, roll_rev=self.roll_rev, mask_cut=self.mask_cum, shield=bool(shield), energy_left=env.energy, stage=self.start_stage, steps=self.steps,
-                    typ=getattr(self, "_typ", ""), region=self.cfg.region)
+                    typ=self._ep_typ, region=self.cfg.region, start=self.start_kind)
 
     # ------------------------------------------------------------------ observation
     def _bin(self, pts, vals, k):
@@ -562,7 +754,8 @@ class RealRLEnv:
             col = np.rint((wx - self.terr.axis[0])/step).astype(int)
             row = np.rint((wy - self.terr.axis[0])/step).astype(int)
             inside = (np.abs(wx) <= self.half) & (np.abs(wy) <= self.half)
-            vis = np.full(wx.shape, 0.0 if self.s.get("off_map_zero") else -1.0, np.float32)   # off the map: 0 from R6 (user 2026-11-12), -1 before
+            off_v = self.s.get("off_map_vis")                 # (user 2026-11-17 test) off the map read as open ground of this visibility
+            vis = np.full(wx.shape, float(off_v) if off_v is not None else (0.0 if self.s.get("off_map_zero") else -1.0), np.float32)   # off the map: 0 from R6 (user 2026-11-12), -1 before
             vis[inside] = g[np.clip(row[inside], 0, g.shape[0] - 1), np.clip(col[inside], 0, g.shape[1] - 1)]
             ch.append(vis)
             if k == 0:

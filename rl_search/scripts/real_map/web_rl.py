@@ -1,6 +1,7 @@
 """RL policy flights from the web viewer (vehicle_web, user 2026-11-14: check RL results on the web like SAROPS).
 
-A trained checkpoint flies the scenario on the page (Amboy only, where the models were trained), with the env settings of its training
+A trained checkpoint flies the scenario on the page (any built map since 2026-11-17: on maps it was not trained on, such as Chungju,
+the flight checks how it generalises), with the env settings of its training
 run (config.json) and scored like the validation flights (rl_search.rl_real_eval): one deterministic flight on the page's particles,
 then the same actions on hold-out particles (seed + rl_eval_set.HOLDOUT). The launch can be delayed (minutes after the report), as in
 training (0-40 min). Each flight runs in its own process from the viewer's job queue and is saved as a web run.
@@ -17,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 RL_DIR = Path("rl_search/data/rl_real")
-RL_REGION = "amboy"
+RL_REGION = "amboy"                 # the map the first models were trained on (the default when the page sends none)
 
 
 def run_dir(model: Path) -> Path:
@@ -54,16 +55,18 @@ def _run(p: dict, q) -> dict:
     view, model = p["view"], Path(p["model"])
     launch_s = 60.0*float(p.get("launch_min", 0.0) or 0.0)
     q.put(dict(kind="progress", stage="particle 계산", t_min=0.0, plans=0))
-    st = preload(RL_REGION)
+    region = view.get("region") or RL_REGION
+    st = preload(region)
     vc = VehicleConfig(**p["config"])
     vc = replace(vc, duration_s=max(float(vc.duration_s), launch_s + 3600.0 + 600.0))     # the particles must outlast the flight
-    vs = VehicleScenarios(st["sampler"], vc, region=RL_REGION, net=st["net"])
+    vs = VehicleScenarios(st["sampler"], vc, region=region, net=st["net"])
     seed, heading = int(view["seed"]), float(view["heading"])
     scen, vres = vs.make_at(seed, view["lkp"], heading, view.get("start"), with_res=True)
     hold = vs.make_at(seed + HOLDOUT, np.asarray(scen.lkp, float), heading, start=np.asarray(scen.start, float)[:2])
     hold = replace(hold, start_heading_deg=scen.start_heading_deg)     # the replay takes off exactly as the flight did
     case = Case("web", 3, 0, seed, [float(v) for v in scen.lkp], heading, 0.0,
-                [float(scen.start[0]), float(scen.start[1]), float(np.radians(scen.start_heading_deg))], {"web": True}, t_launch_s=launch_s)
+                [float(scen.start[0]), float(scen.start[1]), float(np.radians(scen.start_heading_deg))], {"web": True}, t_launch_s=launch_s,
+                region=region)
     settings = settings_of(json.loads((run_dir(model)/"config.json").read_text()))
     out = evaluate_case(str(model), "web", 3, 0, model_label(model), save_web=False, settings=settings, built=(case, scen, vres, hold, vc),
                         web=True, progress=lambda stage, t: q.put(dict(kind="progress", stage=stage, t_min=round(float(t), 1), plans=0)))

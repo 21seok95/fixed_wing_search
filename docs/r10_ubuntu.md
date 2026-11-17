@@ -250,3 +250,101 @@ python -m rl_search.scripts.rl_eval.sarops_ref --split nval --stages 3 --workers
    판단 기준: 45~60분 원 선회 비율(R12 33%)과 그때 분당 POS(R12 원 선회 0.0008, 나머지 0.0021), 전체 점수(R12 600만 1.253, 최근 3번 1.227).
    A′를 키웠으니 텐서보드 `episode/look`로 A′ 몫도 본다.
 5. 시작, 100만, 끝에 그림과 표로 사용자에게 보고하고 `docs/rl_experiments.md` R13 줄을 고친다.
+
+## 10. R14: 유형별 전문 모델 — 도로형만, 사막형만 (2026-11-16 밤, 맥에서 준비)
+
+**왜** (맥 분석 11-16, `docs/rl_experiments.md`, 그림 `report/type_probe_r12_2map-6000000.png`, `type_behavior_r12_2map-6000000.png`)
+- 사용자 가설: 한 모델이 도로·혼합·사막형에 맞는 비행경로를 따로 고르지 못하는 것이 문제일 수 있다.
+- R12 600만은 유형을 잘 알아본다. 검증 30개를 다시 날리며 5초마다 기록한 합치기 층 값으로, 본 적 없는 비행의 유형을 0.94 맞힌다
+  (정책 머리 안쪽 0.91, 관측 요약 통계 0.89, 우연 0.33, 시간대와 상관없이 0.88~0.96).
+- 그런데 도로형 끝 무렵이 나쁘다. 45분 이후 41%를 원 선회로 보내고, 그때 분당 POS는 0.0003으로 나머지(0.0022)의 1/7이며, 3 km 안에는
+  0.015, 갈 수 있는 3~15 km에는 0.141이 남아 있다. 사막형은 처음부터 고리를 많이 돌지만 그때 POS 증가가 나머지와 비슷하거나 높다.
+- 물음: 한 모델에 세 유형을 담아서 생기는 간섭인가(그러면 도로형만 학습한 모델은 덜 돈다), 끝 무렵 자체의 학습 문제인가(그러면 도로형만
+  학습해도 돈다)? 사막형만 학습하면 사막형 POS(R12 평균 약 0.25)가 오르나?
+
+**바뀌는 것** (사용자 결정, 나머지는 R10 두 지도와 똑같음: 정지 없는 표적, R10 채널, A 없음, A′ 0.01, 엔트로피 0.01, 미니배치 256, KL 상한 0.02,
+환경 20 × 154. R13도 이 PPO 설정을 쓴다. R12 대신 R10인 이유: 백만 스텝당 시간은 R10 1.2~1.4시간, R12 1.33시간으로 같고, R10의 400만·600만 모델과
+기록이 저장소에 있어 같은 스텝 비교를 바로 할 수 있다)
+- 유형 비율만 바꾼다. 도로형만 `--type-fixed road=1,mixed=0,desert=0`(실행 `r14_road`), 사막형만 `--type-fixed desert=1,road=0,mixed=0`(`r14_desert`).
+- 각 400만 스텝, 도로형 먼저, 이어서 사막형(한 번에 하나라 메모리는 R10과 같음). 400만인 이유: R10 400만 모델이 저장소에 있어 같은 스텝으로
+  비행을 비교할 수 있고(200만은 검증 기록으로), R12의 학습 비행 POS는 도로형이 300만, 사막형이 100만 이후 평평했다.
+- 검증은 R12처럼 30개 모두(40만마다) 날리고, 비교는 그 유형의 사례 10개(nval 5 + bval 5)로 한다.
+
+> 11-16 19:40 사용자 결정(우분투): **R13 설정으로 바꿈**(R10 두 지도 + 102.4 km 지도 + A′ 0.1, PPO는 R10과 같음), 각 **320만**(둘 다 10시간 안에), 검증은 그 유형 사례 10개만(`--eval-types`). 비교 대상은 R13(local PC). `r14_start.sh`가 이 설정이다. 아래 3~5의 R10 비교는 R13 비교로 읽는다.
+
+**맥에서 확인한 것**: 같은 옵션으로 128 스텝 학습이 정상으로 끝났고, `type_weights.json`이 `{"road": 1.0, "mixed": 0.0, "desert": 0.0}`,
+환경의 유형 뽑기 1,000번이 모두 도로형이었다.
+
+**할 일** (우분투, 풀은 R10~R12 것을 그대로 씀)
+1. `git pull`, 웹 서버 끄기(R12 첫 시작이 웹을 켠 채로 검증 중 systemd-oomd에 죽었다).
+2. `nohup bash rl_search/data/rl_real/r14_start.sh both > /dev/null 2>&1 &`
+   - 로그 `rl_search/data/rl_real/r14_road_train.log`, 이어서 `r14_desert_train.log`. 각 로그 끝에 `end ... exit 0`이 찍힌다.
+   - 몇 분 안에 `cat rl_search/data/rl_real/r14_road/type_weights.json`이 `{"road": 1.0, "mixed": 0.0, "desert": 0.0}`인지 확인한다.
+   - 끊기면 `EXTRA="--resume latest" bash rl_search/data/rl_real/r14_start.sh road`(사막형이면 `desert`).
+   - 시간: R10 400만이 5.6시간이었으니 둘 합 약 11시간.
+3. 40만마다 로그의 `by type` 줄을 R10 같은 스텝의 도로형(또는 사막형) 비율과 비교한다
+   (R10 200만: 도로형 1.034, 혼합형 1.198, 사막형 1.174; 400만: 1.188, 1.284, 1.197; `r10_2map/state.json`).
+4. 끝나면 올릴 것(`git add -f`): `rl_search/data/rl_real/r14_road/`, `r14_desert/`의 `config.json`, `state.json`, `type_weights.json`, `tb/`, `tb_eval/`,
+   `ckpt/model_4000000.zip`, 로그 `r14_road_train.log`, `r14_desert_train.log`(R10의 400만 모델과 기록은 이미 저장소에 있음).
+5. 맥에서 볼 것(다음 날):
+   ```bash
+   DEF="--area-def realtime_t --area-roll-max 5 --blur-tau 3 --blur-dead-roll 5 --blur-tau-low 15 --area-sigma 75 --area-sigma-off 150 --area-img-min 0.75 --pos-w 1.5"
+   NEW="--handover-km 5 --no-edge --a-weight 0 --fp-rate --no-area --obs-r10"
+   for t in road desert; do python -m rl_search.scripts.rl_eval.r12_compare --base r10_2map --run r14_$t --logs r10_2map_train.log r14_${t}_train.log \
+     --names R10 R14$t --descs "R10 두 지도 (세 유형)" "R14 ($t 만)" --title "R14 $t 만 대 R10"; done
+   for m in r14_road r14_desert r10_2map; do for sp in nval bval; do python -m rl_search.scripts.rl_eval.eval_rl \
+     --model rl_search/data/rl_real/$m/ckpt/model_4000000.zip --label $m-4000000 --split $sp --stages 3 --workers 4 $DEF $NEW; done; done
+   for m in r14_road r10_2map; do python -m rl_search.scripts.rl_eval.circle_check --label $m-4000000 --name "$m 400만"
+     python -m rl_search.scripts.rl_eval.type_views --model rl_search/data/rl_real/$m/ckpt/model_4000000.zip --label $m-4000000 \
+       --circle rl_search/data/real/amboy/rl_eval/report/circle_$m-4000000.json; done
+   ```
+   판단 기준: 도로형 사례의 45분 이후 원 선회 몫과 그때 분당 POS(R10 400만을 같은 방법으로 잼; 참고로 R12 600만은 41%, 1/7),
+   도로형 SAROPS 대비 비율, 사막형 비율과 평균 POS.
+6. 결과는 그림과 표로 사용자에게 보고하고 `docs/rl_experiments.md` R14 줄을 고친다.
+
+### 10.1 R14 결과와 맥에서 이어서 보기 (2026-11-17)
+
+R13 설정, 각 320만 스텝(위 19:40 결정). 도로형 3.5시간, 사막형 3.6시간, 재시작 없음. 아래 4~5의 `model_4000000`, R10 옵션은 이 절의 것으로 바꿔 읽는다.
+
+| 그 유형 사례 10개 | R14 320만 | R10 320만 | R12 320만 | R10 600만 | R12 600만 | R11 (총 600만) |
+|---|---|---|---|---|---|---|
+| 도로형 비율 | **1.216** | 1.125 | 1.109 | 1.178 | 1.174 | 1.237 |
+| R14가 높은 사례 | – | 10/10 | 10/10 | 7/10 | 6/10 | 5/10 |
+| 사막형 비율 | **1.244** | 1.166 | 1.148 | 1.196 | 1.214 | 1.226 |
+| R14가 높은 사례 | – | 10/10 | 10/10 | 10/10 | 6/10 | 8/10 |
+
+| 원 선회 (0~15 / 15~30 / 30~45 / 45~60분) | R14 320만 | R10 320만 | R12 320만 |
+|---|---|---|---|
+| 도로형 | 19 / 19 / 0 / 6% | 15 / 17 / 5 / 19% | 14 / 39 / 35 / 45% |
+| 사막형 | 12 / 5 / 1 / 1% | 40 / 61 / 25 / 21% | 37 / 65 / 35 / 18% |
+
+- 해석과 주의(자세히는 `docs/rl_experiments.md` R14 줄과 11-17 03:00 메모): 도로형 이득은 대부분 도로형을 더 많이 본 덕(경험량으로 맞추면 R10과 비슷).
+  R10·R12는 지도 4장·A′ 0.01이라 원 선회 감소에는 A′ 0.1 효과가 섞여 있다. **공정한 비교는 R13**(같은 설정, 세 유형 함께).
+- 그림: `report/r14_compare.png`(표 `r14_compare.md`), 대표 경로 `report/case_nval_k3.png`(도로형, R14 비율이 평균에 가장 가까운 사례),
+  `case_nval_k8.png`(사막형), 원 선회 `report/circle_r14_{road,desert}-3200000_{timeline,need}.png`.
+
+**저장소에 있는 것**: `rl_search/data/rl_real/r14_road/`, `r14_desert/`의 `config.json`, `state.json`, `type_weights.json`, `tb/`, `tb_eval/`,
+`ckpt/model_3200000.zip`(= `best_stage3.zip`), 로그 `r14_road_train.log`, `r14_desert_train.log`, 시작·감시 스크립트 `r14_start.sh`, `r14_guard.sh`,
+원 선회 기록 `report/circle_{r14_road,r14_desert,r10_2map,r12_2map}-3200000.json`(우분투 비행으로 잰 값). **없는 것**: 비행 기록(웹 실행, 한 비행 약 12 MB),
+나머지 체크포인트(80만, 120만, 160만, 200만, 280만은 우분투에만).
+
+**맥에서**
+```bash
+R=rl_search/data/real/amboy/rl_eval/report
+# 그림과 표 (계산 가벼움). R13 zip을 풀어 rl_search/data/rl_real/r13_2map/이 생기면 같은 명령이 R13을 기준선(검은 실선)으로 함께 그린다.
+python -m rl_search.scripts.rl_eval.r14_compare --circle "R14 도로형만 320만=$R/circle_r14_road-3200000.json" \
+    "R14 사막형만 320만=$R/circle_r14_desert-3200000.json" "R10 320만=$R/circle_r10_2map-3200000.json" "R12 320만=$R/circle_r12_2map-3200000.json"
+#   R13이 오면 R13 원 선회도 재서 넣는다: eval_rl로 R13 320만 비행을 만들고(아래 R13F 옵션) circle_check --label r13_2map-3200000 --map-km 102.4
+#   → --circle에 "R13 320만=$R/circle_r13_2map-3200000.json" 추가 (R13의 export zip에 웹 실행이 있으면 그것을 씀)
+# 웹에서 비행을 보려면 비행 기록을 다시 만든다 (그 유형 사례만: 도로형 --ks 0 3 6 9 12, 사막형 --ks 2 5 8 11 14).
+# 맥 점수는 우분투와 사례마다 POS가 조금 다를 수 있다(8절).
+DEF="--area-def realtime_t --area-roll-max 5 --blur-tau 3 --blur-dead-roll 5 --blur-tau-low 15 --area-sigma 75 --area-sigma-off 150 --area-img-min 0.75 --pos-w 1.5"
+R13F="--handover-km 5 --no-edge --a-weight 0 --fp-rate --no-area --obs-r10 --extra-map-km 102.4 --extra-map-lead 600"
+for sp in nval bval; do
+  python -m rl_search.scripts.rl_eval.eval_rl --model rl_search/data/rl_real/r14_road/ckpt/model_3200000.zip --label r14_road-3200000 \
+      --split $sp --ks 0 3 6 9 12 --stages 3 --workers 3 $DEF $R13F
+  python -m rl_search.scripts.rl_eval.eval_rl --model rl_search/data/rl_real/r14_desert/ckpt/model_3200000.zip --label r14_desert-3200000 \
+      --split $sp --ks 2 5 8 11 14 --stages 3 --workers 3 $DEF $R13F
+done
+python -m rl_search.scripts.rl_eval.case_tracks --split nval --k 8 --runs "R14 사막형만 320만=r14_desert-3200000" "R10 320만=r10_2map-3200000"
+```

@@ -45,6 +45,9 @@ class Region:
     name_ko: str
     lat: float
     lon: float
+    size_km: float = 60.0           # side of the square map
+    proj: str = "equirect"          # "equirect": local equirectangular (the 60 km maps); "tm": transverse Mercator about the centre
+                                    # (rl_search.geo.LocalTM; the 120 km maps, user 2026-11-17)
 
 
 REGIONS = {r.key: r for r in (
@@ -54,11 +57,15 @@ REGIONS = {r.key: r for r in (
     Region("nonsan", "논산·부여", 36.25, 127.00),
     Region("mojave", "모하비 사막 (바스토)", 34.95, -116.85),
     Region("amboy", "모하비 동쪽 (암보이)", 34.56, -115.74),
+    # the same centres on 120 km (user 2026-11-17: the targets spread up to ~50 km in the 60 minutes of a flight)
+    Region("mojave120", "모하비 사막 (바스토) 120 km", 34.95, -116.85, 120.0, "tm"),
+    Region("amboy120", "모하비 동쪽 (암보이) 120 km", 34.56, -115.74, 120.0, "tm"),
 )}
 
 # Regions whose slow roads are too dense in places (user 2026-11-09): arguments of ``simplify_graph``. The other regions are left as mapped.
 ROAD_SIMPLIFY = {"mojave": dict(density=2.0, anchor_m=2500.0, spur_m=500.0),
                  "amboy": dict(density=99.0, anchor_m=2500.0, spur_m=500.0, loop_m=6000.0, stub_m=2000.0, min_piece_m=5000.0, block_m=14000.0, block_stub_m=9000.0)}   # not dense anywhere; small blocks and short dead ends removed
+ROAD_SIMPLIFY["mojave120"], ROAD_SIMPLIFY["amboy120"] = ROAD_SIMPLIFY["mojave"], ROAD_SIMPLIFY["amboy"]     # the same rules on 120 km
 
 FAST = ("motorway", "trunk", "primary", "secondary", "tertiary")
 SLOW = ("unclassified", "track")
@@ -78,25 +85,57 @@ def road_tier(highway: str) -> int:
 
 # ------------------------------------------------------------------ projection
 def scale(lat0: float) -> tuple[float, float]:
-    """Metres per degree of longitude and latitude at ``lat0``."""
+    """Metres per degree of longitude and latitude at ``lat0`` (the local equirectangular projection of the 60 km maps)."""
     return 111320.0*math.cos(math.radians(lat0)), 111320.0
 
 
+def _tm(region: Region):
+    from rl_search.geo import LocalTM
+    return LocalTM(region.lat, region.lon)
+
+
+def terrain_file(key: str, cell_m: float = 25.0) -> Path:
+    """Terrain file of a region: terrain_real_<key>_<size>km[_<cell>m].npz (no suffix for 50 m)."""
+    sfx = "" if cell_m == 50 else f"_{cell_m:g}m"
+    size = REGIONS[key].size_km if key in REGIONS else 60.0
+    return Path("rl_search/data")/f"terrain_real_{key}_{size:g}km{sfx}.npz"
+
+
 def bbox(region: Region, half_m: float) -> tuple[float, float, float, float]:
-    kx, ky = scale(region.lat)
     pad = 1.02*half_m
+    if region.proj == "tm":                         # the square's boundary in latitude / longitude
+        s = np.linspace(-pad, pad, 201)
+        xs = np.concatenate([s, np.full_like(s, pad), s, np.full_like(s, -pad)])
+        ys = np.concatenate([np.full_like(s, -pad), s, np.full_like(s, pad), s])
+        la, lo = _tm(region).to_latlon(xs, ys)
+        return float(la.min()), float(la.max()), float(lo.min()), float(lo.max())
+    kx, ky = scale(region.lat)
     return region.lat - pad/ky, region.lat + pad/ky, region.lon - pad/kx, region.lon + pad/kx
 
 
 def to_xy(region: Region, lat, lon):
+    if region.proj == "tm":
+        return _tm(region).to_xy(lat, lon)
     kx, ky = scale(region.lat)
     return (np.asarray(lon) - region.lon)*kx, (np.asarray(lat) - region.lat)*ky
 
 
 def to_latlon(region: Region, x, y):
     """Inverse of ``to_xy``: local east / north metres to latitude and longitude."""
+    if region.proj == "tm":
+        return _tm(region).to_latlon(x, y)
     kx, ky = scale(region.lat)
     return region.lat + np.asarray(y)/ky, region.lon + np.asarray(x)/kx
+
+
+def grid_latlon(region: Region, axis):
+    """Latitude and longitude of the grid points: two 1-D arrays (rows, columns) for the equirectangular maps, two 2-D arrays for
+    transverse Mercator."""
+    if region.proj == "tm":
+        X, Y = np.meshgrid(axis, axis)
+        return _tm(region).to_latlon(X, Y)
+    kx, ky = scale(region.lat)
+    return region.lat + axis/ky, region.lon + axis/kx
 
 
 # ------------------------------------------------------------------ remote Cloud-Optimized GeoTIFF
@@ -239,18 +278,7 @@ def _overpass_ways(lat0, lat1, lon0, lon1, selector='["highway"]', splits=2):
         for j in range(splits):
             q = (f'[out:json][timeout:240];way{selector}({las[i]},{los[j]},{las[i + 1]},{los[j + 1]});'
                  'out body geom;')
-            for k in range(9):
-                url = OVERPASS[k % len(OVERPASS)]
-                try:
-                    r = requests.post(url, data={"data": q}, headers=HTTP_HEADERS, timeout=260)
-                    r.raise_for_status()
-                    els = r.json()["elements"]
-                    break
-                except Exception as e:  # server busy: try the next mirror
-                    print(f"  Overpass {url.split('/')[2]}: {type(e).__name__}, retrying", flush=True)
-                    time.sleep(5)
-            else:
-                raise RuntimeError("Overpass API unavailable")
+            els = _overpass_query(q)
             for el in els:
                 ways[el["id"]] = {"id": el["id"], "tags": el["tags"], "nodes": el["nodes"],
                                   "geom": [(p["lat"], p["lon"]) for p in el["geometry"]]}
@@ -258,11 +286,104 @@ def _overpass_ways(lat0, lat1, lon0, lon1, selector='["highway"]', splits=2):
     return list(ways.values())
 
 
-def fetch_raw(region: Region, half_m: float = 30000.0, raw_dir: Path | None = None, refresh=False) -> Path:
-    """Download (or reuse) the DEM, land cover and OSM highways of the region's box."""
+# military land (user 2026-11-17: closed to the targets, like the city zones; 120 km maps): landuse=military, or a military tag of these kinds
+MILITARY_SELECTORS = ('["landuse"="military"]', '["military"~"^(base|range|danger_area|training_area|airfield|naval_base)$"]')
+
+
+def _overpass_query(q: str) -> list:
+    import requests
+    for k in range(12):
+        url = OVERPASS[k % len(OVERPASS)]
+        try:
+            r = requests.post(url, data={"data": q}, headers=HTTP_HEADERS, timeout=260)
+            r.raise_for_status()
+            return r.json()["elements"]
+        except Exception as e:  # server busy: try the next mirror
+            print(f"  Overpass {url.split('/')[2]}: {type(e).__name__}, retrying", flush=True)
+            time.sleep(10)
+    raise RuntimeError("Overpass API unavailable")
+
+
+def _join_rings(segs: list) -> list:
+    """Closed rings from the member ways of a multipolygon (joined end to end, reversed where needed)."""
+    segs = [list(map(tuple, s)) for s in segs if len(s) >= 2]
+    rings = []
+    while segs:
+        cur = segs.pop(0)
+        grown = True
+        while cur[0] != cur[-1] and grown:
+            grown = False
+            for k, s in enumerate(segs):
+                if s[0] == cur[-1]:
+                    cur = cur + s[1:]
+                elif s[-1] == cur[-1]:
+                    cur = cur + s[::-1][1:]
+                elif s[-1] == cur[0]:
+                    cur = s + cur[1:]
+                elif s[0] == cur[0]:
+                    cur = s[::-1] + cur[1:]
+                else:
+                    continue
+                segs.pop(k)
+                grown = True
+                break
+        if len(cur) >= 4:
+            rings.append(cur)
+    return rings
+
+
+def _overpass_areas(lat0, lat1, lon0, lon1, selectors) -> list:
+    """Areas (closed ways and multipolygon relations) matching any of ``selectors``: [{id, type, tags, outer: [rings], inner: [rings]}],
+    rings as [(lat, lon), ...]."""
+    box = f"({lat0},{lon0},{lat1},{lon1})"
+    q = "[out:json][timeout:240];(" + "".join(f"way{s}{box};relation{s}{box};" for s in selectors) + ");out geom;"
+    areas = []
+    for el in _overpass_query(q):
+        if el["type"] == "way":
+            ring = [(p["lat"], p["lon"]) for p in el.get("geometry", [])]
+            if len(ring) >= 4 and ring[0] == ring[-1]:
+                areas.append(dict(id=el["id"], type="way", tags=el.get("tags", {}), outer=[ring], inner=[]))
+        elif el["type"] == "relation":
+            mem = [m for m in el.get("members", []) if m.get("type") == "way" and m.get("geometry")]
+            seg = lambda role: [[(p["lat"], p["lon"]) for p in m["geometry"]] for m in mem if (m.get("role") or "outer") == role]
+            outer, inner = _join_rings(seg("outer")), _join_rings(seg("inner"))
+            if outer:
+                areas.append(dict(id=el["id"], type="relation", tags=el.get("tags", {}), outer=outer, inner=inner))
+    return areas
+
+
+def military_mask(region: Region, raw_dir: Path, axis) -> np.ndarray | None:
+    """Military land on the terrain grid (row 0 = south), from raw/osm_military.json; None if it was not downloaded (the 60 km maps)."""
+    p = raw_dir/"osm_military.json"
+    if not p.exists():
+        return None
+    from PIL import Image, ImageDraw
+    n, cell, lo = len(axis), float(axis[1] - axis[0]), float(axis[0])
+    img = Image.new("1", (n, n), 0)
+    draw = ImageDraw.Draw(img)
+
+    def pix(ring):
+        x, y = to_xy(region, np.array([q[0] for q in ring]), np.array([q[1] for q in ring]))
+        return list(zip(((x - lo)/cell).tolist(), ((y - lo)/cell).tolist()))   # (column, row): image x = column, image y = row
+
+    areas = json.loads(p.read_text())["areas"]
+    for a in areas:
+        for ring in a["outer"]:
+            draw.polygon(pix(ring), fill=1)
+    for a in areas:
+        for ring in a["inner"]:
+            draw.polygon(pix(ring), fill=0)
+    return np.array(img, dtype=bool)
+
+
+def fetch_raw(region: Region, half_m: float | None = None, raw_dir: Path | None = None, refresh=False) -> Path:
+    """Download (or reuse) the DEM, land cover and OSM highways of the region's box. Maps larger than 60 km ask Overpass only for the
+    road classes used and for bridges (the 120 km Barstow box holds the Victor Valley towns: every street would be a big download)."""
+    half_m = half_m or region.size_km*500.0
     raw_dir = raw_dir or DATA/region.key/"raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     la0, la1, lo0, lo1 = bbox(region, half_m)
+    big = region.size_km > 60
     meta = {"region": region.key, "lat": region.lat, "lon": region.lon, "bbox": [la0, la1, lo0, lo1],
             "sources": {"dem": "Copernicus DEM GLO-30 (DSM)", "landcover": "ESA WorldCover 2021 v200, 20 m overview",
                         "roads": "OpenStreetMap via Overpass API (ODbL)"}}
@@ -277,13 +398,25 @@ def fetch_raw(region: Region, half_m: float = 30000.0, raw_dir: Path | None = No
     if refresh or not (raw_dir/"osm_highways.json").exists():
         print("OSM highways ...", flush=True)
         meta["osm_fetched"] = time.strftime("%Y-%m-%d %H:%M")
-        (raw_dir/"osm_highways.json").write_text(json.dumps({**meta, "ways": _overpass_ways(la0, la1, lo0, lo1)},
-                                                            ensure_ascii=False))
+        if big:
+            used = "|".join(HIGHWAY_CODES)
+            ways = {w["id"]: w for w in _overpass_ways(la0, la1, lo0, lo1, f'["highway"~"^({used})(_link)?$"]', splits=4)}
+            ways.update({w["id"]: w for w in _overpass_ways(la0, la1, lo0, lo1, '["highway"]["bridge"]', splits=2)})
+            meta["osm_selector"] = f"highway in {list(HIGHWAY_CODES)} (+ _link), and every highway with a bridge tag"
+            ways = list(ways.values())
+        else:
+            ways = _overpass_ways(la0, la1, lo0, lo1)
+        (raw_dir/"osm_highways.json").write_text(json.dumps({**meta, "ways": ways}, ensure_ascii=False))
     if refresh or not (raw_dir/"osm_waterways.json").exists():
         print("OSM waterways ...", flush=True)
-        ways = _overpass_ways(la0, la1, lo0, lo1, '["waterway"~"^(river|stream|canal)$"]', splits=1)
+        ways = _overpass_ways(la0, la1, lo0, lo1, '["waterway"~"^(river|stream|canal)$"]', splits=2 if big else 1)
         (raw_dir/"osm_waterways.json").write_text(json.dumps({**meta, "osm_fetched": time.strftime("%Y-%m-%d %H:%M"),
                                                               "ways": ways}, ensure_ascii=False))
+    if big and (refresh or not (raw_dir/"osm_military.json").exists()):
+        print("OSM military land ...", flush=True)
+        areas = _overpass_areas(la0, la1, lo0, lo1, MILITARY_SELECTORS)
+        (raw_dir/"osm_military.json").write_text(json.dumps({**meta, "osm_fetched": time.strftime("%Y-%m-%d %H:%M"),
+                                                             "selectors": list(MILITARY_SELECTORS), "areas": areas}, ensure_ascii=False))
     return raw_dir
 
 
@@ -318,13 +451,18 @@ def _fill_river_gaps(water, river_lines, axis):
 
 # ------------------------------------------------------------------ build
 def _sample_grid(arr, lats, lons, glat, glon, order):
-    """Sample a north-up lat/lon raster at the grid points (rows = glat ascending, cols = glon)."""
+    """Sample a north-up lat/lon raster at the grid points: ``glat`` / ``glon`` 1-D (rows = glat ascending, cols = glon) or the
+    latitude and longitude of every grid point (2-D, transverse Mercator maps)."""
     rr = (lats[0] - glat)/(lats[0] - lats[1])
     cc = (glon - lons[0])/(lons[1] - lons[0])
-    R, C = np.meshgrid(rr, cc, indexing="ij")
+    if np.ndim(glat) == 2:
+        R, C, shape = rr, cc, np.shape(glat)
+    else:
+        R, C = np.meshgrid(rr, cc, indexing="ij")
+        shape = (len(glat), len(glon))
     src = arr.astype(float) if order else arr
     out = map_coordinates(src, [R.ravel(), C.ravel()], order=order, mode="nearest")
-    return out.reshape(len(glat), len(glon))
+    return out.reshape(shape)
 
 
 def _raster_lines(lines, axis, step_m=10.0):
@@ -659,26 +797,31 @@ def simplify_graph(g: dict, axis, density: float, anchor_m: float = 2500.0, spur
     return out, info
 
 
-def landcover_grid(region: Region, raw_dir: Path, map_m: float = 60000.0, cell_m: float = 50.0) -> np.ndarray:
-    """ESA WorldCover classes on the terrain grid (row 0 = south), from the cached raw data."""
+def landcover_grid(region: Region, raw_dir: Path, map_m: float | None = None, cell_m: float = 50.0, grid=None) -> np.ndarray:
+    """ESA WorldCover classes on the terrain grid (row 0 = south), from the cached raw data. ``grid``: grid_latlon, if already made."""
+    map_m = map_m or region.size_km*1000.0
     n = int(round(map_m/cell_m)) + 1
     axis = np.linspace(-map_m/2, map_m/2, n)
-    kx, ky = scale(region.lat)
+    glat, glon = grid if grid is not None else grid_latlon(region, axis)
     d = np.load(raw_dir/"worldcover.npz")
-    return _sample_grid(d["lc"], d["lat"], d["lon"], region.lat + axis/ky, region.lon + axis/kx, order=0).astype(np.uint8)
+    return _sample_grid(d["lc"], d["lat"], d["lon"], glat, glon, order=0).astype(np.uint8)
 
 
-def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, cell_m: float = 50.0,
+def build_real_terrain(region: Region, raw_dir: Path, map_m: float | None = None, cell_m: float = 50.0,
                        max_slope_deg: float = 32.0):
-    """Terrain layers and road graph for the region from the cached raw data."""
+    """Terrain layers and road graph for the region from the cached raw data. Transverse Mercator maps keep the elevation as float32
+    (user 2026-11-17: 92 MB less per 120 km map; 0.1 mm at 1 km height)."""
+    map_m = map_m or region.size_km*1000.0
     n = int(round(map_m/cell_m)) + 1
     axis = np.linspace(-map_m/2, map_m/2, n)
-    kx, ky = scale(region.lat)
-    glat, glon = region.lat + axis/ky, region.lon + axis/kx
+    glat, glon = grid_latlon(region, axis)
 
     d = np.load(raw_dir/"dem.npz")
     z = _sample_grid(np.nan_to_num(d["z"].astype(float), nan=0.0), d["lat"], d["lon"], glat, glon, order=1)
-    lc = landcover_grid(region, raw_dir, map_m, cell_m)
+    if region.proj == "tm":
+        z = z.astype(np.float32)
+    lc = landcover_grid(region, raw_dir, map_m, cell_m, grid=(glat, glon))
+    del glat, glon
     osm = json.loads((raw_dir/"osm_highways.json").read_text())
 
     built_all = lc == WC_BUILT
@@ -686,6 +829,8 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, ce
     built = built_all & ~city
     forest = lc == WC_TREE
     water = lc == WC_WATER
+    military = military_mask(region, raw_dir, axis)          # None on the 60 km maps
+    closed = city if military is None else city | military   # no target enters (their roads are left out, off-road is blocked)
 
     wat = json.loads((raw_dir/"osm_waterways.json").read_text())
     river_lines, stream_lines = [], []
@@ -702,7 +847,7 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, ce
     # road network first where it is simplified, so that the surface layer shows the same roads as the graph
     graph = None
     if region.key in ROAD_SIMPLIFY:
-        full = road_graph(region, osm["ways"], city, axis)
+        full = road_graph(region, osm["ways"], closed, axis)
         graph, info = simplify_graph(full, axis, **ROAD_SIMPLIFY[region.key])
         sfx = "" if cell_m == 50 else f"_{cell_m:g}m"
         np.savez_compressed(DATA/region.key/f"road_graph_full{sfx}.npz", **full)
@@ -724,7 +869,7 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, ce
     for tier in (1, 2):
         r, c = _raster_lines(lines[tier], axis)
         surface[r, c] = np.maximum(surface[r, c], tier)
-    surface[city] = 0
+    surface[closed] = 0
     r, c = _raster_lines(bridge_lines, axis)
     fords = np.zeros((n, n), bool)
     fords[r, c] = True
@@ -736,7 +881,7 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float = 60000.0, ce
                         forest_frac=float(forest.mean()), source=region.key,
                         origin_lat=region.lat, origin_lon=region.lon)
     empty = np.zeros((n, n), bool)
-    terr = build_terrain(cfg, axis, z, water, fords, empty, forest, stream, surface, city=city, built=built)
+    terr = build_terrain(cfg, axis, z, water, fords, empty, forest, stream, surface, city=city, built=built, military=military)
     if graph is None:
-        graph = road_graph(region, osm["ways"], city, axis)
+        graph = road_graph(region, osm["ways"], closed, axis)
     return terr, graph, lc

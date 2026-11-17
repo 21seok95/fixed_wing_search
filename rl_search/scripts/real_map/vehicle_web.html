@@ -103,6 +103,9 @@
   .param .v { width:100%; padding:2px 4px; border:1px solid var(--line); border-radius:4px; background:#fff; font:inherit; color:inherit; text-align:right; font-variant-numeric:tabular-nums; appearance:textfield; -moz-appearance:textfield; }
   .param .v::-webkit-outer-spin-button, .param .v::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
   .slopetoggle { display:flex; align-items:center; gap:6px; margin:2px 0 8px 123px; }
+  .param.boolp { display:flex; gap:7px; align-items:center; margin:6px 0; cursor:pointer; }
+  .presets { display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px; }
+  .presets + .hint { display:block; margin:0 0 8px; }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .pick2 { display:grid; grid-template-columns:118px 1fr; gap:8px; align-items:center; margin:6px 0; }
   .pick2 select { width:100%; }
@@ -223,7 +226,7 @@
           <label class="row" style="gap:4px">seed <select id="nseeds" title="seed를 하나씩 늘려 여러 시나리오를 함께 실행"><option>1</option><option>3</option><option>5</option><option>10</option></select>개</label>
         </div>
         <div class="row"><button class="primary" id="submit">탐색 계획 실행</button></div>
-        <div class="hint" style="margin:12px 0 4px">강화학습(RL) 정책으로 같은 시나리오를 비행합니다. 암보이 지도에서만 되고, 계획에 쓰지 않은 별도 particle로 채점합니다.</div>
+        <div class="hint" style="margin:12px 0 4px">강화학습(RL) 정책으로 같은 시나리오를 비행합니다. 모델은 암보이·바스토 60 km 지도에서 학습했습니다(충주 등 다른 지도는 일반화 확인). 계획에 쓰지 않은 별도 particle로 채점합니다.</div>
         <div class="row" style="gap:6px">
           <select id="rlmodel" aria-label="RL 모델" style="flex:1; min-width:0"></select>
           <label class="row" style="gap:4px" title="보고 후 몇 분 뒤에 이륙할지 (학습 범위 0~40분). SAROPS 실행은 항상 0분에 이륙합니다.">이륙 <input type="number" id="rllaunch" min="0" max="60" step="1" value="0" style="width:52px">분</label>
@@ -492,16 +495,51 @@ function paramRow(p, val, onInput, onChange) {
     btn.addEventListener("click", e => { if (e.detail === 0 && tick(dir)) commit(); });     // keyboard
   });
   edges();
+  row.setValue = v => { cur = Number(v); range.value = cur; box.value = show(cur); edges(); };     // a preset changed it
   return row;
 }
+// an on/off setting (a VehicleConfig bool): check box
+function boolRow(p, val, onChange) {
+  const row = document.createElement("label"); row.className = "param boolp";
+  row.title = p.help || "";
+  row.innerHTML = `<input type="checkbox" aria-label="${p.label}"><span>${p.label}</span>`;
+  const cb = row.querySelector("input");
+  cb.checked = !!val;
+  cb.onchange = () => onChange(cb.checked);
+  row.setValue = v => { cb.checked = !!v; };
+  return row;
+}
+const CTRL = {};                                     // setting name -> shows a new value in its control
 function buildParams() {
   const tabs = $("subtabs"), box = $("params");
   Object.entries(META.groups).forEach(([g, items]) => {
     const b = document.createElement("button"); b.textContent = g; b.dataset.g = g;
     b.onclick = () => showGroup(g); tabs.appendChild(b);
     const div = document.createElement("div"); div.dataset.g = g;
+    const presets = (META.presets || {})[g];
+    if (presets) {                                   // buttons that set the whole group at once
+      const pr = document.createElement("div"); pr.className = "presets";
+      presets.forEach(ps => {
+        const pb = document.createElement("button"); pb.type = "button"; pb.textContent = ps.label;
+        pb.onclick = () => {
+          Object.entries(ps.values).forEach(([k, v]) => { VALUES[k] = v; if (CTRL[k]) CTRL[k](v); });
+          if ($("auto").checked) run();
+        };
+        pr.appendChild(pb);
+      });
+      div.appendChild(pr);
+      const hint = document.createElement("span"); hint.className = "hint";
+      hint.textContent = "예전 규칙 = R13까지 학습에 쓴 입자, 새 규칙 = 앞으로 만들 학습 시나리오의 입자";
+      div.appendChild(hint);
+    }
     items.forEach(p => {
-      div.appendChild(paramRow(p, VALUES[p.name] ?? p.min, v => { VALUES[p.name] = v; if (p.name === SLOPE_PARAM) slopeLimitChanged(); }, v => { VALUES[p.name] = v; if ($("auto").checked) run(); }));
+      if (p.kind === "bool") {
+        const row = boolRow(p, VALUES[p.name], v => { VALUES[p.name] = v; if ($("auto").checked) run(); });
+        CTRL[p.name] = row.setValue; div.appendChild(row);
+        return;
+      }
+      const row = paramRow(p, VALUES[p.name] ?? p.min, v => { VALUES[p.name] = v; if (p.name === SLOPE_PARAM) slopeLimitChanged(); }, v => { VALUES[p.name] = v; if ($("auto").checked) run(); });
+      CTRL[p.name] = row.setValue; div.appendChild(row);
       if (p.name === SLOPE_PARAM) {
         const r = document.createElement("label"); r.className = "slopetoggle";
         r.innerHTML = `<input type="checkbox" id="o_slope2"><span>못 가는 곳 지도에 표시</span><span class="hint" id="slopeinfo"></span>`;
@@ -1158,7 +1196,6 @@ async function loadRlModels() {
 }
 async function submitRL() {
   if (!RES || !$("rlmodel").value) return;
-  if (REGION !== RL_REGION) { status("RL 모델은 암보이 지도에서만 학습했습니다. 지도를 암보이로 바꾸세요.", true); return; }
   const n = Number($("nseeds").value);
   const body = { ...payload(), start: START, kind: "rl", model: $("rlmodel").value, launch_min: Number($("rllaunch").value) || 0,
                  n_seeds: n, label: $("runname").value };

@@ -12,11 +12,13 @@ tiers (1 = slow road, 2 = fast road), ``fords`` holds bridge cells over water, `
 and two optional layers are added: ``city`` (large built-up areas, hand-off to ground units) and
 ``built`` (other built-up land, which counts as cover like forest). Files without them load as zeros.
 
-Only the base layers are stored; slopes, cover, clearance and gradients are derived on load.
+Only the base layers are stored; slopes, cover, clearance and gradients are derived from them the first time they are used and then
+kept (user 2026-11-17: the vehicle model and the RL env use few of them; computed on load they took 0.37 GB of every 60 km map).
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from functools import cached_property
 from pathlib import Path
 import heapq
 import json
@@ -49,8 +51,11 @@ class TerrainConfig:
     origin_lon: float | None = None
 
 
-@dataclass
+@dataclass(eq=False)
 class Terrain:
+    """Base layers (from the terrain file or the generator) and, as properties computed the first time they are used and then
+    kept, the derived ones: cover, cover_gx/gy, tpi, slope_deg, forbidden, clearance, clearance_gx/gy, z_gx/gy (formulas as
+    they were computed on load until 2026-11-17, so the values are the same)."""
     cfg: TerrainConfig
     axis: np.ndarray
     z: np.ndarray
@@ -60,22 +65,83 @@ class Terrain:
     forest: np.ndarray
     stream: np.ndarray
     surface: np.ndarray
-    cover: np.ndarray
-    cover_gx: np.ndarray
-    cover_gy: np.ndarray
-    tpi: np.ndarray
-    forbidden: np.ndarray
-    slope_deg: np.ndarray
-    clearance: np.ndarray
-    clearance_gx: np.ndarray
-    clearance_gy: np.ndarray
-    z_gx: np.ndarray
-    z_gy: np.ndarray
     cell: float
     mountain_z_m: float
     city: np.ndarray | None = None
     built: np.ndarray | None = None
+    military: np.ndarray | None = None      # military land, closed to the targets (120 km maps, user 2026-11-17); None = none mapped
     _float_cache: dict = field(default_factory=dict, repr=False)
+
+    # ---- derived layers
+    def _slope(self) -> np.ndarray:
+        dzdy, dzdx = np.gradient(self.z, self.cell, self.cell)
+        return np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
+
+    def steep(self, limit_deg: float) -> np.ndarray:
+        """Cells with a slope of at least ``limit_deg``. The slope itself is not kept for this (it is if slope_deg was used)."""
+        s = self.__dict__.get("slope_deg")
+        return (self._slope() if s is None else s) >= limit_deg
+
+    @cached_property
+    def slope_deg(self) -> np.ndarray:
+        return self._slope()
+
+    @cached_property
+    def forbidden(self) -> np.ndarray:
+        return self.water | self.mountain | self.steep(self.cfg.max_slope_deg)
+
+    @cached_property
+    def clearance(self) -> np.ndarray:
+        return distance_transform_edt(~self.forbidden)*self.cell
+
+    @cached_property
+    def clearance_gx(self) -> np.ndarray:
+        cgy, cgx = np.gradient(self.clearance, self.cell, self.cell)
+        self.__dict__.setdefault("clearance_gy", cgy)
+        return cgx
+
+    @cached_property
+    def clearance_gy(self) -> np.ndarray:
+        cgy, cgx = np.gradient(self.clearance, self.cell, self.cell)
+        self.__dict__.setdefault("clearance_gx", cgx)
+        return cgy
+
+    @cached_property
+    def z_gx(self) -> np.ndarray:
+        dzdy, dzdx = np.gradient(self.z, self.cell, self.cell)
+        self.__dict__.setdefault("z_gy", dzdy)
+        return dzdx
+
+    @cached_property
+    def z_gy(self) -> np.ndarray:
+        dzdy, dzdx = np.gradient(self.z, self.cell, self.cell)
+        self.__dict__.setdefault("z_gx", dzdx)
+        return dzdy
+
+    @cached_property
+    def tpi(self) -> np.ndarray:
+        return self.z - gaussian_filter(self.z, 500/self.cell)
+
+    @cached_property
+    def cover(self) -> np.ndarray:
+        return gaussian_filter((self.forest | self.built).astype(float), 40/self.cell)
+
+    def _cover_far_grad(self):
+        # wide-scale cover field so agents far from forest still sense where it is
+        cover_far = gaussian_filter((self.forest | self.built).astype(float), 320/self.cell)
+        return np.gradient(cover_far, self.cell, self.cell)
+
+    @cached_property
+    def cover_gx(self) -> np.ndarray:
+        cgy, cgx = self._cover_far_grad()
+        self.__dict__.setdefault("cover_gy", cgy)
+        return cgx
+
+    @cached_property
+    def cover_gy(self) -> np.ndarray:
+        cgy, cgx = self._cover_far_grad()
+        self.__dict__.setdefault("cover_gx", cgx)
+        return cgy
 
     def sample(self, fld: np.ndarray, x, y) -> np.ndarray:
         """Bilinear map lookup; scalar or vector locations, metric coordinates."""
@@ -274,29 +340,18 @@ def make_terrain(cfg: TerrainConfig) -> Terrain:
 
 
 def build_terrain(cfg: TerrainConfig, axis, z, water, fords, mountain, forest, stream, surface,
-                  city=None, built=None) -> Terrain:
-    """Derive cover, slope, no-go mask, clearance and gradients from the base layers."""
+                  city=None, built=None, military=None) -> Terrain:
+    """Terrain from the base layers; cover, slope, no-go mask, clearance and gradients are derived when first used."""
     cell = float(axis[1] - axis[0])
     city = np.zeros(z.shape, bool) if city is None else city.astype(bool)
     built = np.zeros(z.shape, bool) if built is None else built.astype(bool)
-    hide = forest | built
-    tpi = z - gaussian_filter(z, 500/cell)
-    cover = gaussian_filter(hide.astype(float), 40/cell)
-    # Wide-scale cover field so agents far from forest still sense where it is
-    cover_far = gaussian_filter(hide.astype(float), 320/cell)
-    cgy_c, cgx_c = np.gradient(cover_far, cell, cell)
-    dzdy, dzdx = np.gradient(z, cell, cell)
-    slope_deg = np.degrees(np.arctan(np.hypot(dzdx, dzdy)))
-    forbidden = water | mountain | (slope_deg >= cfg.max_slope_deg)
-    clearance = distance_transform_edt(~forbidden)*cell
-    cgy, cgx = np.gradient(clearance, cell, cell)
+    military = None if military is None or not military.any() else military.astype(bool)
     mountain_z = float(z[mountain].min()) if mountain.any() else float("inf")
-    return Terrain(cfg, axis, z, water, fords, mountain, forest, stream, surface, cover, cgx_c, cgy_c,
-                   tpi, forbidden, slope_deg, clearance, cgx, cgy, dzdx, dzdy, cell, mountain_z, city, built)
+    return Terrain(cfg, axis, z, water, fords, mountain, forest, stream, surface, cell, mountain_z, city, built, military)
 
 
 BASE_LAYERS = ("z", "water", "fords", "mountain", "forest", "stream", "surface")
-EXTRA_LAYERS = ("city", "built")   # optional; saved only when any cell is set
+EXTRA_LAYERS = ("city", "built", "military")   # optional; saved only when any cell is set
 
 
 def save_terrain(path: Path, terr: Terrain) -> None:
