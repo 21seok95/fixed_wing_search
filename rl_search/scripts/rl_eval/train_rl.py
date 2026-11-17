@@ -47,7 +47,7 @@ def make_env(stage: int, seed: int, settings: dict | None = None, straight_bonus
                            roll_reversal_deg=roll_deg, diverse=diverse, pool=pool, mask_cost=mask_cost, straight_on_raw=straight_raw,
                            multi=multi, type_weights=type_weights)
         return Monitor(make_gym(cfg, seed=seed), info_keywords=("A", "POS", "total", "bonus", "roll_rev", "mask_cut", "stage", "typ", "look",
-                                                                 "region"))
+                                                                 "region", "start"))
     return f
 
 
@@ -290,6 +290,10 @@ def main():
                     vals = [e["total"] for e in eps if e.get("typ") == t]
                     if vals:
                         self.logger.record(f"episode_type/{t}", float(np.mean(vals)))
+            for s in sorted({e.get("start") for e in eps if e.get("start")}):     # launches and each kind of mid-flight start (stage 4)
+                vals = [e["POS"] for e in eps if e.get("start") == s]
+                self.logger.record(f"episode_start/{s}", float(np.mean(vals)))
+                self.logger.record(f"episode_start_n/{s}", len(vals))
             if len(args.regions) > 1:                            # training episodes per map
                 for region in args.regions:
                     vals = [e["total"] for e in eps if e.get("region") == region]

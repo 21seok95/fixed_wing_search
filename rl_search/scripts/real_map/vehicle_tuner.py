@@ -56,6 +56,22 @@ GROUPS = {
               ("p_detour", "교차로 다른 길 확률", 0, .5, .01), ("goal_sector_deg", "목적지 구간 (°)", 2, 30, 1),
               ("particles", "particle 수", 200, 5000, 100), ("duration_min", "시간 (분)", 10, 120, 5),
               ("seed", "seed", 0, 50, 1)],
+    # user 2026-11-17 (docs/scenario_redesign.md): on/off rules (0 / 1 here; the web page shows them as check boxes, with HELP)
+    "되돌아옴": [("start_by_route", "목표 쪽으로 출발·복귀", 0, 1, 1), ("no_return", "지나온 길을 거꾸로 안 감", 0, 1, 1),
+              ("deadend_offroad", "막다른 길 끝에서 도로 밖으로", 0, 1, 1), ("off_follow", "도로 밖 장애물은 옆으로 돌아감", 0, 1, 1),
+              ("detour_deadend_deg", "우회로 막다른 길 (도주 방향 ±°)", 0, 90, 5), ("detour_max_deg", "우회 길 방향 한계 (±°)", 30, 180, 5)],
+}
+# shown when the pointer rests on a setting's name in the web page
+HELP = {
+    "start_by_route": "LKP에서 출발할 때와 도로 밖에서 도로로 돌아올 때, 목표(도주 방향의 지도 가장자리)까지 시간이 짧은 쪽으로 간다. "
+                      "우회 확률만큼은 도주 방향이 가리키는 쪽으로 출발한다(막다른 길이면 도주 방향 ±45° 안일 때만).",
+    "no_return": "갈림길에서 최근 지나온 도로 12개를 거꾸로 달리지 않고, 막다른 길로 방향을 돌리지도 않는다. 남은 길 중 목표까지 가장 빠른 길로 "
+                 "(내비게이션의 경로 재탐색처럼). 거꾸로 가는 길밖에 없을 때만 허용.",
+    "deadend_offroad": "막다른 길 끝에서 돌아서지 않고 도주 방향 쪽 도로 밖으로 간다(모든 유형, 들판·산 속도). 떠나온 막다른 길로는 다시 올라타지 않는다.",
+    "off_follow": "도로 밖에서 앞쪽 ±90°가 모두 못 가는 땅이면 돌아서지 않고 장애물 가장자리를 따라 돌아간다(Bug 알고리즘). 도주 방향이 열리고 "
+                  "막혔던 곳보다 나아가면 다시 도주 방향으로. 사방이 막혔을 때만 돌아선다.",
+    "detour_deadend_deg": "무작위 우회 때 도주 방향 ± 이 각도 안을 향한 막다른 길에 들어갈 수 있다(끝에서 도로 밖으로). 0 = 들어가지 않음(예전).",
+    "detour_max_deg": "무작위 우회로 고르는 길을 도주 방향 ± 이 각도 안을 향한 길로 제한한다(추적자 쪽으로 우회하지 않음). 180 = 제한 없음(예전).",
 }
 
 
@@ -76,6 +92,8 @@ def background(ax, net):
     rgb = np.ones(hs.shape + (3,))*np.array([.96, .95, .90])
     rgb[t.forest[::s, ::s]] = (.80, .88, .78)
     rgb[t.built[::s, ::s]] = (.90, .80, .82)
+    if getattr(t, "military", None) is not None:
+        rgb[t.military[::s, ::s]] = (.66, .68, .55)                  # military land (closed to the targets)
     rgb[t.city[::s, ::s]] = (.86, .55, .60)
     rgb[t.water[::s, ::s]] = (.55, .72, .95)
     rgb *= (.75 + .25*hs)[..., None]

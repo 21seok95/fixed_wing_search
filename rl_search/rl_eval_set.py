@@ -23,9 +23,10 @@ REGION = "amboy"
 EVAL_DIR = Path("rl_search/data/real")/REGION/"rl_eval"
 SEED_BASE = {"val": 70000, "test": 80000, "dval": 90000, "dtest": 95000, "mval": 100000, "mtest": 110000,
              "nval": 100000, "ntest": 110000,     # nval / ntest: the mval / mtest cases with targets that never stop (NOSTOP)
-             "bval": 120000, "btest": 130000}     # bval / btest: Barstow (mojave) cases, never stop, varied routes (ROUTE)
+             "bval": 120000, "btest": 130000,     # bval / btest: Barstow (mojave) cases, never stop, varied routes (ROUTE)
+             "v2a": 140000, "v2b": 150000}        # the redesigned scenarios (V2) on amboy120 / mojave120
 # Map of a split (R10 on two maps, user 2026-11-14): the Barstow cases are on the mojave map, all others on Amboy.
-SPLIT_REGION = dict(bval="mojave", btest="mojave")
+SPLIT_REGION = dict(bval="mojave", btest="mojave", v2a="amboy120", v2b="mojave120")
 # Diverse cases (user, 2026-11-11; docs/rl_experiments.md): per case a random target model, a wider LKP area, a launch delay and a farther
 # launch, so the particles are spread by hand-over and the policy also meets flights where POS cannot be collected early.
 DIVERSE = dict(lkp_half_m=15000.0, p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0), fast_kmh=(20.0, 50.0), delay_s=(0.0, 1200.0),
@@ -42,8 +43,8 @@ MULTI_TYPES = dict(road=dict(p_leave_min=(0.0, 0.0), p_return_min=(1.0, 1.0)),
                    mixed=dict(p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0)),
                    desert=dict(p_leave_min=(0.05, 0.3), p_return_min=(0.0, 0.1), off_kmh=(10.0, 25.0)))
 TYPE_NAMES = dict(road="도로형", mixed="혼합형", desert="사막형")
-MULTI_SPLITS = ("mval", "mtest", "nval", "ntest", "bval", "btest")
-MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30, bval=15, btest=30)   # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
+MULTI_SPLITS = ("mval", "mtest", "nval", "ntest", "bval", "btest", "v2a", "v2b")
+MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30, bval=15, btest=30, v2a=15, v2b=15)   # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
 # Targets that never stop (R10, user 2026-11-14): no stops, and each particle drives at its own steady speed: a driver factor z (one per
 # particle, rl_search.vehicle) puts it at mean x (1 + 0.15 z) in every state (fast road, slow road, off road), kept within mean x (1 +- 0.3).
 # nval / ntest are the mval / mtest cases (same seeds, types, LKP, launch) with these targets; the training pool is rl_pool_multi_ns.
@@ -55,6 +56,35 @@ SPLIT_NAMES = dict(nval="정지 없음 ", ntest="정지 없음 ", bval="바스�
 # Off-road slope limit: 30 deg for every type (vehicle_config.json, the user's maximum).
 ROUTE = dict(heading_std_deg=(10.0, 60.0), reorient_std_deg_min=(0.0, 5.0), p_detour=(0.0, 0.15), goal_sector_deg=(10.0, 30.0))
 ROUTE_SPLITS = ("bval", "btest")
+
+
+# Redesigned scenarios (docs/scenario_redesign.md, user 2026-11-17): the 120 km maps (amboy120, mojave120), the new target speeds (paved 50 +- 10,
+# unpaved 30 +- 5, off-road 10 +- 2.5 km/h, clipped at 2 std, no stops), the agreed particle rules (vehicle.NO_BACKTRACK), particles leaving the map
+# going on, 70 min tracks, the launch at the report time 10-40 km from the LKP, every scenario kept (no redraw). 30 % of the training episodes
+# start mid-flight from a saved state (``midflight``). Validation: 15 launch cases per map (V2_SPLITS).
+V2_SPEEDS = dict(fast_kmh=50.0, fast_std_kmh=10.0, slow_kmh=30.0, slow_std_kmh=5.0, off_kmh=10.0, off_std_kmh=2.5, speed_clip_sd=2.0,
+                 speed_cap_kmh=70.0, speed_band=0.0, p_stop_min=0.0)
+V2 = dict(ring_m=(10000.0, 40000.0), duration_s=4200.0, midflight=0.3)
+V2_SPLITS = ("v2a", "v2b")
+
+
+def v2_vc(rng, typ: str, seed: int) -> dict:
+    """Target model changes of a redesigned scenario of one type (against vehicle_config()): the typed leaving / returning rules with the
+    other draws of ``multi_vc`` overridden by the new speeds, the route settings of ``seed``, the agreed particle rules, exits going on."""
+    from rl_search.vehicle import NO_BACKTRACK
+    return multi_vc(rng, typ) | V2_SPEEDS | route_vc(seed) | NO_BACKTRACK | dict(exit_straight=True, duration_s=V2["duration_s"])
+
+
+def v2_training_scenario(vs, seed: int, typ: str):
+    """Redesigned training scenario of one type on the map of ``vs``: (scenario, its target model changes). The launch is drawn per episode."""
+    from dataclasses import replace
+    from rl_search.real_scenario import VehicleScenarios
+    rng = np.random.default_rng(seed)
+    vc = v2_vc(rng, typ, seed)
+    lkp = diverse_lkp(vs.net, rng)
+    heading = float(rng.uniform(0.0, 360.0))
+    vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=getattr(vs, "region", REGION), net=vs.net)
+    return vs2.make_at(seed, lkp, heading, start=(0.0, 0.0)), vc
 
 
 def route_vc(seed: int) -> dict:
@@ -158,9 +188,10 @@ def case_type(split: str, k: int) -> str:
     return MULTI["types"][k % len(MULTI["types"])] if split in MULTI_SPLITS else ""
 
 
-def diverse_lkp(net, rng) -> np.ndarray:
+def diverse_lkp(net, rng, half_m: float | None = None) -> np.ndarray:
+    """A drivable road cell within ``half_m`` (default DIVERSE["lkp_half_m"], the central 30 km) of the map centre, both axes."""
     a = net.terr.axis
-    near = np.abs(a) <= DIVERSE["lkp_half_m"]
+    near = np.abs(a) <= (DIVERSE["lkp_half_m"] if half_m is None else half_m)
     cells = np.flatnonzero((net.cell_edge >= 0) & near[:, None] & near[None, :])
     r, c = np.divmod(rng.choice(cells), len(a))
     return np.array([a[c], a[r]], float)
@@ -231,11 +262,23 @@ def start_stage2(scen, rng, half: float):
     raise RuntimeError("no stage 2 start inside the map")
 
 
-def start_stage3(lkp, rng, half: float, ring: tuple = (8000.0, 20000.0)):
+def _military_at(terr, p) -> bool:
+    """Is the point (x, y) in military land (terrain layer ``military``, nearest 25 m cell)? False without a terrain or the layer."""
+    m = getattr(terr, "military", None) if terr is not None else None
+    if m is None:
+        return False
+    n = len(terr.axis)
+    i, j = (int(np.clip(np.round((v - terr.axis[0])/terr.cell), 0, n - 1)) for v in (p[1], p[0]))
+    return bool(m[i, j])
+
+
+def start_stage3(lkp, rng, half: float, ring: tuple = (8000.0, 20000.0), terr=None):
+    """Launch point ``ring`` from the LKP, direction uniform, inside the map. With ``terr`` (the redesigned scenarios, 2026-11-17: military
+    land is closed, so a team on the ground cannot launch there) a point in military land is drawn again."""
     for _ in range(500):
         d, th = rng.uniform(*ring), rng.uniform(-np.pi, np.pi)
         s = lkp + d*np.array([np.cos(th), np.sin(th)])
-        if _inside(s, half):
+        if _inside(s, half) and not _military_at(terr, s):
             yaw = float(np.arctan2(lkp[1] - s[1], lkp[0] - s[0]))
             return 0.0, [float(s[0]), float(s[1]), yaw], dict(launch_dist_m=float(d))
     raise RuntimeError("no stage 3 launch point inside the map")
@@ -249,6 +292,8 @@ def make_case(vs, split: str, stage: int, k: int):
     rng = np.random.default_rng(seed)
     if split in DIVERSE_SPLITS:
         return make_diverse_case(vs, split, stage, k, seed, rng)
+    if split in V2_SPLITS:
+        return make_v2_case(vs, split, stage, k, seed, rng)
     if split in MULTI_SPLITS:
         return make_multi_case(vs, split, stage, k, seed, rng)
     lkp = center_lkp(vs.net, rng)
@@ -349,6 +394,27 @@ def make_multi_case(vs, split: str, stage: int, k: int, seed: int, rng):
     info = info | dict(delay_s=delay, out_share=out, tries=attempt + 1, type=typ)
     case = Case(split, stage, k, s, [float(v) for v in lkp], heading, 0.0, start, info, t_launch_s=delay, vc=vc, typ=typ,
                 region=getattr(vs, "region", REGION))
+    return case, scen, vres, hold
+
+
+def make_v2_case(vs, split: str, stage: int, k: int, seed: int, rng):
+    """A redesigned validation case (V2): type MULTI["types"][k % 3], LKP on a road in the central 30 km, launch at the report time from
+    10-40 km, the scenario kept whatever leaves the map."""
+    from dataclasses import replace
+    from rl_search.real_scenario import VehicleScenarios
+    if stage != 3:
+        raise ValueError("redesigned cases are launch (stage 3) cases")
+    typ = case_type(split, k)
+    vc = v2_vc(rng, typ, seed)
+    lkp = diverse_lkp(vs.net, rng)
+    heading = float(rng.uniform(0.0, 360.0))
+    _, start, info = start_stage3(lkp, rng, float(vs.net.terr.axis[-1]), V2["ring_m"], terr=vs.net.terr)
+    vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=getattr(vs, "region", REGION), net=vs.net)
+    scen, vres = vs2.make_at(seed, lkp, heading, start=start[:2], with_res=True)
+    hold = vs2.make_at(seed + HOLDOUT, np.asarray(scen.lkp, float), heading, start=start[:2])
+    info = info | dict(type=typ, out_share=out_share(scen, FLIGHT_S))
+    case = Case(split, stage, k, seed, [float(v) for v in np.asarray(scen.lkp, float)], heading, 0.0, start, info, t_launch_s=0.0, vc=vc,
+                typ=typ, region=getattr(vs, "region", REGION))
     return case, scen, vres, hold
 
 

@@ -21,6 +21,9 @@ class TrackedEnv(RLSearchEnv):
     """RLSearchEnv that also keeps ``surv``: the product of its own detection factors per particle."""
 
     def reset(self, seed=None, options=None):
+        # (2026-11-17) the previous episode's ``surv`` must not be updated during this reset's launch transit: with another particle
+        # count it does not fit; it is set fresh right after the reset either way
+        self.__dict__.pop("surv", None)
         out = super().reset(seed, options)
         self.surv = np.ones(self.belief.n)
         return out

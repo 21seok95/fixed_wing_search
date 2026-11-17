@@ -17,6 +17,12 @@ R10 on two maps (user 2026-11-14: varied routes, 1000 scenarios per map):
 
     python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --route-var --n 1000 --region amboy --workers 6
     python -m rl_search.scripts.rl_eval.make_pool --multi --no-stop --no-area --route-var --n 1000 --region mojave --workers 6
+
+Redesigned scenarios (user 2026-11-17, docs/scenario_redesign.md, rl_eval_set.V2) on the 120 km maps, about 17 MB per scenario; the pool is
+sized to the training run (each scenario serves 4 episodes: about 2,100 for 6 M steps over both maps), into <region>/rl_pool_v2:
+
+    python -m rl_search.scripts.rl_eval.make_pool --v2 --n 1050 --region amboy120 --workers 8
+    python -m rl_search.scripts.rl_eval.make_pool --v2 --n 1050 --region mojave120 --workers 8
 """
 from __future__ import annotations
 
@@ -31,7 +37,7 @@ from pathlib import Path
 _W = {}
 
 
-def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, src=None, no_stop=False, no_area=False, route=False):
+def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, src=None, no_stop=False, no_area=False, route=False, v2=False):
     warnings.filterwarnings("ignore")
     from rl_search.real_scenario import VehicleScenarios
     from rl_search.rl_eval_set import vehicle_config
@@ -41,9 +47,11 @@ def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, s
     st = preload(region)
     s = settings() | dict(area_def=area_def)
     env = team_env(s, region, st["terr"], 0, area=True)
-    _W.update(st=st, s=s, h=env.h, R=env.lrc_R, vs=VehicleScenarios(st["sampler"], vehicle_config(), region=region, net=st["net"]),
+    # a stretched map (rl_search.stretch): the targets are made on the base map, real metres, then scaled
+    _W.update(st=st, s=s, h=env.h, R=env.lrc_R, k=float(st.get("k", 1.0)),
+              vs=VehicleScenarios(st.get("base_sampler", st["sampler"]), vehicle_config(), region=st.get("base", region), net=st["net"]),
               diverse=diverse, sigma=float(sigma) if sigma else env.h, sigma_off=float(sigma_off or 0.0), src=src, region=region,
-              no_stop=no_stop, no_area=no_area, route=route)
+              no_stop=no_stop, no_area=no_area, route=route, v2=v2)
 
 
 def job(args):
@@ -63,6 +71,12 @@ def job(args):
     vc = old.get("vc")
     if "scen" in old:
         scen = old["scen"]
+    elif typ and _W.get("v2") and _W.get("k", 1.0) != 1.0:      # V2 on a stretched map (half speeds on the base map, scaled)
+        from rl_search.stretch import stretched_training_scenario
+        scen, vc = stretched_training_scenario(_W["vs"], seed, typ, _W["k"])
+    elif typ and _W.get("v2"):                # redesigned scenario (V2, user 2026-11-17)
+        from rl_search.rl_eval_set import v2_training_scenario
+        scen, vc = v2_training_scenario(_W["vs"], seed, typ)
     elif typ:                                 # typed scenario (R5)
         from rl_search.rl_eval_set import multi_training_scenario
         scen, vc = multi_training_scenario(_W["vs"], seed, typ, nostop=bool(_W.get("no_stop")), route=bool(_W.get("route")))
@@ -113,7 +127,13 @@ def main():
     ap.add_argument("--route-var", action="store_true",
                     help="varied route settings per scenario (rl_eval_set.ROUTE: heading spread, heading drift, detours, goal sector; "
                          "user 2026-11-14); with --multi --no-stop the pool goes to <region>/rl_pool_multi_ns_rt")
+    ap.add_argument("--v2", action="store_true", help="the redesigned scenarios (rl_eval_set.V2, user 2026-11-17), typed, no A; into "
+                                                     "<region>/rl_pool_v2 (use --region amboy120 / mojave120)")
     args = ap.parse_args()
+    if args.v2:
+        args.multi, args.no_area = True, True
+        if str(args.out) == POOL_DIR:
+            args.out = Path(pool_dir_multi({"scen_v2": True}, args.region))
     if args.diverse and str(args.out) == POOL_DIR:
         args.out = Path(POOL_DIR_DIVERSE)
     if args.multi and str(args.out) == POOL_DIR:
@@ -122,7 +142,7 @@ def main():
             args.src = Path(POOL_DIR_MULTI)
     args.out.mkdir(parents=True, exist_ok=True)
     # another map draws its own scenarios (seeds 10 500 000 + i on mojave), not the Amboy draws on other roads
-    base = RealRLConfig().seed_base + {"amboy": 0, "mojave": 500_000}.get(args.region, 0)
+    base = RealRLConfig().seed_base + {"amboy": 0, "mojave": 500_000, "amboy120": 2_000_000, "mojave120": 2_500_000, "amboy_x2": 3_000_000, "mojave_x2": 3_500_000}.get(args.region, 0)
     if args.multi:                           # <type>_s<seed>.pkl, the types in turn so every type has n / 3
         from rl_search.rl_eval_set import MULTI
         types = MULTI["types"]
@@ -142,7 +162,7 @@ def main():
         road_mask(args.region)                              # build the road cells once before the workers fork
     with get_context("fork").Pool(args.workers, initializer=_init, initargs=(args.region, args.area_def, args.diverse, args.area_sigma,
                                                                              args.area_sigma_off, args.src, args.no_stop, args.no_area,
-                                                                             args.route_var)) as pool:
+                                                                             args.route_var, args.v2)) as pool:
         for i, (seed, sec) in enumerate(pool.imap_unordered(job, todo, chunksize=1), 1):
             if i % 25 == 0 or i == len(todo):
                 el = time.perf_counter() - t0

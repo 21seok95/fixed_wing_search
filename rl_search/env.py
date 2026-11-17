@@ -76,7 +76,7 @@ class SearchEnv:
         start = options.get("start_pose")
         if start is None:
             start = (*scen.start, np.deg2rad(scen.start_heading_deg))
-        self.belief = ParticleBelief(scen.track, scen.save_dt_s, scen.exit_step, self.use_exits)
+        self.belief = ParticleBelief(scen.track, scen.save_dt_s, scen.exit_step, self.use_exits and not getattr(scen, "exits_move", False))
         if self.coverage is None:
             self.coverage = Coverage(self.terr.axis, self.terr.forbidden, scen.lkp, scen.track,
                                      scen.save_dt_s, self.cfg)

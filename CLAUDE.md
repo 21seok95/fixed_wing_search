@@ -6,7 +6,8 @@ check with the user between steps. Show every result as figures as well as table
 The real-region map work (Chungju, open data, road graph) has its own handoff in `docs/real_map_todo.md`; read its newest
 section too. The RL redesign agreed with the user item by item (MDP, model, training settings, validation set) is in
 `docs/rl_mdp_design.md`; its last section says how to continue on the Ubuntu PC. Every RL experiment (what changed, why, result, next
-decision) is logged in `docs/rl_experiments.md`, with names for the A definitions and reward versions; update it whenever a run starts or ends.
+decision) is logged in `docs/rl_experiments.md`, with names for the A definitions and reward versions; update it whenever a run starts or ends. The training-scenario redesign after R13 (120 km terrain, new evader speeds, mid-flight
+starts, generated scenarios, particle rules; agreed item by item since 2026-11-17) is in `docs/scenario_redesign.md`.
 
 **On the Ubuntu PC**, the next run (R10: targets that never stop, new map channels, no A) is set up in `docs/r10_ubuntu.md`: read it
 first. It holds the reasons, the decisions, the commands in order with checks, and what to report. Section 8 has the R10, R11 and R12 results
