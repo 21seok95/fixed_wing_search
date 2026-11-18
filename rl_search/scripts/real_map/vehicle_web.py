@@ -43,8 +43,32 @@ from rl_search.vehicle import EARLIER_RULES, NO_BACKTRACK, STATE_NAMES, VehicleC
 
 HTML = Path(__file__).with_name("vehicle_web.html")
 RUNS = DATA/"chungju"/"web_runs"
-DESERTS = ("mojave", "amboy", "mojave120", "amboy120")    # regions where the off-road state is not "paddy fields"
+DESERTS = ("mojave", "amboy", "mojave120", "amboy120", "amboy_x2", "mojave_x2")    # regions where the off-road state is not "paddy fields"
 WEB_STATE = DATA/"chungju"/"web_state.json"     # what the page is set to now (rewritten at every particle run)
+
+
+SCENARIO_KINDS = (("desert:road", "사막 지형 · 도로형"), ("desert:mixed", "사막 지형 · 혼합형"), ("desert:desert", "사막 지형 · 들판형"),
+                  ("mountain:road", "산악 지형 · 도로형"), ("mountain:mountain", "산악 지형 · 산악형"))
+
+
+def scenario_defaults(kind: str) -> dict:
+    """Every target field for a training scenario of ``kind`` at the middle of the ranges training draws from (user 2026-11-18)."""
+    from rl_search.rl_eval_set import MOUNTAIN, MULTI_TYPES, ROUTE, V2, V2_SPEEDS, vehicle_config
+    terrain, typ = kind.split(":")
+    t = MULTI_TYPES["mixed" if typ == "mountain" else typ]
+    mid = lambda r: round((r[0] + r[1])/2, 4)
+    p_leave = mid(MOUNTAIN["p_leave_min"]) if typ == "mountain" else mid(t["p_leave_min"])
+    out = asdict(vehicle_config()) | V2_SPEEDS | NO_BACKTRACK | {k: mid(r) for k, r in ROUTE.items()} \
+        | dict(p_leave_fast_min=p_leave, p_leave_slow_min=p_leave, p_return_min=mid(t["p_return_min"]), exit_straight=True, exit_trend_min=V2["exit_trend_min"],
+               shortcut_m=MOUNTAIN["shortcut_m"] if typ == "mountain" else 0.0, shortcut_factor=MOUNTAIN["shortcut_factor"])
+    if terrain == "mountain":                                # mountain route ranges (MOUNTAIN_ROUTE), detours keep the road tier
+        from rl_search.rl_eval_set import MOUNTAIN_ROUTE
+        out |= {k: mid(r) for k, r in MOUNTAIN_ROUTE.items()} | dict(detour_keep_tier=True)
+        if typ == "road":
+            out["deadend_offroad"] = False                  # a dead end is turned at (user 2026-11-18)
+    out = {k: v for k, v in out.items() if k not in ("particles", "dt_s", "save_dt_s", "duration_s")}
+    out["duration_min"] = V2["duration_s"]/60
+    return out
 
 
 def run_meta(o: dict, rid: str, label: str, created: str, view: dict, config: dict, **extra) -> dict:
@@ -52,6 +76,16 @@ def run_meta(o: dict, rid: str, label: str, created: str, view: dict, config: di
     return dict(id=rid, label=label, created=created, view=view, config=config, settings=o["settings"], final=o["final"], plans=sum(len(u["rects"]) for u in o["uavs"]),
                 n_uav=len(o["uavs"]), area=o["area"]["A"], escaped=o["escaped"], sec=o["sec"],
                 pos=[round(float(np.interp(m*60, o["pos_t"], o["pos"], left=0)), 4) for m in range(61)], **extra)
+
+
+def saved_time(meta_file: Path) -> float:
+    """When a run was saved (epoch s): the replay file's time (meta.json may be rewritten later), else meta.json's. The run list sorts on
+    it; the folder names do not sort by time (web runs are <date>-<time>-<n>, the validation runs eval-<split>-...)."""
+    r = meta_file.parent/"run.json.gz"
+    try:
+        return (r if r.exists() else meta_file).stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def save_run(rid: str, data: dict, meta: dict) -> None:
@@ -74,7 +108,7 @@ class Jobs:
         RUNS.mkdir(parents=True, exist_ok=True)
         for f in sorted(RUNS.glob("*/meta.json")):
             m = json.loads(f.read_text())
-            self.jobs[m["id"]] = {**m, "state": "done"}
+            self.jobs[m["id"]] = {**m, "state": "done", "t": saved_time(f)}
 
     def submit(self, items: list[dict]):
         ids = []
@@ -82,7 +116,8 @@ class Jobs:
             for it in items:
                 self.count += 1
                 jid = f"{time.strftime('%Y%m%d-%H%M%S')}-{self.count:03d}"
-                self.jobs[jid] = dict(id=jid, label=it["label"], created=time.strftime("%m-%d %H:%M"), state="queued", params=it["params"])
+                self.jobs[jid] = dict(id=jid, label=it["label"], created=time.strftime("%m-%d %H:%M"), state="queued", params=it["params"],
+                                      t=time.time())
                 ids.append(jid)
             self._fill()
         return {"ids": ids}
@@ -142,7 +177,7 @@ class Jobs:
                     m = json.loads(f.read_text())
                 except (OSError, ValueError):
                     continue
-                self.jobs[m["id"]] = {**m, "state": "done"}
+                self.jobs[m["id"]] = {**m, "state": "done", "t": saved_time(f)}
 
     def list(self):
         with self.lock:
@@ -153,7 +188,8 @@ class Jobs:
                 if j["state"] == "running":
                     v["elapsed"] = round(time.time() - j["t0"], 1)
                 out.append(v)
-        return {"jobs": out[::-1], "max_jobs": self.max}
+        out.sort(key=lambda v: -float(v.get("t", 0.0)))         # newest first by the time a run was started or saved (2026-11-18)
+        return {"jobs": out, "max_jobs": self.max}
 
     def stop(self, jid: str):
         with self.lock:
@@ -247,12 +283,28 @@ class App:
                        "help": HELP.get(n, "")} for n, lab, lo, hi, st in items] for g, items in GROUPS.items()}
         values = {f.name: getattr(self.cfg, f.name) for f in fields(self.cfg)}
         values.update(heading=self.view["heading"], seed=self.view["seed"], duration_min=self.cfg.duration_s/60)
-        presets = {"되돌아옴": [{"label": "예전 규칙 (11-17 전)", "values": EARLIER_RULES},
-                             {"label": "합의한 새 규칙 (11-17)", "values": NO_BACKTRACK}]}
-        return {"groups": groups, "presets": presets, "values": values, "lkp": self.default_lkp(self.default), "extent": self.region(self.default).extent,
+        presets = {"되돌아옴·지도 밖": [{"label": "예전 규칙 (11-17 전)", "values": EARLIER_RULES},
+                                    {"label": "합의한 새 규칙 (11-17)", "values": NO_BACKTRACK}]}
+        # (user 2026-11-18) scenario buttons: every field set to a training scenario of that terrain and target type (the middle of the
+        # ranges training draws from), or drawn as training draws one with the page's seed ("학습처럼 뽑기", /api/sample)
+        groups = {"시나리오": []} | groups
+        presets["시나리오"] = [{"label": lab, "values": scenario_defaults(kind)} for kind, lab in SCENARIO_KINDS] \
+            + [{"label": f"{lab}: 학습처럼 뽑기", "sample": kind} for kind, lab in SCENARIO_KINDS]
+        hints = {"시나리오": "위 버튼 = 학습 범위의 가운데 값, 아래 버튼 = 학습 생성기와 똑같이 무작위로 뽑음(seed는 '경로·시작'의 seed). "
+                           "사막 지형 = 모하비(암보이·바스토), 산악 지형 = 우리나라(충주). 들판형 = 도로 밖 위주(예전 이름 사막형), 산악형 = 도로 + 논밭 지름길.",
+                 "되돌아옴·지도 밖": "예전 규칙 = R13까지 학습에 쓴 입자, 새 규칙 = 앞으로 만들 학습 시나리오의 입자"}
+        return {"groups": groups, "presets": presets, "preset_hints": hints, "values": values, "lkp": self.default_lkp(self.default), "extent": self.region(self.default).extent,
                 "region": self.default, "regions": [dict(key=k, name=REGIONS[k].name_ko, off_name="도로 밖" if k in DESERTS else "논밭") for k in self.available],
                 "states": list(STATE_NAMES), "colors": [STATE_COLORS[s] for s in range(len(STATE_NAMES))],
                 "params_file": str(PARAMS), "opt_fields": FIELDS, "opt_caps": CAPS, "opt_scores": SCORES, "opt_area_defs": AREA_DEFS, "opt_score_group": SCORE_GROUP}
+
+    def sample(self, kind: str, seed: int) -> dict:
+        """Every field as a training scenario of ``kind`` draws it with ``seed`` (rl_eval_set.scenario_vc)."""
+        from rl_search.rl_eval_set import scenario_vc, vehicle_config
+        vc = asdict(vehicle_config()) | scenario_vc(np.random.default_rng(int(seed)), kind, int(seed))
+        out = {k: v for k, v in vc.items() if k not in ("particles", "dt_s", "save_dt_s")}
+        out["duration_min"] = float(vc.get("duration_s", 4200.0))/60
+        return out
 
     def config_from(self, d: dict):
         known = {f.name for f in fields(VehicleConfig)}
@@ -358,6 +410,8 @@ def make_handler(app: App):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif url.path == "/api/sample":
+                self.send_json(app.sample(q["kind"][0], int(q.get("seed", ["0"])[0])))
             elif url.path == "/api/region":
                 self.send_json(app.region_info(q["key"][0]))
             elif self.path == "/api/meta":

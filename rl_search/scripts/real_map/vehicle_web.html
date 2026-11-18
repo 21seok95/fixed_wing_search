@@ -96,6 +96,9 @@
   .kv span { color:var(--muted); }
   .kv b { font-weight:600; font-variant-numeric:tabular-nums; }
   .hint { color:var(--muted); font-size:12px; }
+  #speedchart { width:100%; height:170px; display:block; margin-top:8px; }
+  #speedlegend { font-size:11.5px; line-height:1.55; color:var(--muted, #6b6b67); margin-top:4px; }
+  #speedlegend b { font-variant-numeric:tabular-nums; }
   .param { display:grid; grid-template-columns:118px 20px minmax(0, 1fr) 20px 58px; gap:5px; align-items:center; margin:4px 0; }
   .param span:first-child[title]:not([title=""]) { cursor:help; }
   .param input[type=range] { width:100%; min-width:0; margin:0; accent-color:var(--accent); }
@@ -136,6 +139,8 @@
   .job .sub { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
   .job .bar { grid-column:2 / 4; height:3px; border-radius:2px; background:var(--soft); overflow:hidden; }
   .job .bar div { height:100%; background:var(--accent); transition:width .4s; }
+  .jday { position:sticky; top:0; z-index:1; background:var(--panel); padding:10px 4px 4px; font-size:12px; font-weight:700; color:var(--muted);
+          border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
   .empty { color:var(--muted); text-align:center; padding:40px 12px; }
   @media (max-width:1000px) {
     #app { height:auto; }
@@ -519,17 +524,29 @@ function buildParams() {
     const presets = (META.presets || {})[g];
     if (presets) {                                   // buttons that set the whole group at once
       const pr = document.createElement("div"); pr.className = "presets";
-      presets.forEach(ps => {
+      const apply = vals => {                        // set every field the preset names (and the one-way box) and run again
+        Object.entries(vals).forEach(([k, v]) => { VALUES[k] = v; if (CTRL[k]) CTRL[k](v); });
+        drawSpeedChart();
+        if ("respect_oneway" in vals) $("oneway").checked = !!vals.respect_oneway;
+        if ($("auto").checked) run();
+      };
+      presets.forEach((ps, i) => {
+        if (ps.sample && i > 0 && !presets[i - 1].sample) { const br = document.createElement("div"); br.style.flexBasis = "100%"; pr.appendChild(br); }
         const pb = document.createElement("button"); pb.type = "button"; pb.textContent = ps.label;
-        pb.onclick = () => {
-          Object.entries(ps.values).forEach(([k, v]) => { VALUES[k] = v; if (CTRL[k]) CTRL[k](v); });
-          if ($("auto").checked) run();
+        pb.onclick = async () => {
+          if (!ps.sample) return apply(ps.values);
+          try {                                      // a training scenario drawn on the server with the page's seed
+            const r = await fetch(`/api/sample?kind=${encodeURIComponent(ps.sample)}&seed=${encodeURIComponent(VALUES.seed ?? 0)}`);
+            if (!r.ok) throw new Error(r.status);
+            apply(await r.json());
+            status(`${ps.label} (seed ${VALUES.seed ?? 0})`);
+          } catch (e) { status("시나리오를 뽑지 못했습니다: " + e.message, true); }
         };
         pr.appendChild(pb);
       });
       div.appendChild(pr);
       const hint = document.createElement("span"); hint.className = "hint";
-      hint.textContent = "예전 규칙 = R13까지 학습에 쓴 입자, 새 규칙 = 앞으로 만들 학습 시나리오의 입자";
+      hint.textContent = (META.preset_hints || {})[g] || "";
       div.appendChild(hint);
     }
     items.forEach(p => {
@@ -538,7 +555,8 @@ function buildParams() {
         CTRL[p.name] = row.setValue; div.appendChild(row);
         return;
       }
-      const row = paramRow(p, VALUES[p.name] ?? p.min, v => { VALUES[p.name] = v; if (p.name === SLOPE_PARAM) slopeLimitChanged(); }, v => { VALUES[p.name] = v; if ($("auto").checked) run(); });
+      const row = paramRow(p, VALUES[p.name] ?? p.min, v => { VALUES[p.name] = v; if (p.name === SLOPE_PARAM) slopeLimitChanged(); if (SPEED_KEYS.has(p.name)) drawSpeedChart(); },
+                           v => { VALUES[p.name] = v; if ($("auto").checked) run(); });
       CTRL[p.name] = row.setValue; div.appendChild(row);
       if (p.name === SLOPE_PARAM) {
         const r = document.createElement("label"); r.className = "slopetoggle";
@@ -546,6 +564,10 @@ function buildParams() {
         div.appendChild(r);
       }
     });
+    if (g.startsWith("속도")) {                       // the particles' speed on each road kind (user 2026-11-18)
+      const c = document.createElement("canvas"); c.id = "speedchart"; div.appendChild(c);
+      const lg = document.createElement("div"); lg.id = "speedlegend"; div.appendChild(lg);
+    }
     box.appendChild(div);
   });
   const st = document.createElement("button"); st.textContent = "통계"; st.dataset.g = "__stats"; st.onclick = () => showGroup("__stats"); tabs.appendChild(st);
@@ -558,7 +580,50 @@ function showGroup(g) {
   document.querySelectorAll("#subtabs button").forEach(b => b.classList.toggle("on", b.dataset.g === g));
   document.querySelectorAll("#params > div").forEach(d => d.style.display = d.dataset.g === g ? "" : "none");
   $("statbox").hidden = g !== "__stats"; $("targetfoot").hidden = g === "__stats";
-  sizeCharts(); drawCharts();
+  sizeCharts(); drawCharts(); drawSpeedChart();
+}
+// ---------------------------------------------------------------- speed distribution (as rl_search.vehicle.simulate_vehicle draws it)
+// every particle has one driver factor z ~ N(0, 1); on each road kind its speed is mean + spread x z, clipped to [lo, hi]:
+// lo = 2.4 km/h, hi = the top speed; speed_band > 0: within mean x (1 +- band); speed_clip_sd > 0: within mean +- k x spread
+const SPEED_KEYS = new Set(["fast_kmh", "fast_std_kmh", "slow_kmh", "slow_std_kmh", "off_kmh", "off_std_kmh", "speed_clip_sd", "speed_cap_kmh", "speed_band"]);
+const SPEED_Z = (() => {                             // 6000 fixed normal draws (seeded), the same picture every time
+  let a = 12345; const u = () => (a = (a*1103515245 + 12345) % 2147483648)/2147483648 + 1e-12;
+  const z = []; while (z.length < 6000) { const r = Math.sqrt(-2*Math.log(u())), t = 2*Math.PI*u(); z.push(r*Math.cos(t), r*Math.sin(t)); }
+  return z;
+})();
+function drawSpeedChart() {
+  const c = $("speedchart"); if (!c || !c.offsetParent) return;
+  const dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  c.width = W*dpr; c.height = H*dpr;
+  const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const V = VALUES, k = +V.speed_clip_sd || 0, band = +V.speed_band || 0, cap = +V.speed_cap_kmh || 200;
+  const kinds = [["fast_kmh", "fast_std_kmh", "포장", META.colors[0]], ["slow_kmh", "slow_std_kmh", "비포장", META.colors[1]],
+                 ["off_kmh", "off_std_kmh", offName(), META.colors[2]]];
+  const sets = kinds.map(([mk, sk, name, col]) => {
+    const m = +V[mk] || 0, sd = +V[sk] || 0;
+    let lo = 2.4, hi = cap;
+    if (band > 0) { lo = Math.max(lo, m*(1 - band)); hi = Math.min(hi, m*(1 + band)); }
+    if (k > 0) { lo = Math.max(lo, m - k*sd); hi = Math.min(hi, m + k*sd); }
+    const v = SPEED_Z.map(z => Math.min(Math.max(m + sd*z, lo), Math.max(lo, hi))).sort((a, b) => a - b);
+    return { name, col, m, sd, lo, hi, v };
+  });
+  const xmax = Math.min(150, Math.max(20, ...sets.map(s => s.v[s.v.length - 1])) + 5), pad = { l: 8, r: 8, t: 6, b: 18 };
+  const X = x => pad.l + (W - pad.l - pad.r)*x/xmax, bw = xmax > 80 ? 2 : 1;
+  const nb = Math.ceil(xmax/bw), hists = sets.map(s => { const h = new Array(nb).fill(0); s.v.forEach(x => h[Math.min(nb - 1, Math.floor(x/bw))]++); return h; });
+  const ymax = Math.max(...hists.flat()) || 1, Y = y => H - pad.b - (H - pad.t - pad.b)*y/ymax;
+  ctx.strokeStyle = "#d9d8d3"; ctx.fillStyle = "#6b6b67"; ctx.font = "10px sans-serif"; ctx.lineWidth = 1;
+  for (let x = 0; x <= xmax; x += xmax > 80 ? 20 : 10) { ctx.beginPath(); ctx.moveTo(X(x), pad.t); ctx.lineTo(X(x), H - pad.b); ctx.stroke(); ctx.fillText(String(x), X(x) - 6, H - 5); }
+  hists.forEach((h, i) => {
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0));
+    h.forEach((n, j) => { ctx.lineTo(X(j*bw), Y(n)); ctx.lineTo(X((j + 1)*bw), Y(n)); });
+    ctx.lineTo(X(nb*bw), Y(0)); ctx.closePath();
+    ctx.globalAlpha = 0.25; ctx.fillStyle = sets[i].col; ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = sets[i].col; ctx.lineWidth = 1.5; ctx.stroke();
+  });
+  ctx.fillStyle = "#6b6b67"; ctx.fillText("km/h", W - 30, H - 5);
+  const q = (v, p) => v[Math.min(v.length - 1, Math.floor(p*v.length))];
+  $("speedlegend").innerHTML = sets.map(s => `<span style="color:${s.col}">■</span> ${s.name} 평균 <b>${s.m}</b> ± <b>${s.sd}</b> → 입자 90%가 `
+    + `<b>${q(s.v, .05).toFixed(0)}~${q(s.v, .95).toFixed(0)}</b> km/h, 범위 ${s.v[0].toFixed(0)}~${s.v[s.v.length - 1].toFixed(0)}`).join("<br>")
+    + `<br>입자마다 운전 성향 하나: 빠른 운전자는 모든 길에서 빠름. 자르기 = 평균 ± 퍼짐 × ${k || "∞"}, 최대 ${cap} km/h.`;
 }
 function payload() { return { ...VALUES, lkp: LKP, region: REGION }; }
 const offName = () => (META.regions.find(r => r.key === REGION) || {}).off_name || "논밭";
@@ -1266,11 +1331,23 @@ function syncCondOptions() {
   sel.innerHTML = `<option value="all">모든 점수 조건</option>` + keys.map(k => `<option value="${esc(k)}">${esc(condLabel(k))}</option>`).join("");
   sel.value = keys.includes(cur) ? cur : "all";
 }
+// run times (j.t, epoch s from the server: when the run was started or saved)
+const pad2 = n => String(n).padStart(2, "0");
+function dayKey(t) { if (!t) return "?"; const d = new Date(t*1000); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function dayLabel(t) {
+  if (!t) return "날짜 모름";
+  const d = new Date(t*1000), now = new Date(), days = Math.round((new Date(now.toDateString()) - new Date(d.toDateString()))/864e5);
+  const wd = "일월화수목금토"[d.getDay()];
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 (${wd})` + (days === 0 ? " · 오늘" : days === 1 ? " · 어제" : "");
+}
+function timeText(t) { if (!t) return ""; const d = new Date(t*1000); return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
 function renderJobs() {
   syncCondOptions();
   const box = $("joblist"), active = JOBS.filter(j => j.state === "running" || j.state === "queued").length, shown = JOBS.filter(runMatch);
   const order = $("runsort").value;
-  if (order === "score") shown.sort((a, b) => (b.state === "done") - (a.state === "done") || jobScore(b) - jobScore(a));
+  const live = j => j.state === "running" || j.state === "queued";
+  if (order === "new") shown.sort((a, b) => live(b) - live(a) || (b.t || 0) - (a.t || 0));   // running first, then by saved time
+  else if (order === "score") shown.sort((a, b) => (b.state === "done") - (a.state === "done") || jobScore(b) - jobScore(a));
   else if (order === "case") shown.sort((a, b) => `${a.split || ""}${a.stage || ""}`.localeCompare(`${b.split || ""}${b.stage || ""}`) || (a.case ?? 0) - (b.case ?? 0)
                                                || methodType(a).localeCompare(methodType(b)));
   $("runcount").textContent = `${shown.length}개 표시 · 전체 ${JOBS.length}개`;
@@ -1279,12 +1356,23 @@ function renderJobs() {
   $("runbadge").hidden = active === 0; $("runbadge").textContent = active;
   $("runinfo").textContent = `동시 ${MAX_JOBS}개까지 · 저장된 결과는 서버를 다시 켜도 남습니다`;
   box.innerHTML = "";
+  // newest first: a header per day with the number of runs that day
+  const dayCount = {};
+  if (order === "new") shown.forEach(j => { const k = live(j) ? "live" : dayKey(j.t); dayCount[k] = (dayCount[k] || 0) + 1; });
+  let lastDay = null;
   shown.forEach(j => {
+    if (order === "new") {
+      const k = live(j) ? "live" : dayKey(j.t);
+      if (k !== lastDay) {
+        const h = document.createElement("div"); h.className = "jday";
+        h.innerHTML = `<span>${esc(k === "live" ? "실행 중 · 대기" : dayLabel(j.t))}</span><span>${dayCount[k]}개</span>`;
+        box.appendChild(h); lastDay = k;
+      }
+    }
     const el = document.createElement("div"); el.className = "job" + (viewing === j.id ? " viewing" : "");
     let sub;
-    if (j.state === "done" && j.holdout) sub = `별도 particle 점수 ${j.holdout.total.toFixed(3)} (POS ${j.holdout.pos.toFixed(3)} · A ${j.holdout.A.toFixed(3)}) · ${condLabel(refKeyOf(j))}`
-      + (j.group === "web" ? ` · ${j.created}` : "");
-    else if (j.state === "done") sub = `POS ${j.final.toFixed(3)}${j.area != null ? ` · A ${j.area.toFixed(3)}` : ""}${j.n_uav > 1 ? ` · ${j.n_uav}대` : ""} · 계획 ${j.plans}번 · ${condLabel(refKeyOf(j))} · ${j.created}`;
+    if (j.state === "done" && j.holdout) sub = `${timeText(j.t)} · 별도 particle 점수 ${j.holdout.total.toFixed(3)} (POS ${j.holdout.pos.toFixed(3)} · A ${j.holdout.A.toFixed(3)}) · ${condLabel(refKeyOf(j))}`;
+    else if (j.state === "done") sub = `${timeText(j.t)} · POS ${j.final.toFixed(3)}${j.area != null ? ` · A ${j.area.toFixed(3)}` : ""}${j.n_uav > 1 ? ` · ${j.n_uav}대` : ""} · 계획 ${j.plans}번 · ${condLabel(refKeyOf(j))}`;
     else if (j.state === "running") sub = `${j.stage || "준비"} · ${(j.elapsed || 0).toFixed(0)}초` + (j.plans ? ` · 비행 ${j.t_min.toFixed(0)}분` : "");
     else sub = (STATE_TEXT[j.state] || j.state) + (j.msg ? ": " + j.msg.split("\n").slice(-2).join(" ") : "");
     const chk = j.state === "done" ? `<input type="checkbox" ${CMP.has(j.id) ? "checked" : ""} title="POS 비교에 넣기">` : `<i class="ph"></i>`;

@@ -64,7 +64,8 @@ ROUTE_SPLITS = ("bval", "btest")
 # start mid-flight from a saved state (``midflight``). Validation: 15 launch cases per map (V2_SPLITS).
 V2_SPEEDS = dict(fast_kmh=50.0, fast_std_kmh=10.0, slow_kmh=30.0, slow_std_kmh=5.0, off_kmh=10.0, off_std_kmh=2.5, speed_clip_sd=2.0,
                  speed_cap_kmh=70.0, speed_band=0.0, p_stop_min=0.0)
-V2 = dict(ring_m=(10000.0, 40000.0), duration_s=4200.0, midflight=0.3)
+V2 = dict(ring_m=(10000.0, 40000.0), duration_s=4200.0, midflight=0.3,
+          exit_trend_min=5.0)      # (user 2026-11-18) off the map: the direction of the last 5 min at the speed it left with, then drift
 V2_SPLITS = ("v2a", "v2b")
 
 
@@ -72,7 +73,58 @@ def v2_vc(rng, typ: str, seed: int) -> dict:
     """Target model changes of a redesigned scenario of one type (against vehicle_config()): the typed leaving / returning rules with the
     other draws of ``multi_vc`` overridden by the new speeds, the route settings of ``seed``, the agreed particle rules, exits going on."""
     from rl_search.vehicle import NO_BACKTRACK
-    return multi_vc(rng, typ) | V2_SPEEDS | route_vc(seed) | NO_BACKTRACK | dict(exit_straight=True, duration_s=V2["duration_s"])
+    return multi_vc(rng, typ) | V2_SPEEDS | route_vc(seed) | NO_BACKTRACK | dict(exit_straight=True, exit_trend_min=V2["exit_trend_min"], duration_s=V2["duration_s"])
+
+
+# Terrain classes (user 2026-11-18): desert terrain (Mojave: sparse roads, open land; target types road / mixed / field, "field" being the
+# type called desert in the code) and mountain terrain (Korea: dense winding roads, forest and steep land; target types road / mountain).
+# The mountain type leaves the road only as a shortcut to another road (vehicle.VehicleConfig.shortcut_m; free off-road driving got stuck
+# in field pockets closed by forest, scripts/rl_eval/trap_check.py), trying at a rate drawn per scenario.
+MOUNTAIN = dict(shortcut_m=2000.0, shortcut_factor=1.5, p_leave_min=(0.05, 0.2))
+# Route settings on mountain terrain (user 2026-11-18, scripts/rl_eval/mountain_sweep.py on Chungju 120 km): the heading spread is what makes
+# branches (10 -> 90 deg: 2.5 -> 57 effective branches), detours at junctions only make small loops (0 -> 0.15: 5 -> 31 % of the particles
+# circle a village block), so detours are rare and never from a paved road into a slow one; drift kept small; the goal sector fixed.
+MOUNTAIN_ROUTE = dict(heading_std_deg=(10.0, 90.0), reorient_std_deg_min=(0.0, 3.0), p_detour=(0.0, 0.05), goal_sector_deg=(20.0, 20.0))
+
+
+# (user 2026-11-18) the speed spread of a mountain-terrain target varies a little between scenarios: one factor per scenario on every
+# road kind's spread (the means stay 50 / 30 / 10 km/h): 0.5 = the particles drive at about the same speed, 1.5 = they string out
+MOUNTAIN_SPREAD = (0.5, 1.5)
+
+
+def mountain_route_vc(seed: int) -> dict:
+    """Route settings of a mountain-terrain target (MOUNTAIN_ROUTE), from their own stream of ``seed`` (as route_vc)."""
+    rng = np.random.default_rng([int(seed), 37])
+    out = {k: float(rng.uniform(*r)) for k, r in MOUNTAIN_ROUTE.items()} | dict(detour_keep_tier=True)
+    f = float(np.random.default_rng([int(seed), 41]).uniform(*MOUNTAIN_SPREAD))       # speed spread factor, its own stream
+    return out | {k: V2_SPEEDS[k]*f for k in ("fast_std_kmh", "slow_std_kmh", "off_std_kmh")}
+TARGET_NAMES = {"road": "도로형", "mixed": "혼합형", "desert": "들판형", "mountain": "산악형"}
+
+
+def scenario_vc(rng, kind: str, seed: int) -> dict:
+    """Target model changes of a redesigned scenario of ``kind`` "desert:road" / "desert:mixed" / "desert:desert" (field type) /
+    "mountain:road" / "mountain:mountain": the V2 rules (v2_vc); the mountain type adds shortcuts, the leave rate drawn in MOUNTAIN."""
+    terrain, typ = kind.split(":")
+    if terrain == "mountain" and typ == "road":           # (user 2026-11-18) a dead end is turned at: off the road there, the particle
+        return v2_vc(rng, "road", seed) | mountain_route_vc(seed) | dict(deadend_offroad=False)   # would end up in a field pocket
+    if typ == "mountain":
+        vc = v2_vc(rng, "mixed", seed)
+        p = float(rng.uniform(*MOUNTAIN["p_leave_min"]))
+        return vc | dict(shortcut_m=MOUNTAIN["shortcut_m"], shortcut_factor=MOUNTAIN["shortcut_factor"], p_leave_fast_min=p, p_leave_slow_min=p)
+    return v2_vc(rng, typ, seed)
+
+
+def kind_training_scenario(vs, seed: int, kind: str):
+    """A training scenario of ``kind`` ("terrain:type", scenario_vc) on the map of ``vs``: (scenario, target model changes); the LKP on a road
+    in the central 30 km, the heading uniform; the launch is drawn per episode."""
+    from dataclasses import replace
+    from rl_search.real_scenario import VehicleScenarios
+    rng = np.random.default_rng(seed)
+    vc = scenario_vc(rng, kind, seed)
+    lkp = diverse_lkp(vs.net, rng)
+    heading = float(rng.uniform(0.0, 360.0))
+    vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=getattr(vs, "region", REGION), net=vs.net)
+    return vs2.make_at(seed, lkp, heading, start=(0.0, 0.0)), vc
 
 
 def v2_training_scenario(vs, seed: int, typ: str):

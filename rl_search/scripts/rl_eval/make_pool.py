@@ -37,7 +37,8 @@ from pathlib import Path
 _W = {}
 
 
-def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, src=None, no_stop=False, no_area=False, route=False, v2=False):
+def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, src=None, no_stop=False, no_area=False, route=False, v2=False,
+          kind=None):
     warnings.filterwarnings("ignore")
     from rl_search.real_scenario import VehicleScenarios
     from rl_search.rl_eval_set import vehicle_config
@@ -51,7 +52,7 @@ def _init(region, area_def="window", diverse=False, sigma=None, sigma_off=0.0, s
     _W.update(st=st, s=s, h=env.h, R=env.lrc_R, k=float(st.get("k", 1.0)),
               vs=VehicleScenarios(st.get("base_sampler", st["sampler"]), vehicle_config(), region=st.get("base", region), net=st["net"]),
               diverse=diverse, sigma=float(sigma) if sigma else env.h, sigma_off=float(sigma_off or 0.0), src=src, region=region,
-              no_stop=no_stop, no_area=no_area, route=route, v2=v2)
+              no_stop=no_stop, no_area=no_area, route=route, v2=v2, kind=kind)
 
 
 def job(args):
@@ -71,6 +72,9 @@ def job(args):
     vc = old.get("vc")
     if "scen" in old:
         scen = old["scen"]
+    elif typ and _W.get("kind"):              # a terrain and target type (rl_eval_set.scenario_vc, user 2026-11-18)
+        from rl_search.rl_eval_set import kind_training_scenario
+        scen, vc = kind_training_scenario(_W["vs"], seed, _W["kind"])
     elif typ and _W.get("v2") and _W.get("k", 1.0) != 1.0:      # V2 on a stretched map (half speeds on the base map, scaled)
         from rl_search.stretch import stretched_training_scenario
         scen, vc = stretched_training_scenario(_W["vs"], seed, typ, _W["k"])
@@ -129,6 +133,8 @@ def main():
                          "user 2026-11-14); with --multi --no-stop the pool goes to <region>/rl_pool_multi_ns_rt")
     ap.add_argument("--v2", action="store_true", help="the redesigned scenarios (rl_eval_set.V2, user 2026-11-17), typed, no A; into "
                                                      "<region>/rl_pool_v2 (use --region amboy120 / mojave120)")
+    ap.add_argument("--kind", default=None, help="with --v2: one terrain and target type, e.g. mountain:road (rl_eval_set.scenario_vc); "
+                                                 "files <type>_s<seed>.pkl of that type only")
     args = ap.parse_args()
     if args.v2:
         args.multi, args.no_area = True, True
@@ -142,10 +148,11 @@ def main():
             args.src = Path(POOL_DIR_MULTI)
     args.out.mkdir(parents=True, exist_ok=True)
     # another map draws its own scenarios (seeds 10 500 000 + i on mojave), not the Amboy draws on other roads
-    base = RealRLConfig().seed_base + {"amboy": 0, "mojave": 500_000, "amboy120": 2_000_000, "mojave120": 2_500_000, "amboy_x2": 3_000_000, "mojave_x2": 3_500_000}.get(args.region, 0)
+    base = RealRLConfig().seed_base + {"amboy": 0, "mojave": 500_000, "amboy120": 2_000_000, "mojave120": 2_500_000, "amboy_x2": 3_000_000, "mojave_x2": 3_500_000,
+                                       "chungju120": 4_000_000}.get(args.region, 0)
     if args.multi:                           # <type>_s<seed>.pkl, the types in turn so every type has n / 3
         from rl_search.rl_eval_set import MULTI
-        types = MULTI["types"]
+        types = MULTI["types"] if not args.kind else (args.kind.split(":")[1],)
         todo = [(base + i, args.out/f"{types[i % len(types)]}_s{base + i}.pkl", types[i % len(types)]) for i in range(args.n)
                 if not (args.out/f"{types[i % len(types)]}_s{base + i}.pkl").exists()]
     else:
@@ -162,7 +169,7 @@ def main():
         road_mask(args.region)                              # build the road cells once before the workers fork
     with get_context("fork").Pool(args.workers, initializer=_init, initargs=(args.region, args.area_def, args.diverse, args.area_sigma,
                                                                              args.area_sigma_off, args.src, args.no_stop, args.no_area,
-                                                                             args.route_var, args.v2)) as pool:
+                                                                             args.route_var, args.v2, args.kind)) as pool:
         for i, (seed, sec) in enumerate(pool.imap_unordered(job, todo, chunksize=1), 1):
             if i % 25 == 0 or i == len(todo):
                 el = time.perf_counter() - t0

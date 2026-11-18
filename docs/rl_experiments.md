@@ -592,6 +592,8 @@ seed로 다시 만든다: `make_pool --n 500 --workers 6`(창 A), `make_pool --d
 운영 메모: macOS `pgrep -f`는 자기와 조상 프로세스만 빼므로, 같은 문자열을 담은 대기 스크립트 둘이 서로를 찾아 끝나지 않는다
 (11-11 R3 자동 시작이 이렇게 멈춤). 대기 스크립트의 패턴은 `amboy_r[3]`처럼 대괄호를 써서 자기 글자와 겹치지 않게 한다.
 
+운영 메모 (11-18, 사용자: 맥 정리): R5~R9 학습 풀 `amboy/rl_pool_multi`(45 GB)와 `rl_pool_multi_o150`(61 GB), R1~R9 시기 검증·시험 웹 실행 1,078개(val/test/dval/dtest/mval/mtest, SAROPS 참조 비행 포함, 12.8 GB)를 지웠다. 점수 JSON·SAROPS 기준값·체크포인트·R10 이후 풀(`_ns_rt`)·nval/bval 웹 실행은 남김. 풀이 다시 필요하면 같은 seed로 `make_pool --multi`(`--area-sigma-off 150`). 여유 공간 182 → 301 GB. 웹 실행 목록은 저장 시각 최신 순 + 날짜 구분선으로 바꿈(폴더 이름 순이라 `eval-…`가 최근 웹 실행보다 위에 오던 문제).
+
 ## 정할 것
 
 - B2의 크기 c: c = 0.05면 지금 RL처럼 날 때 비행당 약 0.11점(A + POS 단위), SAROPS처럼 날 때 약 0.04점을 잃는다. 0.1이면 0.22와 0.07.

@@ -56,6 +56,15 @@ class VehicleConfig:
     speed_clip_sd: float = 0.0         # > 0 (user 2026-11-17): each state's speed stays within its mean +- this many std (2: paved 50 +- 10
                                        # -> 30-70, unpaved 30 +- 5 -> 20-40, fields and mountains 10 +- 2.5 -> 5-15 km/h)
     # rates per minute
+    # shortcuts (user 2026-11-18, Korean maps: off-road targets got stuck in field pockets closed by forest): > 0 = off the road only as a
+    # shortcut to another road node within this distance (m), straight across drivable land, when the time to the goal that way
+    # (off-road at the mean off-road speed, then by road) is at most shortcut_factor x the time staying on the road and the node is nearer
+    # the goal than the end of the current road; no free driving off the road, and a dead end is turned at. 0 = off (as before)
+    shortcut_m: float = 0.0
+    shortcut_factor: float = 1.5
+    # (user 2026-11-18: detours from a big road into small roads made particles circle in villages) True = a random detour at a junction
+    # takes only a road of the same tier or faster (paved -> paved; from a slow road any); False = any road (as before)
+    detour_keep_tier: bool = False
     p_leave_fast_min: float = 0.05     # fast road -> off-road (only where the roadside is open land)
     p_leave_slow_min: float = 0.05     # slow road -> off-road
     p_return_min: float = 0.30         # off-road -> road, when a road is within return_radius_m
@@ -89,6 +98,12 @@ class VehicleConfig:
     follow_max_min: float = 15.0       # following one side longer than this: try the other side
     exit_straight: bool = False        # a particle that leaves the map keeps going straight at the speed and direction it left with (user
                                        # 2026-11-17: probability that disappears at the edge is a wrong signal); off: it stays where it left
+    exit_trend_min: float = 0.0        # > 0 (with exit_straight, user 2026-11-18: straight on looks artificial): a particle that leaves the
+                                       # map heads the way it moved over the last this many minutes inside the map (net displacement), at the
+                                       # speed it had when it left (the scenario's speeds and its driving style, as straight on); then its
+                                       # direction drifts by the scenario's escape-heading random walk (reorient_std_deg_min), kept within
+                                       # exit_trend_max_deg of that first direction; 0: straight on at the speed and direction it left with
+    exit_trend_max_deg: float = 90.0
 
     @property
     def save_every(self) -> int:
@@ -397,6 +412,49 @@ def _route_dir(net, de, s, sec, goal, etime, ban=None):
     use_fw = t_fw <= t_bw
     return np.where(use_fw, fw, bw), np.where(use_fw, from_u, L - from_u)
 
+
+def _node_tree(net):
+    """KD-tree of the road nodes a particle can drive on from (any allowed road leaving them), built once per network."""
+    if getattr(net, "_sc_tree", None) is None:
+        from scipy.spatial import cKDTree
+        nodes = np.flatnonzero(net.out[:, 0] >= 0)
+        net._sc_tree, net._sc_nodes = cKDTree(net.node_xy[nodes]), nodes
+    return net._sc_tree, net._sc_nodes
+
+
+def _shortcuts(net, cfg, pos, de, s, idx, sec, goal, etime, v_off):
+    """cfg.shortcut_m (user 2026-11-18): for the particles ``idx`` that would leave the road, a road node within shortcut_m reached in a
+    straight line over drivable land (the drive mask; the first and last 60 m, by the roads, are not checked), nearer the goal than the end
+    of the current road, with time off-road (straight, at v_off) + time from the node to the goal <= shortcut_factor x the time staying on
+    the road. Returns (particles that take one, their target nodes); the quickest one is taken."""
+    tree, nodes_all = _node_tree(net)
+    e = de[idx] >> 1
+    L = net.edge_len[e]
+    to = net.de_to[de[idx]]
+    stay = (L - s[idx])/np.maximum(L, 1e-6)*etime[e] + goal[sec, to]
+    got_j, got_n = [], []
+    step = net.terr.cell/2
+    for m, p in enumerate(idx):
+        if not np.isfinite(stay[m]):
+            continue
+        cand = nodes_all[tree.query_ball_point(pos[p], cfg.shortcut_m)]
+        cand = cand[(cand != to[m]) & (cand != net.de_from[de[p]])]
+        if not len(cand):
+            continue
+        d = np.hypot(*(net.node_xy[cand] - pos[p]).T)
+        cost = d/v_off + goal[sec[m], cand]
+        ok = np.isfinite(cost) & (cost <= cfg.shortcut_factor*stay[m]) & (goal[sec[m], cand] < goal[sec[m], to[m]]) & (d >= 150.0)
+        for q in np.flatnonzero(ok)[np.argsort(cost[ok])][:8]:
+            k = max(int(d[q]/step), 2)
+            f = np.linspace(0.0, 1.0, k + 1)
+            f = f[(f*d[q] > 60.0) & ((1 - f)*d[q] > 60.0)]
+            pts = pos[p] + f[:, None]*(net.node_xy[cand[q]] - pos[p])
+            if len(pts) and _open(net, pts[:, 0], pts[:, 1]).all() and net.terr.inside(pts[:, 0], pts[:, 1]).all():
+                got_j.append(p)
+                got_n.append(cand[q])
+                break
+    return np.array(got_j, np.int64), np.array(got_n, np.int64)
+
 # Where particles come back the way they came (user 2026-11-17: they should not), logged by simulate_vehicle(diag=True) for
 # scripts/rl_eval/backtrack_check.py. Why a particle was on the dead-end branch it turned around at the end of:
 TURN_CAUSES = ("start_on_spur",      # the LKP was on a dead-end branch and the particle drove towards its end
@@ -557,6 +615,13 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
     follow_n = np.zeros(n, np.int32)
     max_follow = int(round(cfg.follow_max_min*60/dt))
     exit_vel = np.zeros((n, 2))                                                  # exit_straight: velocity (m/s) when it left the map
+    trend = cfg.exit_straight and cfg.exit_trend_min > 0
+    exit_h0, exit_h, exit_v = np.zeros(n), np.zeros(n), np.zeros(n)              # exit_trend_min: first direction, direction, speed
+    trend_k = int(round(cfg.exit_trend_min*60/cfg.save_dt_s)) if trend else 0
+    trend_max = np.deg2rad(cfg.exit_trend_max_deg)
+    rng_exit = rng.spawn(1)[0] if trend else None                               # own stream: the particles inside the map move as with straight on
+    sc_node = np.full(n, -1, np.int64)                                           # shortcut_m: the road node a particle is crossing to
+    sc_len = []                                                                  # shortcut_m: length (m) of every shortcut taken
     dg = _Diag(net, de, esc) if diag else None
 
     p_leave = {FAST: cfg.p_step(cfg.p_leave_fast_min), SLOW: cfg.p_step(cfg.p_leave_slow_min)}
@@ -610,7 +675,17 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
         if road.any():
             pl = np.where(mode == FAST, p_leave[FAST], p_leave[SLOW])
             try_leave = road & (rng.random(n) < pl)
-            if try_leave.any():
+            if try_leave.any() and cfg.shortcut_m > 0:                     # only as a shortcut to another road (user 2026-11-18)
+                i = np.flatnonzero(try_leave)
+                j, tn = _shortcuts(net, cfg, pos, de, s, i, sector(i), goal, etime, mean[OFF])
+                if len(j):
+                    sc_node[j] = tn
+                    dv = net.node_xy[tn] - pos[j]
+                    sc_len.extend(np.hypot(*dv.T).tolist())
+                    psi[j] = np.arctan2(dv[:, 1], dv[:, 0])
+                    mode[j] = OFF
+                    road &= ~np.isin(rows, j)
+            elif try_leave.any():
                 i = np.flatnonzero(try_leave)
                 d = net.direction(de[i], s[i])
                 side = rng.choice([-1.0, 1.0], len(i))
@@ -671,6 +746,8 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
                         hv = np.stack([np.cos(esc[i[a]]), np.sin(esc[i[a]])], 1)
                         ok = ok | ((net.de_dir[cand0]*hv[:, None, :]).sum(-1) >= np.cos(np.deg2rad(cfg.detour_deadend_deg)))
                     others &= ok
+                if cfg.detour_keep_tier:                                    # not from a paved road into a slow one
+                    others &= net.edge_tier[cand0 >> 1] >= net.edge_tier[cur_de[a] >> 1][:, None]
                 if cfg.detour_max_deg < 180:                                # not back towards the pursuers
                     hv = np.stack([np.cos(esc[i[a]]), np.sin(esc[i[a]])], 1)
                     others &= (net.de_dir[cand0]*hv[:, None, :]).sum(-1) >= np.cos(np.deg2rad(cfg.detour_max_deg))
@@ -681,7 +758,7 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
                 none = ~valid.any(axis=1)
                 pick = cand[np.arange(len(a)), choice]
                 pick[none] = twin[none]                                     # true dead end: turn around
-                leave = dead & cfg.deadend_offroad                          # or leave the road there
+                leave = dead & cfg.deadend_offroad & (cfg.shortcut_m <= 0)  # or leave the road there (not with shortcuts: turn)
                 pick[leave] = cur_de[a[leave]]
                 if dg is not None:
                     back_t = etime[twin >> 1] + goal[sec, net.de_to[twin]]
@@ -707,6 +784,31 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
 
         # ---------------- off-road: return to a road, or drive on the grid
         off = moving & (mode == OFF)
+        if off.any() and cfg.shortcut_m > 0:                               # shortcuts: straight on to the node, then on its road
+            i = np.flatnonzero(off & (sc_node >= 0))
+            if len(i):
+                tgt = net.node_xy[sc_node[i]]
+                dv = tgt - pos[i]
+                dd = np.hypot(*dv.T)
+                stp = v[i]*dt
+                arr = dd <= stp
+                mv_ = ~arr
+                pos[i[mv_]] += dv[mv_]/np.maximum(dd[mv_], 1e-6)[:, None]*stp[mv_, None]
+                psi[i[mv_]] = np.arctan2(dv[mv_, 1], dv[mv_, 0])
+                j = i[arr]
+                if len(j):
+                    dj, sj = net.snap(tgt[arr], esc[j])
+                    if cfg.start_by_route:
+                        dj, sj = _route_dir(net, dj, sj, sector(j), goal, etime, None if hist is None else hist[j] ^ 1)
+                    de[j], s[j] = dj, sj
+                    pos[j] = net.position(dj, sj)
+                    mode[j] = np.where(net.edge_tier[dj >> 1] == 2, FAST, SLOW)
+                    psi[j] = np.arctan2(*net.direction(dj, sj)[:, ::-1].T)
+                    sc_node[j] = -1
+                    if hist is not None:
+                        hist[j, 1:] = hist[j, :-1]
+                        hist[j, 0] = dj
+            off = off & (sc_node < 0)
         if off.any():
             i = np.flatnonzero(off)
             r, c = net.cell_of(pos[i])
@@ -823,6 +925,11 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
         if cfg.exit_straight:
             gone = done == EXIT
             if gone.any():
+                if trend:                                    # the direction drifts like the escape heading, within the limit
+                    g = np.flatnonzero(gone)
+                    d = (exit_h[g] + rng_exit.normal(0, reo, len(g)) - exit_h0[g] + np.pi) % (2*np.pi) - np.pi
+                    exit_h[g] = exit_h0[g] + np.clip(d, -trend_max, trend_max)
+                    exit_vel[g] = exit_v[g, None]*np.stack([np.cos(exit_h[g]), np.sin(exit_h[g])], 1)
                 pos[gone] += exit_vel[gone]*dt
                 v[gone] = np.hypot(*exit_vel[gone].T)
         # ---------------- bookkeeping
@@ -830,12 +937,24 @@ def simulate_vehicle(net: RoadNet, cfg: VehicleConfig, lkp, heading_deg: float, 
         done[out] = EXIT
         if cfg.exit_straight and out.any():
             exit_vel[out] = v[out, None]*np.stack([np.cos(psi[out]), np.sin(psi[out])], 1)
+            if trend:                                        # direction of the net move since the stored position trend_k records back
+                o = np.flatnonzero(out)
+                kr = t//every                                # last stored record
+                k0 = max(kr - trend_k, 0)
+                span = (t + 1)*dt - k0*every*dt
+                disp = pos[o] - track[k0, o]
+                ok = np.hypot(*disp.T)/span > 0.1            # a particle that stood still: keep the direction it left with
+                hd = np.where(ok, np.arctan2(disp[:, 1], disp[:, 0]), np.arctan2(exit_vel[o, 1], exit_vel[o, 0]))
+                exit_h0[o] = exit_h[o] = hd
+                exit_v[o] = np.hypot(*exit_vel[o].T)         # the speed it left with (user 2026-11-18: the scenario's own)
+                exit_vel[o] = exit_v[o, None]*np.stack([np.cos(hd), np.sin(hd)], 1)
         k = -(-(t + 1)//every)
         exit_step[out & (exit_step < 0)] = k
         if (t + 1) % every == 0:
             record((t + 1)//every, v)
     return SimpleNamespace(track=track, state=state, speed_kmh=speed_rec, edge=edge_rec, exit_step=exit_step,
-                           lkp_road=lkp_road, cfg=cfg, heading_deg=heading_deg, diag=dg.result() if dg is not None else None)
+                           lkp_road=lkp_road, cfg=cfg, heading_deg=heading_deg, diag=dg.result() if dg is not None else None,
+                           shortcut_len=np.array(sc_len))
 
 
 def load_net(region: str = "chungju", cell_m: float = 25.0):
