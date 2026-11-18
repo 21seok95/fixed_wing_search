@@ -60,6 +60,10 @@ REGIONS = {r.key: r for r in (
     # the same centres on 120 km (user 2026-11-17: the targets spread up to ~50 km in the 60 minutes of a flight)
     Region("mojave120", "모하비 사막 (바스토) 120 km", 34.95, -116.85, 120.0, "tm"),
     Region("amboy120", "모하비 동쪽 (암보이) 120 km", 34.56, -115.74, 120.0, "tm"),
+    # mountain terrain on 120 km (user 2026-11-18: Korean maps for the road type; OSM up to the slow roads)
+    Region("chungju120", "충주·제천 120 km", 37.05, 128.05, 120.0, "tm"),
+    # second Korean mountain map for validation (user 2026-11-18: candidate K1 of four; no overlap with chungju120, no sea)
+    Region("jirisan120", "지리산·덕유산 (남원·함양·장수) 120 km", 35.60, 127.70, 120.0, "tm"),
 )}
 
 # Regions whose slow roads are too dense in places (user 2026-11-09): arguments of ``simplify_graph``. The other regions are left as mapped.
@@ -352,10 +356,24 @@ def _overpass_areas(lat0, lat1, lon0, lon1, selectors) -> list:
     return areas
 
 
+def has_osm(raw_dir: Path, name: str) -> bool:
+    """An OSM download ``name`` (e.g. "osm_highways") is in ``raw_dir``, as .json or gzipped .json.gz (the slim local-PC branch keeps the
+    OSM files gzipped, user 2026-11-18: OSM changes over time, so the local PC must build from the same download as the Mac)."""
+    return (raw_dir/f"{name}.json").exists() or (raw_dir/f"{name}.json.gz").exists()
+
+
+def read_osm(raw_dir: Path, name: str) -> dict:
+    """The OSM download ``name`` of ``raw_dir`` (.json, else .json.gz)."""
+    p = raw_dir/f"{name}.json"
+    if p.exists():
+        return json.loads(p.read_text())
+    import gzip
+    return json.loads(gzip.decompress((raw_dir/f"{name}.json.gz").read_bytes()).decode("utf-8"))
+
+
 def military_mask(region: Region, raw_dir: Path, axis) -> np.ndarray | None:
     """Military land on the terrain grid (row 0 = south), from raw/osm_military.json; None if it was not downloaded (the 60 km maps)."""
-    p = raw_dir/"osm_military.json"
-    if not p.exists():
+    if not has_osm(raw_dir, "osm_military"):
         return None
     from PIL import Image, ImageDraw
     n, cell, lo = len(axis), float(axis[1] - axis[0]), float(axis[0])
@@ -366,7 +384,7 @@ def military_mask(region: Region, raw_dir: Path, axis) -> np.ndarray | None:
         x, y = to_xy(region, np.array([q[0] for q in ring]), np.array([q[1] for q in ring]))
         return list(zip(((x - lo)/cell).tolist(), ((y - lo)/cell).tolist()))   # (column, row): image x = column, image y = row
 
-    areas = json.loads(p.read_text())["areas"]
+    areas = read_osm(raw_dir, "osm_military")["areas"]
     for a in areas:
         for ring in a["outer"]:
             draw.polygon(pix(ring), fill=1)
@@ -395,7 +413,7 @@ def fetch_raw(region: Region, half_m: float | None = None, raw_dir: Path | None 
         print("ESA WorldCover ...", flush=True)
         lc, la, lo = _mosaic(_worldcover_tiles(la0, la1, lo0, lo1), np.uint8(0))
         np.savez_compressed(raw_dir/"worldcover.npz", lc=lc, lat=la, lon=lo)
-    if refresh or not (raw_dir/"osm_highways.json").exists():
+    if refresh or not has_osm(raw_dir, "osm_highways"):
         print("OSM highways ...", flush=True)
         meta["osm_fetched"] = time.strftime("%Y-%m-%d %H:%M")
         if big:
@@ -407,12 +425,12 @@ def fetch_raw(region: Region, half_m: float | None = None, raw_dir: Path | None 
         else:
             ways = _overpass_ways(la0, la1, lo0, lo1)
         (raw_dir/"osm_highways.json").write_text(json.dumps({**meta, "ways": ways}, ensure_ascii=False))
-    if refresh or not (raw_dir/"osm_waterways.json").exists():
+    if refresh or not has_osm(raw_dir, "osm_waterways"):
         print("OSM waterways ...", flush=True)
         ways = _overpass_ways(la0, la1, lo0, lo1, '["waterway"~"^(river|stream|canal)$"]', splits=2 if big else 1)
         (raw_dir/"osm_waterways.json").write_text(json.dumps({**meta, "osm_fetched": time.strftime("%Y-%m-%d %H:%M"),
                                                               "ways": ways}, ensure_ascii=False))
-    if big and (refresh or not (raw_dir/"osm_military.json").exists()):
+    if big and (refresh or not has_osm(raw_dir, "osm_military")):
         print("OSM military land ...", flush=True)
         areas = _overpass_areas(la0, la1, lo0, lo1, MILITARY_SELECTORS)
         (raw_dir/"osm_military.json").write_text(json.dumps({**meta, "osm_fetched": time.strftime("%Y-%m-%d %H:%M"),
@@ -822,7 +840,7 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float | None = None
         z = z.astype(np.float32)
     lc = landcover_grid(region, raw_dir, map_m, cell_m, grid=(glat, glon))
     del glat, glon
-    osm = json.loads((raw_dir/"osm_highways.json").read_text())
+    osm = read_osm(raw_dir, "osm_highways")
 
     built_all = lc == WC_BUILT
     city = city_zones(built_all, cell_m)
@@ -832,7 +850,7 @@ def build_real_terrain(region: Region, raw_dir: Path, map_m: float | None = None
     military = military_mask(region, raw_dir, axis)          # None on the 60 km maps
     closed = city if military is None else city | military   # no target enters (their roads are left out, off-road is blocked)
 
-    wat = json.loads((raw_dir/"osm_waterways.json").read_text())
+    wat = read_osm(raw_dir, "osm_waterways")
     river_lines, stream_lines = [], []
     for w in wat["ways"]:
         lat = np.array([g[0] for g in w["geom"]]); lon = np.array([g[1] for g in w["geom"]])
