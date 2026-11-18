@@ -1,10 +1,15 @@
-"""Bring the slim branch local-pc-r13 (what the local PC clones for R13) up to date with feat/rl-env.
+"""Bring the slim branch local-pc (what the local PC clones) up to date with feat/rl-env.
 
-The slim branch is one commit with no shared history, cut from feat/rl-env on 2026-11-16 with only the files R13 needs, and it is never
-merged (user 2026-11-16: updates for the local PC go to that branch, made from feat/rl-env). Every file on it, except its own README.md
-and CLAUDE.md, gets feat/rl-env's committed version; --add brings more paths over (a new module, a new run's records) and --remove drops
-some. The work happens in a temporary worktree: this checkout is not touched, and edits not yet committed here are not taken (the
-script warns about them).
+The slim branch has no shared history with feat/rl-env and is never merged (user 2026-11-16: updates for the local PC go to that branch,
+made from feat/rl-env). Every file on it, except its own README.md and CLAUDE.md, gets feat/rl-env's committed version; --add brings more
+paths over (a new module, a new tool) and --remove drops some. The work happens in a temporary worktree: this checkout is not touched,
+and edits not yet committed here are not taken (the script warns about them).
+
+Kept small (user 2026-11-18; local-pc replaces local-pc-r13, which stays as it was): results never go on it (model weights, training
+logs, TensorBoard files, web runs, figures and reports: EXCLUDE), the OSM downloads of a map's raw data go on it gzipped (raw/osm_*.json
+-> raw/osm_*.json.gz; OSM changes over time, so the local PC builds from the Mac's download), and the DEM and land cover do not (fixed
+releases that make_real_terrain downloads again; scripts/terrain_fingerprint.py check tells whether the rebuilt map is the Mac's).
+--init makes the branch the first time: no history, the files of --seed (another branch's file list) and --add, with these rules.
 
 Before committing, it reads every Python file of the result and lists the rl_search modules that are imported (also inside functions)
 but missing on the slim branch. Those imports would fail on the local PC, so add the files with --add. It also finds files edited
@@ -16,11 +21,14 @@ Run from the repository root on the Mac:
     python -m rl_search.scripts.sync_local_pc --commit -m "compare_flights fix"    # commit on local-pc-r13
     python -m rl_search.scripts.sync_local_pc --commit --push -m "..."             # and push; then git pull on the local PC
     python -m rl_search.scripts.sync_local_pc --add rl_search/scripts/rl_eval/new_tool.py --commit -m "..."
+    python -m rl_search.scripts.sync_local_pc --init --seed local-pc-r13 --own-from slim_own/ --add ... --commit -m "..."   # once
 """
 from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
+import gzip
 import re
 import shutil
 import subprocess
@@ -28,6 +36,33 @@ import tempfile
 from pathlib import Path
 
 OWN = {"README.md", "CLAUDE.md"}                                  # the slim branch's own files, never taken from the source branch
+# never on the slim branch (user 2026-11-18): results, which come back as export_run zips, and the raw data downloaded again
+EXCLUDE = ("rl_search/data/rl_real/*", "*/web_runs/*", "*.png", "*.zip", "*.log", "*/tb/*", "*/tb_eval/*", "*/ckpt/*",
+           "rl_search/data/real/*/rl_eval/report/*", "rl_search/data/real/*/d_probe/*", "rl_search/data/export/*",
+           "rl_search/data/real/*/raw/dem.npz", "rl_search/data/real/*/raw/worldcover.npz")
+OSM_RAW = "rl_search/data/real/*/raw/osm_*.json"                  # gzipped on the slim branch
+
+
+def excluded(path: str) -> bool:
+    return any(fnmatch.fnmatch(path, pat) for pat in EXCLUDE)
+
+
+def slim_name(path: str) -> str:
+    """Name of a source file on the slim branch (OSM downloads gzipped)."""
+    return path + ".gz" if fnmatch.fnmatch(path, OSM_RAW) else path
+
+
+def source_of(path: str, src_files: set[str]) -> str | None:
+    """The source file a slim-branch file comes from, or None."""
+    if path in src_files:
+        return path
+    if path.endswith(".json.gz") and path[:-3] in src_files and fnmatch.fnmatch(path[:-3], OSM_RAW):
+        return path[:-3]
+    return None
+
+
+def gz_bytes(data: bytes) -> bytes:
+    return gzip.compress(data, compresslevel=9, mtime=0)       # mtime 0: the same input gives the same blob
 PUSH_URL = "git@github.com:21seok95/fixed_wing_search.git"      # the HTTPS origin has no login on the Mac; SSH works
 
 
@@ -92,7 +127,10 @@ def missing_modules(root: Path, src_files: set[str]) -> dict[str, list[str]]:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--src", default="feat/rl-env", help="branch the files come from (its committed state)")
-    ap.add_argument("--dst", default="local-pc-r13", help="the slim branch")
+    ap.add_argument("--dst", default="local-pc", help="the slim branch")
+    ap.add_argument("--init", action="store_true", help="make --dst the first time: no history, files of --seed and --add")
+    ap.add_argument("--seed", default="local-pc-r13", help="with --init: branch whose file list is the starting set")
+    ap.add_argument("--own-from", default=None, help="folder with this branch's own README.md and CLAUDE.md (written into --dst)")
     ap.add_argument("--add", nargs="+", default=[], help="more paths to bring over from --src (files or folders)")
     ap.add_argument("--remove", nargs="+", default=[], help="paths to drop from the slim branch")
     ap.add_argument("-m", "--message", default="", help="what the update is for (the commit subject)")
@@ -106,35 +144,62 @@ def main():
     commit = args.commit or args.push
     root = Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()).strip())
     src = git("rev-parse", "--short", "--verify", f"{args.src}^{{commit}}", cwd=root).strip()
-    git("rev-parse", "--verify", f"{args.dst}^{{commit}}", cwd=root)
+    exists = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{args.dst}^{{commit}}"], cwd=root, capture_output=True).returncode == 0
+    if exists == args.init:
+        raise SystemExit(f"{args.dst} already exists (drop --init)" if exists else f"no branch {args.dst} (make it with --init)")
     src_files = set(git("ls-tree", "-r", "--name-only", args.src, cwd=root).split("\n")) - {""}
-    last = last_source(args.dst, args.src, root)
-    base, now, new = (blobs(last, root) if last else {}), blobs(args.dst, root), blobs(args.src, root)
+    last = last_source(args.dst, args.src, root) if exists else None
+    base, now, new = (blobs(last, root) if last else {}), (blobs(args.dst, root) if exists else {}), blobs(args.src, root)
     tmp = Path(tempfile.mkdtemp(prefix="sync_local_pc_"))
     wt = tmp/"wt"
-    git("worktree", "add", "-q", str(wt), args.dst, cwd=root)
-    try:
+    if exists:
+        git("worktree", "add", "-q", str(wt), args.dst, cwd=root)
         files = [f for f in git("ls-files", cwd=wt).split("\n") if f and f not in OWN]
-        drop = [f for f in files if any(f == r or f.startswith(r.rstrip("/") + "/") for r in args.remove)]
+    else:                                                    # a new branch with no history, from the seed's file list
+        git("worktree", "add", "-q", "--detach", str(wt), args.src, cwd=root)
+        git("checkout", "-q", "--orphan", args.dst, cwd=wt)
+        git("rm", "-rf", "-q", "--cached", ".", cwd=wt)
+        for f in Path(wt).iterdir():
+            if f.name != ".git":
+                shutil.rmtree(f) if f.is_dir() else f.unlink()
+        files = [slim_name(f) for f in git("ls-tree", "-r", "--name-only", args.seed, cwd=root).split("\n") if f and f not in OWN]
+    try:
+        added = sorted({slim_name(f) for f in src_files for a in args.add if f == a or f.startswith(a.rstrip("/") + "/")})
+        files = sorted(set(files) | set(added))
+        drop = [f for f in files if any(f == r or f.startswith(r.rstrip("/") + "/") for r in args.remove) or excluded(f)
+                or excluded(source_of(f, src_files) or f)]
         keep = [f for f in files if f not in drop]
-        gone = [f for f in keep if f not in src_files]
-        take = [f for f in keep if f in src_files]
+        gone = [f for f in keep if source_of(f, src_files) is None]
+        take = [f for f in keep if source_of(f, src_files) is not None]
         # edited on the slim branch since the last update and different from --src now: the update would replace that edit
-        direct = [f for f in take if f in base and now.get(f) != base[f] and now.get(f) != new.get(f)]
-        if take:
-            git("checkout", args.src, "--", *take, cwd=wt)
-        if args.add:
-            git("checkout", args.src, "--", *args.add, cwd=wt)
+        direct = [f for f in take if f in base and f in src_files and now.get(f) != base[f] and now.get(f) != new.get(f)]
+        plain = [f for f in take if f in src_files]
+        if plain:
+            git("checkout", args.src, "--", *plain, cwd=wt)
+        for f in take:
+            if f not in src_files:                           # gzipped OSM download
+                data = subprocess.run(["git", "show", f"{args.src}:{source_of(f, src_files)}"], cwd=root, capture_output=True, check=True).stdout
+                (wt/f).parent.mkdir(parents=True, exist_ok=True)
+                (wt/f).write_bytes(gz_bytes(data))
+                git("add", "-f", "--", f, cwd=wt)
+        if args.own_from:
+            for name in OWN:
+                (wt/name).write_text((Path(args.own_from)/name).read_text())
+                git("add", "-f", "--", name, cwd=wt)
+        tracked = set(git("ls-files", cwd=wt).split("\n")) - {""}
+        drop = [f for f in drop if f in tracked]
         if drop:
             git("rm", "-q", "--", *drop, cwd=wt)
         # edits in this checkout that are not committed on --src are not taken
         dirty = [ln[3:].split(" -> ")[-1] for ln in git("status", "--porcelain", cwd=root).split("\n") if ln]
-        watched = set(keep) | {f for f in src_files for a in args.add if f == a or f.startswith(a.rstrip("/") + "/")}
+        watched = {source_of(f, src_files) for f in keep} - {None}
         unsaved = sorted(set(dirty) & watched)
         stat = git("diff", "--cached", "--stat", cwd=wt).rstrip()
         names = git("diff", "--cached", "--name-status", cwd=wt).split("\n")
         miss = missing_modules(wt, src_files)
-        print(f"{args.dst} <- {args.src} {src}: {len(take)} files compared, {len(args.add)} paths added, {len(drop)} files removed")
+        size = sum((wt/f).stat().st_size for f in git("ls-files", cwd=wt).split("\n") if f and (wt/f).exists())
+        print(f"{args.dst} <- {args.src} {src}: {len(take)} files, {len(args.add)} paths added, {len(drop)} files removed; "
+              f"{size/1e6:.1f} MB on the branch")
         print(stat if stat else "no change: the slim branch already has these versions")
         for f in gone:
             print(f"  not on {args.src} any more (kept; drop it with --remove): {f}")
@@ -151,7 +216,7 @@ def main():
         if not commit:
             print("nothing written (pass --commit to commit, --push to commit and push)")
             return
-        if not stat:
+        if not stat and exists:
             return
         if miss and not args.allow_missing:
             raise SystemExit("not committed: imported rl_search modules are missing on the slim branch (add them, or --allow-missing)")
