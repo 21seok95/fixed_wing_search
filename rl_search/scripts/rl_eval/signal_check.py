@@ -44,7 +44,9 @@ def settings_of(c: dict) -> dict:
         | ({"extra_map_m": float(c["extra_map_km"])*1000.0, "extra_map_lead_s": float(c.get("extra_map_lead") or 600.0)} if c.get("extra_map_km") else {}) | ({"rel_maps": True} if c.get("rel_maps") else {}) \
         | ({"fp_rate": True} if c.get("fp_rate") else {}) | ({"a_weight": float(c["a_weight"])} if c.get("a_weight") is not None and float(c["a_weight"]) != 1.0 else {}) \
         | ({"pos_norm": True} if c.get("pos_norm") else {}) | ({"no_area": True} if c.get("no_area") else {}) \
-        | ({"obs_r10": True} if c.get("obs_r10") else {}) | ({"no_stop": True} if c.get("no_stop") else {})
+        | ({"obs_r10": True} if c.get("obs_r10") else {}) | ({"no_stop": True} if c.get("no_stop") else {}) \
+        | ({"maps7": True} if c.get("maps7") else {}) | ({"no_vis_obs": True} if c.get("no_vis_obs") else {}) \
+        | ({"launch_policy": True} if c.get("launch_policy") else {})
 
 
 def fly(job) -> dict:

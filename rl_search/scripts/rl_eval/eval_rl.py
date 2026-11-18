@@ -44,6 +44,12 @@ def main():
     ap.add_argument("--pos-norm", action="store_true", help="the model's maps use per-map POS normalisation (train_rl --pos-norm)")
     ap.add_argument("--fp-rate", action="store_true", help="the model's camera channel carries the turn-rate factor (train_rl --fp-rate)")
     ap.add_argument("--no-area", action="store_true", help="the model was trained without A in the env (train_rl --no-area)")
+    ap.add_argument("--maps7", action="store_true",
+                    help="seven observation maps 1.6 / 3.2 / 6.4 / 12.8 / 25.6 / 51.2 / 102.4 km (rl_real.MAPS7, user 2026-11-18)")
+    ap.add_argument("--no-vis-obs", action="store_true",
+                    help="no ground visibility in the observation: no visibility channel, POS channels unweighted (user 2026-11-18)")
+    ap.add_argument("--launch-policy", action="store_true",
+                    help="the policy flies from the launch: no rule transit (no 120 s toward the LKP, no --handover-km; user 2026-11-18)")
     ap.add_argument("--obs-r10", action="store_true", help="the model's maps are the R10 channels (train_rl --obs-r10)")
     ap.add_argument("--ks", type=int, nargs="+", default=None, help="only these case indices (0-based), e.g. 2 5 8 11 14 = the desert mval cases")
     ap.add_argument("--launch-min", type=float, default=None,
@@ -62,7 +68,9 @@ def main():
         | ({"extra_map_m": args.extra_map_km*1000.0, "extra_map_lead_s": args.extra_map_lead} if args.extra_map_km else {}) \
         | ({"rel_maps": True} if args.rel_maps else {}) | ({"fp_rate": True} if args.fp_rate else {}) \
         | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {}) \
-        | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {})
+        | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {}) \
+        | ({"maps7": True} if args.maps7 else {}) | ({"no_vis_obs": True} if args.no_vis_obs else {}) \
+        | ({"launch_policy": True} if args.launch_policy else {})
     from rl_search.rl_real import preload
     from rl_search.rl_real_eval import eval_job, sarops_refs
     from rl_search.rl_eval_set import MULTI_N, split_region

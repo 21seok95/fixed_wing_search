@@ -155,6 +155,12 @@ def main():
                     help="R10 (user 2026-11-14): typed targets that never stop and keep a steady speed of their own (rl_eval_set.NOSTOP); "
                          "pool rl_pool_multi_ns (make_pool --multi --no-stop --no-area), validate on nval")
     ap.add_argument("--no-area", action="store_true", help="no A at all in the env, not even for the report (needs --a-weight 0)")
+    ap.add_argument("--maps7", action="store_true",
+                    help="seven observation maps 1.6 / 3.2 / 6.4 / 12.8 / 25.6 / 51.2 / 102.4 km (rl_real.MAPS7, user 2026-11-18)")
+    ap.add_argument("--no-vis-obs", action="store_true",
+                    help="no ground visibility in the observation: no visibility channel, POS channels unweighted (user 2026-11-18)")
+    ap.add_argument("--launch-policy", action="store_true",
+                    help="the policy flies from the launch: no rule transit (no 120 s toward the LKP, no --handover-km; user 2026-11-18)")
     ap.add_argument("--obs-r10", action="store_true",
                     help="R10 map channels: particle positions now and after the lead (unweighted), POS now normalised per map and absolute, "
                          "visibility, camera on the 1.6 km map (rl_real.RealRLEnv.observation, needs --a-weight 0)")
@@ -189,6 +195,8 @@ def main():
         | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {}) \
         | ({"look_w": args.look_w} if args.look_w else {}) | ({"no_stop": True} if args.no_stop else {}) \
         | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {}) \
+        | ({"maps7": True} if args.maps7 else {}) | ({"no_vis_obs": True} if args.no_vis_obs else {}) \
+        | ({"launch_policy": True} if args.launch_policy else {}) \
         | ({"route_var": True} if args.route_var else {})
     if args.multi:
         from pathlib import Path as _P

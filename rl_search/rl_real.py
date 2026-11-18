@@ -44,6 +44,10 @@ from rl_search.area_score import CELL_M, N_WINDOWS, WINDOW_S, AreaScore, Realtim
 from rl_search.plants import wrap
 
 MAPS = (("m1600", 1600.0, 15.0), ("m6400", 6400.0, 60.0), ("m25600", 25600.0, 300.0), ("m51200", 51200.0, 600.0))
+# maps7 (user 2026-11-17/18, docs/scenario_redesign.md "모델 구조" option 2): seven maps at 2x spacing, the same 64 x 64 cells. The new
+# maps' leads follow the side (3.2 km 30 s, 12.8 km 150 s); the 102.4 km map keeps R13's fifth-map lead of 600 s.
+MAPS7 = (("m1600", 1600.0, 15.0), ("m3200", 3200.0, 30.0), ("m6400", 6400.0, 60.0), ("m12800", 12800.0, 150.0),
+         ("m25600", 25600.0, 300.0), ("m51200", 51200.0, 600.0), ("m102400", 102400.0, 600.0))
 POOL_DIR = "rl_search/data/real/amboy/rl_pool"
 POOL_DIR_DIVERSE = "rl_search/data/real/amboy/rl_pool_diverse"
 POOL_DIR_MULTI = "rl_search/data/real/amboy/rl_pool_multi"      # typed scenarios, files <type>_s<seed>.pkl
@@ -190,6 +194,21 @@ class RealRLEnv:
         self._save_at = None                                    # this launch flight saves its state at this time (s), or None
         self.start_kind = ""                                    # "launch", "stage1", "stage2" or "mid_<kind>"
         self._ep_typ = ""
+        # launch_policy (user 2026-11-18): the policy flies from the launch, with no rule transit (neither the 120 s toward the LKP nor the
+        # handover_km transit), so the first decisions read the particles on the large maps only and those maps matter in training
+        self.launch_policy = bool(self.s.get("launch_policy"))
+        if self.launch_policy:
+            if float(self.s.get("handover_km", 0.0) or 0.0) > 0:
+                raise ValueError("launch_policy hands over at the launch: no handover_km")
+            p = self.env.preset
+            self.env.preset = replace(p, handover=replace(p.handover, t_plan_s=0.0))
+        # no_vis_obs (user 2026-11-18): the observation shows no ground visibility (no visibility channel, POS channels not weighted by
+        # it); the detection and the reward keep the real visibility
+        self.no_vis_obs = bool(self.s.get("no_vis_obs"))
+        if self.s.get("maps7"):
+            if float(self.s.get("big_map_m", 0.0) or 0.0) or float(self.s.get("extra_map_m", 0.0) or 0.0):
+                raise ValueError("maps7 has its own 102.4 km map: no big_map_m or extra_map_m")
+            cfg.maps = MAPS7
         big = float(self.s.get("big_map_m", 0.0) or 0.0)             # (user 2026-11-12) side of the largest map; same key and 64 x 64 cells
         if big > 0:
             maps = list(cfg.maps)
@@ -677,7 +696,8 @@ class RealRLEnv:
         live = b.w > 0
         P = b.positions(t)[live]
         w = b.w[live]
-        val_now = w*det.visibility(P[:, 0], P[:, 1])*unit
+        vis_of = (lambda Q: 1.0) if self.no_vis_obs else (lambda Q: det.visibility(Q[:, 0], Q[:, 1]))
+        val_now = w*vis_of(P)*unit
         seen = isinstance(self._area, SeenArea)
         rt = isinstance(self._area, RealtimeArea)
         a_off = float(self.s.get("a_weight", 1.0)) == 0.0          # A off: no A channel, so no A cells to bin either
@@ -732,7 +752,7 @@ class RealRLEnv:
                 now = self._bin(P, val_now, k)
                 fut = live & b.active(t + lead)
                 Pf = b.positions(t + lead)[fut]
-                pred = self._bin(Pf, b.w[fut]*det.visibility(Pf[:, 0], Pf[:, 1])*unit, k)
+                pred = self._bin(Pf, b.w[fut]*vis_of(Pf)*unit, k)
                 if norm:
                     ln = float(np.log1p(max(float(now.max()), float(pred.max()), floor)))
                     scales.append(ln)
@@ -749,15 +769,16 @@ class RealRLEnv:
                 ch.append(np.log1p(self._area_at(wx, wy)*N_REF))
             else:                                             # larger cells: sum of the 25 m cells inside
                 ch.append(np.log1p(self._bin(a_xy, a_val, k)))
-            f, g = self.vis_grids[k]
-            step = self.terr.cell*f
-            col = np.rint((wx - self.terr.axis[0])/step).astype(int)
-            row = np.rint((wy - self.terr.axis[0])/step).astype(int)
-            inside = (np.abs(wx) <= self.half) & (np.abs(wy) <= self.half)
-            off_v = self.s.get("off_map_vis")                 # (user 2026-11-17 test) off the map read as open ground of this visibility
-            vis = np.full(wx.shape, float(off_v) if off_v is not None else (0.0 if self.s.get("off_map_zero") else -1.0), np.float32)   # off the map: 0 from R6 (user 2026-11-12), -1 before
-            vis[inside] = g[np.clip(row[inside], 0, g.shape[0] - 1), np.clip(col[inside], 0, g.shape[1] - 1)]
-            ch.append(vis)
+            if not self.no_vis_obs:
+                f, g = self.vis_grids[k]
+                step = self.terr.cell*f
+                col = np.rint((wx - self.terr.axis[0])/step).astype(int)
+                row = np.rint((wy - self.terr.axis[0])/step).astype(int)
+                inside = (np.abs(wx) <= self.half) & (np.abs(wy) <= self.half)
+                off_v = self.s.get("off_map_vis")             # (user 2026-11-17 test) off the map read as open ground of this visibility
+                vis = np.full(wx.shape, float(off_v) if off_v is not None else (0.0 if self.s.get("off_map_zero") else -1.0), np.float32)   # off the map: 0 from R6 (user 2026-11-12), -1 before
+                vis[inside] = g[np.clip(row[inside], 0, g.shape[0] - 1), np.clip(col[inside], 0, g.shape[1] - 1)]
+                ch.append(vis)
             if k == 0:
                 ch.append(self.footprint*fp_q)
             if rel_unit is not None and not norm and not r10:  # last channel: remaining POS now as a share of the remaining belief
@@ -787,12 +808,13 @@ def obs_layout(s: dict, maps=MAPS) -> tuple[dict, int]:
     """Channels per map and vector length for the settings ``s``: 1.6 km map 5 (POS now, POS ahead, A, visibility, camera), others 4;
     A off (a_weight 0) drops the A channel, rel_maps adds one (not with pos_norm), pos_norm adds one vector entry per map."""
     a_off = float(s.get("a_weight", 1.0)) == 0.0
+    nv = 1 if s.get("no_vis_obs") else 0          # no_vis_obs: no visibility channel
     if s.get("obs_r10"):              # R10: positions now / ahead, POS now normalised / absolute, visibility (+ camera on the 1.6 km map)
         if not a_off:
             raise ValueError("obs_r10 has no A channel: needs a_weight 0")
-        return {name: (6 if k == 0 else 5) for k, (name, _, _) in enumerate(maps)}, len(VEC_NAMES) + len(maps)
+        return {name: (6 if k == 0 else 5) - nv for k, (name, _, _) in enumerate(maps)}, len(VEC_NAMES) + len(maps)
     extra = 1 if (s.get("rel_maps") and not s.get("pos_norm")) else 0
-    ch = {name: (5 if k == 0 else 4) - (1 if a_off else 0) + extra for k, (name, _, _) in enumerate(maps)}
+    ch = {name: (5 if k == 0 else 4) - (1 if a_off else 0) - nv + extra for k, (name, _, _) in enumerate(maps)}
     return ch, len(VEC_NAMES) + (len(maps) if s.get("pos_norm") else 0)
 
 
