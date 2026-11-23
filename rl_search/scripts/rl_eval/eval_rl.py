@@ -48,6 +48,7 @@ def main():
                     help="seven observation maps 1.6 / 3.2 / 6.4 / 12.8 / 25.6 / 51.2 / 102.4 km (rl_real.MAPS7, user 2026-11-18)")
     ap.add_argument("--no-vis-obs", action="store_true",
                     help="no ground visibility in the observation: no visibility channel, POS channels unweighted (user 2026-11-18)")
+    ap.add_argument("--obs-u8", action="store_true", help="the model's maps are uint8 (train_rl --obs-u8)")
     ap.add_argument("--launch-policy", action="store_true",
                     help="the policy flies from the launch: no rule transit (no 120 s toward the LKP, no --handover-km; user 2026-11-18)")
     ap.add_argument("--obs-r10", action="store_true", help="the model's maps are the R10 channels (train_rl --obs-r10)")
@@ -70,7 +71,7 @@ def main():
         | ({"a_weight": args.a_weight} if args.a_weight != 1.0 else {}) | ({"pos_norm": True} if args.pos_norm else {}) \
         | ({"no_area": True} if args.no_area else {}) | ({"obs_r10": True} if args.obs_r10 else {}) \
         | ({"maps7": True} if args.maps7 else {}) | ({"no_vis_obs": True} if args.no_vis_obs else {}) \
-        | ({"launch_policy": True} if args.launch_policy else {})
+        | ({"launch_policy": True} if args.launch_policy else {}) | ({"obs_u8": True} if args.obs_u8 else {})
     from rl_search.rl_real import preload
     from rl_search.rl_real_eval import eval_job, sarops_refs
     from rl_search.rl_eval_set import MULTI_N, split_region

@@ -24,9 +24,18 @@ EVAL_DIR = Path("rl_search/data/real")/REGION/"rl_eval"
 SEED_BASE = {"val": 70000, "test": 80000, "dval": 90000, "dtest": 95000, "mval": 100000, "mtest": 110000,
              "nval": 100000, "ntest": 110000,     # nval / ntest: the mval / mtest cases with targets that never stop (NOSTOP)
              "bval": 120000, "btest": 130000,     # bval / btest: Barstow (mojave) cases, never stop, varied routes (ROUTE)
-             "v2a": 140000, "v2b": 150000}        # the redesigned scenarios (V2) on amboy120 / mojave120
+             "v2a": 140000, "v2b": 150000,        # the redesigned scenarios (V2) on amboy120 / mojave120
+             "v2j": 160000,                       # V2 on Jirisan 120 km (mountain terrain; user 2026-11-18: training on Chungju 120 km)
+             "v2j1": 160000, "v2j2": 160000}      # the v2j scenarios launched 10 km / 10-20 km away (launch-distance stages 1 / 2)
 # Map of a split (R10 on two maps, user 2026-11-14): the Barstow cases are on the mojave map, all others on Amboy.
-SPLIT_REGION = dict(bval="mojave", btest="mojave", v2a="amboy120", v2b="mojave120")
+SPLIT_REGION = dict(bval="mojave", btest="mojave", v2a="amboy120", v2b="mojave120", v2j="jirisan120", v2j1="jirisan120", v2j2="jirisan120")
+# Target types of a split's cases (case k has SPLIT_TYPES[split][k % n]); a typed split not listed has MULTI["types"]. v2j: the road type
+# only, like the training (user 2026-11-18: Chungju 120 km road type; 3 Jirisan cases, a larger check apart when needed).
+SPLIT_TYPES = dict(v2j=("road",), v2j1=("road",), v2j2=("road",))
+# Launch ring of a V2 split other than V2["ring_m"] (user 2026-11-18): the launch-distance stages move on when the policy reaches 0.9 x SAROPS
+# on cases launched at the stage's distance; v2j1 / v2j2 are the v2j scenarios (same seeds: same LKP, heading and particles, which do not
+# depend on the launch point) launched 10 km / 10-20 km from the LKP.
+SPLIT_RING = dict(v2j1=(10000.0, 10000.0), v2j2=(10000.0, 20000.0))
 # Diverse cases (user, 2026-11-11; docs/rl_experiments.md): per case a random target model, a wider LKP area, a launch delay and a farther
 # launch, so the particles are spread by hand-over and the policy also meets flights where POS cannot be collected early.
 DIVERSE = dict(lkp_half_m=15000.0, p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0), fast_kmh=(20.0, 50.0), delay_s=(0.0, 1200.0),
@@ -43,14 +52,14 @@ MULTI_TYPES = dict(road=dict(p_leave_min=(0.0, 0.0), p_return_min=(1.0, 1.0)),
                    mixed=dict(p_leave_min=(0.0, 0.05), p_return_min=(0.1, 1.0)),
                    desert=dict(p_leave_min=(0.05, 0.3), p_return_min=(0.0, 0.1), off_kmh=(10.0, 25.0)))
 TYPE_NAMES = dict(road="도로형", mixed="혼합형", desert="사막형")
-MULTI_SPLITS = ("mval", "mtest", "nval", "ntest", "bval", "btest", "v2a", "v2b")
-MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30, bval=15, btest=30, v2a=15, v2b=15)   # case k has type MULTI["types"][k % 3]; mval 9 -> 15 (5 per type, user 2026-11-12)
+MULTI_SPLITS = ("mval", "mtest", "nval", "ntest", "bval", "btest", "v2a", "v2b", "v2j", "v2j1", "v2j2")
+MULTI_N = dict(mval=15, mtest=30, nval=15, ntest=30, bval=15, btest=30, v2a=15, v2b=15, v2j=3, v2j1=3, v2j2=3)   # case k has type MULTI["types"][k % 3] (SPLIT_TYPES); mval 9 -> 15 (5 per type, user 2026-11-12)
 # Targets that never stop (R10, user 2026-11-14): no stops, and each particle drives at its own steady speed: a driver factor z (one per
 # particle, rl_search.vehicle) puts it at mean x (1 + 0.15 z) in every state (fast road, slow road, off road), kept within mean x (1 +- 0.3).
 # nval / ntest are the mval / mtest cases (same seeds, types, LKP, launch) with these targets; the training pool is rl_pool_multi_ns.
 NOSTOP = dict(std_frac=0.15, band=0.3)
 NOSTOP_SPLITS = ("nval", "ntest", "bval", "btest")
-SPLIT_NAMES = dict(nval="정지 없음 ", ntest="정지 없음 ", bval="바스토 ", btest="바스토 ")
+SPLIT_NAMES = dict(nval="정지 없음 ", ntest="정지 없음 ", bval="바스토 ", btest="바스토 ", v2j="지리산 ", v2j1="지리산 10 km ", v2j2="지리산 10~20 km ")
 # Varied routes (R10 on two maps, user 2026-11-14): every training scenario and the Barstow cases draw the route settings of the target
 # model (the web tuner's group "경로·시작") uniformly in these ranges, from a stream of their own so the other draws stay as they were.
 # Off-road slope limit: 30 deg for every type (vehicle_config.json, the user's maximum).
@@ -66,7 +75,7 @@ V2_SPEEDS = dict(fast_kmh=50.0, fast_std_kmh=10.0, slow_kmh=30.0, slow_std_kmh=5
                  speed_cap_kmh=70.0, speed_band=0.0, p_stop_min=0.0)
 V2 = dict(ring_m=(10000.0, 40000.0), duration_s=4200.0, midflight=0.3,
           exit_trend_min=5.0)      # (user 2026-11-18) off the map: the direction of the last 5 min at the speed it left with, then drift
-V2_SPLITS = ("v2a", "v2b")
+V2_SPLITS = ("v2a", "v2b", "v2j", "v2j1", "v2j2")
 
 
 def v2_vc(rng, typ: str, seed: int) -> dict:
@@ -88,8 +97,9 @@ MOUNTAIN_ROUTE = dict(heading_std_deg=(10.0, 90.0), reorient_std_deg_min=(0.0, 3
 
 
 # (user 2026-11-18) the speed spread of a mountain-terrain target varies a little between scenarios: one factor per scenario on every
-# road kind's spread (the means stay 50 / 30 / 10 km/h): 0.5 = the particles drive at about the same speed, 1.5 = they string out
-MOUNTAIN_SPREAD = (0.5, 1.5)
+# road kind's spread (the means stay 50 / 30 / 10 km/h): 0.5 = the particles drive at about the same speed, 1.0 = the V2 spread
+# (user: 0.5-1.0, i.e. paved +-5 to +-10 km/h)
+MOUNTAIN_SPREAD = (0.5, 1.0)
 
 
 def mountain_route_vc(seed: int) -> dict:
@@ -194,7 +204,8 @@ class Case:
     @property
     def label(self) -> str:
         d = f"{TYPE_NAMES.get(self.typ, '유형별')} " if self.split in MULTI_SPLITS else ("다양 " if self.split.startswith("d") else "")
-        return f"{SPLIT_NAMES.get(self.split, '')}{d}{'검증' if self.split.endswith('val') else '시험'} {self.stage}단계 · 시나리오 {self.k + 1}"
+        val = self.split.endswith("val") or self.split in V2_SPLITS          # the V2 splits are validation cases
+        return f"{SPLIT_NAMES.get(self.split, '')}{d}{'검증' if val else '시험'} {self.stage}단계 · 시나리오 {self.k + 1}"
 
     def options(self, scen) -> dict:
         if self.stage in (1, 2):
@@ -237,7 +248,8 @@ def multi_vc(rng, typ: str) -> dict:
 
 
 def case_type(split: str, k: int) -> str:
-    return MULTI["types"][k % len(MULTI["types"])] if split in MULTI_SPLITS else ""
+    types = SPLIT_TYPES.get(split, MULTI["types"])
+    return types[k % len(types)] if split in MULTI_SPLITS else ""
 
 
 def diverse_lkp(net, rng, half_m: float | None = None) -> np.ndarray:
@@ -314,20 +326,31 @@ def start_stage2(scen, rng, half: float):
     raise RuntimeError("no stage 2 start inside the map")
 
 
+def _launch_bad(terr) -> np.ndarray:
+    """Cells a ground team cannot launch from (user 2026-11-18: anywhere but the mountains): forest, slope of 15 deg or more, water, a large
+    city, military land. Made once per terrain."""
+    if "_launch_bad" not in terr.__dict__:
+        bad = terr.forest | terr.water | terr.city | terr.steep(15.0)
+        if getattr(terr, "military", None) is not None:
+            bad = bad | terr.military
+        terr.__dict__["_launch_bad"] = bad
+    return terr.__dict__["_launch_bad"]
+
+
 def _military_at(terr, p) -> bool:
-    """Is the point (x, y) in military land (terrain layer ``military``, nearest 25 m cell)? False without a terrain or the layer."""
-    m = getattr(terr, "military", None) if terr is not None else None
-    if m is None:
+    """Is the point (x, y) closed to a launch (with ``terr``: forest, steep, water, city or military land, _launch_bad; nearest 25 m cell)?
+    False without a terrain. (2026-11-17 it was military land only; 11-18 the mountains too.)"""
+    if terr is None:
         return False
     n = len(terr.axis)
     i, j = (int(np.clip(np.round((v - terr.axis[0])/terr.cell), 0, n - 1)) for v in (p[1], p[0]))
-    return bool(m[i, j])
+    return bool(_launch_bad(terr)[i, j])
 
 
 def start_stage3(lkp, rng, half: float, ring: tuple = (8000.0, 20000.0), terr=None):
-    """Launch point ``ring`` from the LKP, direction uniform, inside the map. With ``terr`` (the redesigned scenarios, 2026-11-17: military
-    land is closed, so a team on the ground cannot launch there) a point in military land is drawn again."""
-    for _ in range(500):
+    """Launch point ``ring`` from the LKP, direction uniform, inside the map. With ``terr`` (the redesigned scenarios) a point a ground team
+    cannot launch from is drawn again: military land (2026-11-17), and since 2026-11-18 forest, steep (15 deg+), water and large cities."""
+    for _ in range(2000):
         d, th = rng.uniform(*ring), rng.uniform(-np.pi, np.pi)
         s = lkp + d*np.array([np.cos(th), np.sin(th)])
         if _inside(s, half) and not _military_at(terr, s):
@@ -450,17 +473,21 @@ def make_multi_case(vs, split: str, stage: int, k: int, seed: int, rng):
 
 
 def make_v2_case(vs, split: str, stage: int, k: int, seed: int, rng):
-    """A redesigned validation case (V2): type MULTI["types"][k % 3], LKP on a road in the central 30 km, launch at the report time from
-    10-40 km, the scenario kept whatever leaves the map."""
+    """A redesigned validation case (V2): type case_type(split, k), LKP on a road in the central 30 km, launch at the report time from
+    10-40 km, the scenario kept whatever leaves the map. On mountain terrain (v2j, Jirisan) the target model is scenario_vc "mountain:<type>",
+    as the Chungju training scenarios (user 2026-11-18)."""
     from dataclasses import replace
     from rl_search.real_scenario import VehicleScenarios
+    from rl_search.rl_real import terrain_kind
     if stage != 3:
         raise ValueError("redesigned cases are launch (stage 3) cases")
     typ = case_type(split, k)
-    vc = v2_vc(rng, typ, seed)
+    mountain = terrain_kind(getattr(vs, "region", REGION)) == "mountain"
+    vc = scenario_vc(rng, f"mountain:{typ}", seed) if mountain else v2_vc(rng, typ, seed)
     lkp = diverse_lkp(vs.net, rng)
     heading = float(rng.uniform(0.0, 360.0))
-    _, start, info = start_stage3(lkp, rng, float(vs.net.terr.axis[-1]), V2["ring_m"], terr=vs.net.terr)
+    ring = SPLIT_RING.get(split, V2["ring_m"])                  # v2j1 / v2j2: the launch-distance stages' rings
+    _, start, info = start_stage3(lkp, rng, float(vs.net.terr.axis[-1]), ring, terr=vs.net.terr)
     vs2 = VehicleScenarios(vs.sampler, replace(vs.vcfg, **vc), region=getattr(vs, "region", REGION), net=vs.net)
     scen, vres = vs2.make_at(seed, lkp, heading, start=start[:2], with_res=True)
     hold = vs2.make_at(seed + HOLDOUT, np.asarray(scen.lkp, float), heading, start=start[:2])

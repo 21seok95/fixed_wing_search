@@ -348,3 +348,48 @@ for sp in nval bval; do
 done
 python -m rl_search.scripts.rl_eval.case_tracks --split nval --k 8 --runs "R14 사막형만 320만=r14_desert-3200000" "R10 320만=r10_2map-3200000"
 ```
+
+## 11. R16 환경 구축 (2026-11-23, 맥에서 준비)
+
+**지금 상황**: R16 = 다수 기체 환경(설계 m2)을 **1대로, 처음부터** 학습하고(그다음 2대 → 3대), **좌우 대칭 정책**을 넣는다(사용자 11-23).
+보상은 (찾은 확률 × 1.25) ÷ 걸음 전 남은 확률(1대라 팀 몫 = 내 몫), 동료 채널은 "동료 없음" 값, 벡터 끝에 1/k = 1, 지도 8비트. 나머지는 R15(학습 A:
+충주 120 km 도로형 4,000개, 이륙만, 이륙 거리 단계 10 → 10~20 → 10~40 km, 지도 7장, γ 0.995, 600만)와 같다. 배경과 결정:
+`docs/multi_agent_design.md`("R15 → M2c에서 바뀐 것", "정한 것"), `docs/rl_experiments.md` 11-23 메모. **R16 자체는 맥에서 돈다**(실행 이름 `r16_chungju`).
+우분투는 **환경만 먼저 만들어 둔다**(사용자: "같은 R16을 한 번 더 돌릴지는 모르겠지만 환경 구축은 해 두게"). 학습을 돌릴지, 돌린다면 같은 R16인지
+대칭만 뺀 비교인지는 사용자가 정한다 — **보고만 하고 학습은 시작하지 않는다.**
+
+**저장소에 들어 있는 것**: 코드(`feat/rl-env`), 충주 120 km·지리산 120 km의 지형 지문(`terrain_fingerprint.json`)과 OSM 원자료(`raw/osm_*.json.gz`),
+지리산 검증 SAROPS 기준값(`jirisan120/rl_eval/sarops_ref_v2j{,1,2}_realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5.json`), 학습 풀 지문
+(`chungju120/rl_pool_v2_fingerprint.json`: 4,000개 중 100번째마다 40개의 이륙점·LKP·표적 방향·입자 궤적 중심과 퍼짐), 시작 스크립트
+`rl_search/data/rl_real/r16_start.sh`(맥·우분투 겸용: 우분투면 CUDA, `systemd-inhibit`, 실행 이름 `r16u_chungju`; `SYM=0`이면 대칭 없이 `_nosym`).
+**없는 것**: 고도·토지피복 원자료(내려받음), 지형 파일, 학습 풀 63 GB(같은 씨앗으로 다시 만듦).
+
+**할 일** (단계마다 확인하고, 다르면 멈추고 보고)
+1. `git fetch && git checkout feat/rl-env && git pull`, `source .venv/bin/activate`, 웹 서버 끄기(R12가 웹을 켠 채로 systemd-oomd에 죽었다).
+   `python -c "import torch; print(torch.cuda.is_available())"` → True. `df -h .` → 빈 곳 80 GB 이상(풀 63 GB + 지형).
+2. **지형** (고도·토지피복을 내려받음, 인터넷 필요):
+   ```bash
+   python -m rl_search.scripts.make_real_terrain --region chungju120 --cell 25
+   python -m rl_search.scripts.make_real_terrain --region jirisan120 --cell 25
+   python -m rl_search.scripts.terrain_fingerprint check --region chungju120 jirisan120
+   ```
+   확인: 두 줄 모두 `same as the Mac (18 arrays)`.
+3. **학습 풀** (시나리오 하나 약 4초 · 코어 1개, 워커 10개면 약 30분, 63 GB; 씨앗 14,000,000 + i):
+   ```bash
+   python -m rl_search.scripts.rl_eval.make_pool --v2 --kind mountain:road --region chungju120 --n 4000 --workers 10
+   python -m rl_search.scripts.rl_eval.pool_fingerprint check --region chungju120
+   ```
+   확인: `4000 scenario files here` · `PASS`(맥에서 같은 씨앗으로 다시 만든 두 개는 궤적 전체가 0 m 차이였다). FAIL이면 차이 줄을 그대로 보고.
+4. **짧은 학습 시험** (평가와 이륙 거리 단계 넘기기까지 한 번씩 돌게):
+   ```bash
+   TAG=r16u_smoke STOP=4096 EXTRA="--eval-every 2048 --save-every 2048 --ring-eval-every 2048" bash rl_search/data/rl_real/r16_start.sh
+   tail -40 rl_search/data/rl_real/r16u_smoke_train.log
+   python -m rl_search.scripts.multi_design.sym_policy_check exact --model $(ls -t rl_search/data/rl_real/r16u_smoke/ckpt/model_*.zip | head -1)
+   ```
+   확인: 로그에 `multi-UAV: worlds [1, ... 1], 20 UAV slots`, `launch ring stage 0`, 지리산 평가 줄(`eval stage 3 at ...` 또는 `launch ring ... eval`), `fps`,
+   `stopped at`; `sym_policy_check` 7줄 모두 PASS. 시험 중 `free -g`로 메모리(스왑 포함)를 본다. 끝나면 `rm -rf rl_search/data/rl_real/r16u_smoke*`.
+   (업데이트 한 번이 20 × 154 = 3,080 스텝이라 두 번 돌고 6,160에서 멈춘다)
+5. **보고** (표로): 지형 지문, 풀 지문, 시험 학습(속도 fps, 메모리, 평가 줄), 대칭 시험. 학습은 사용자가 정한 뒤에만:
+   - 같은 R16: `nohup bash rl_search/data/rl_real/r16_start.sh > /dev/null 2>&1 &` (로그 `r16u_chungju_train.log`)
+   - 대칭만 뺀 비교: `SYM=0 nohup bash rl_search/data/rl_real/r16_start.sh > /dev/null 2>&1 &` (로그 `r16u_chungju_nosym_train.log`)
+   - 시작하면 `docs/rl_experiments.md`에 줄을 더하고, 끝나면 `config.json`, `state.json`, `tb/`, `tb_eval/`, 마지막 체크포인트와 `best_stage3.zip`, 로그를 `git add -f`.

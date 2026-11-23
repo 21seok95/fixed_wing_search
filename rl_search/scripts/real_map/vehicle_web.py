@@ -62,8 +62,9 @@ def scenario_defaults(kind: str) -> dict:
         | dict(p_leave_fast_min=p_leave, p_leave_slow_min=p_leave, p_return_min=mid(t["p_return_min"]), exit_straight=True, exit_trend_min=V2["exit_trend_min"],
                shortcut_m=MOUNTAIN["shortcut_m"] if typ == "mountain" else 0.0, shortcut_factor=MOUNTAIN["shortcut_factor"])
     if terrain == "mountain":                                # mountain route ranges (MOUNTAIN_ROUTE), detours keep the road tier
-        from rl_search.rl_eval_set import MOUNTAIN_ROUTE
+        from rl_search.rl_eval_set import MOUNTAIN_ROUTE, MOUNTAIN_SPREAD
         out |= {k: mid(r) for k, r in MOUNTAIN_ROUTE.items()} | dict(detour_keep_tier=True)
+        out |= {k: V2_SPEEDS[k]*mid(MOUNTAIN_SPREAD) for k in ("fast_std_kmh", "slow_std_kmh", "off_std_kmh")}   # speed spread factor
         if typ == "road":
             out["deadend_offroad"] = False                  # a dead end is turned at (user 2026-11-18)
     out = {k: v for k, v in out.items() if k not in ("particles", "dt_s", "save_dt_s", "duration_s")}
@@ -105,6 +106,7 @@ class Jobs:
     def __init__(self, max_jobs: int):
         self.ctx, self.max = mp.get_context("spawn"), max_jobs
         self.jobs, self.count, self.lock = {}, 0, threading.RLock()
+        self._tracks = {}                                     # run id -> flight path only (track())
         RUNS.mkdir(parents=True, exist_ok=True)
         for f in sorted(RUNS.glob("*/meta.json")):
             m = json.loads(f.read_text())
@@ -213,6 +215,23 @@ class Jobs:
         if jid not in self.jobs or self.jobs[jid]["state"] != "done":
             raise KeyError(jid)
         return RUNS/jid/"run.json.gz"
+
+    def track(self, jid: str) -> dict:
+        """Only the flight path of a saved run (times and positions of each UAV, as the page decodes them), for drawing other flights of
+        the same case over the one being viewed (user 2026-11-18). The replay file is 10-15 MB, the path a few hundred kB; kept in memory."""
+        with self.lock:
+            hit = self._tracks.get(jid)
+        if hit is not None:
+            return hit
+        with gzip.open(self.path(jid), "rt", encoding="utf-8") as f:
+            o = json.load(f)["opt"]
+        uavs = o.get("uavs") or [dict(tt=o["tt"], xy=o["xy"], n_path=o["n_path"])]       # runs saved before teams
+        out = dict(id=jid, uavs=[dict(tt=u["tt"], xy=u["xy"], n_path=u["n_path"]) for u in uavs])
+        with self.lock:
+            if len(self._tracks) >= 64:
+                self._tracks.pop(next(iter(self._tracks)))
+            self._tracks[jid] = out
+        return out
 
 
 def available_regions() -> list[str]:
@@ -420,6 +439,11 @@ def make_handler(app: App):
                 self.send_json(app.jobs.list())
             elif self.path == "/api/rl_models":
                 self.send_json({"models": web_rl.rl_models(), "region": web_rl.RL_REGION})
+            elif url.path.startswith("/api/track/"):
+                try:
+                    self.send_json(app.jobs.track(url.path.split("/")[3]))
+                except (KeyError, OSError, ValueError):
+                    self.send(404, b"not found", "text/plain")
             elif self.path.startswith("/api/jobs/"):
                 try:
                     body = app.jobs.path(self.path.split("/")[3]).read_bytes()

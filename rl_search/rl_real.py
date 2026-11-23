@@ -27,7 +27,10 @@ policy needs on top:
 - starts (section 6): training scenarios drawn like the validation cases (LKP on a road in the central 3 km square, rl_eval_set) but
   with their own seeds, reused for ``reuse`` episodes with new starts; curriculum stage 1 / 2 / 3 starts mixed by ``stage_mix``. With the
   redesigned scenarios (``scen_v2``, 2026-11-17): launches (stage 3, 10-40 km, outside military land) and mid-flight starts from states
-  that earlier launch flights saved (stage 4, ``MID_KINDS``), 70 / 30.
+  that earlier launch flights saved (stage 4, ``MID_KINDS``), 70 / 30; the setting ``midflight`` sets that share (user 2026-11-18: 0 =
+  launches only for now). On mountain terrain (Korea, ``terrain_kind``) the scenarios follow rl_eval_set.scenario_vc ("mountain:road" /
+  "mountain:mountain"); the setting ``types`` picks the target types (``run_types``; user 2026-11-18: Chungju 120 km, road type only).
+  Launch-distance curriculum (user 2026-11-18): the trainer narrows the launch ring with ``set_ring`` (10 km, then 10-20, then 10-40 km).
   ``reset(options=case.options(scen))`` starts exactly like a SAROPS reference flight.
 - end: energy spent = terminated (60 min flight); ``max_steps`` cuts an episode early = truncated.
 
@@ -48,6 +51,48 @@ MAPS = (("m1600", 1600.0, 15.0), ("m6400", 6400.0, 60.0), ("m25600", 25600.0, 30
 # maps' leads follow the side (3.2 km 30 s, 12.8 km 150 s); the 102.4 km map keeps R13's fifth-map lead of 600 s.
 MAPS7 = (("m1600", 1600.0, 15.0), ("m3200", 3200.0, 30.0), ("m6400", 6400.0, 60.0), ("m12800", 12800.0, 150.0),
          ("m25600", 25600.0, 300.0), ("m51200", 51200.0, 600.0), ("m102400", 102400.0, 600.0))
+def maps_to_u8(obs: dict, ranges: dict | None = None) -> dict:
+    """The observation with its maps (every key but "vec") as uint8 0..255 (setting ``obs_u8``, user 2026-11-23: rollout memory and
+    inter-process transfer 1/4, docs/scenario_redesign.md "관측 지도 16·8비트 저장 확인"). ``ranges``: {map name: (lo, hi) for every
+    channel, or [(lo, hi) per channel]}; default (0, 1). Stored value round((clip(x, lo, hi) - lo) / (hi - lo) * 255). SB3 reads a uint8
+    image space as value / 255, so the network sees (x - lo) / (hi - lo): the same x for a (0, 1) channel (the R15 maps), a shifted and
+    scaled x otherwise (fine for a new channel; a float32 model's weights for that channel would not carry over unchanged)."""
+    out = {}
+    for name, v in obs.items():
+        if name == "vec" or v.dtype == np.uint8:
+            out[name] = v
+            continue
+        r = (ranges or {}).get(name, (0.0, 1.0))
+        if isinstance(r, tuple):
+            lo, hi = np.full(v.shape[0], float(r[0])), np.full(v.shape[0], float(r[1]))
+        else:
+            lo, hi = np.array([float(a) for a, _ in r]), np.array([float(b) for _, b in r])
+        lo, hi = lo.reshape(-1, *([1]*(v.ndim - 1))), hi.reshape(-1, *([1]*(v.ndim - 1)))
+        out[name] = np.round((np.clip(v, lo, hi) - lo)/(hi - lo)*255.0).astype(np.uint8)
+    return out
+
+
+_VIS_CACHE: dict = {}             # (id of a visibility array, stride) -> (that array, its strided cell means): one copy per process
+
+
+def _vis_grid(A: np.ndarray, f: int) -> np.ndarray:
+    """Cell means of the visibility array ``A`` over f x f blocks, every f-th cell, as its own small array (not a view of the full-size
+    filtered terrain), shared by every env of the process with the same ``A`` (the cache keeps A, so its id is not reused)."""
+    key = (id(A), int(f))
+    hit = _VIS_CACHE.get(key)
+    if hit is None:
+        A32 = A.astype(np.float32, copy=False)
+        g = np.ascontiguousarray(uniform_filter(A32, size=f, mode="nearest")[::f, ::f]) if f > 1 else A32
+        hit = _VIS_CACHE[key] = (A, g)
+    return hit[1]
+
+
+def u8_map_space(shape):
+    """Gymnasium space of a uint8 map (``maps_to_u8``): SB3 treats it as an image and divides by 255."""
+    from gymnasium import spaces
+    return spaces.Box(0, 255, shape, np.uint8)
+
+
 POOL_DIR = "rl_search/data/real/amboy/rl_pool"
 POOL_DIR_DIVERSE = "rl_search/data/real/amboy/rl_pool_diverse"
 POOL_DIR_MULTI = "rl_search/data/real/amboy/rl_pool_multi"      # typed scenarios, files <type>_s<seed>.pkl
@@ -66,7 +111,40 @@ def pool_dir_multi(settings: dict | None = None, region: str = "amboy") -> str:
         return base + "_ns" + ("_rt" if (settings or {}).get("route_var") else "")
     off = float((settings or {}).get("area_sigma_off") or 0.0)
     return POOL_DIR_MULTI + (f"_o{off:g}" if off else "")
-N_REF = 5000                       # particle units are scaled to this many particles
+
+
+# Terrain class of a map (user 2026-11-18, docs/scenario_redesign.md "지형과 표적 유형의 이름"): desert terrain (Mojave; target types road / mixed /
+# field, the field type being "desert" in the code) or mountain terrain (Korea; road / mountain, rl_eval_set.scenario_vc). A stretched map has
+# its base map's class.
+DESERT_REGIONS = ("amboy", "mojave", "amboy120", "mojave120")
+TERRAIN_TYPES = {"desert": ("road", "mixed", "desert"), "mountain": ("road", "mountain")}
+
+
+def terrain_kind(region: str) -> str:
+    from rl_search.stretch import base_of
+    return "desert" if base_of(region)[0] in DESERT_REGIONS else "mountain"
+
+
+def run_types(settings: dict | None, region: str) -> tuple:
+    """Target types a training env on ``region`` draws: the setting ``types`` ("road" or "road,mountain"; user 2026-11-18: Chungju 120 km
+    road type only), checked against the map's terrain class; else with the redesigned scenarios (scen_v2) every type of that class; else
+    the typed types of R5 (rl_eval_set.MULTI), as before."""
+    from rl_search.rl_eval_set import MULTI
+    s = settings or {}
+    kind = terrain_kind(region)
+    t = s.get("types")
+    if t:
+        types = tuple(x.strip() for x in t.split(",") if x.strip()) if isinstance(t, str) else tuple(t)
+        bad = [x for x in types if x not in TERRAIN_TYPES[kind]]
+        if bad:
+            raise ValueError(f"types {bad} are not target types of {kind} terrain ({region}): {TERRAIN_TYPES[kind]}")
+        return types
+    if s.get("scen_v2"):
+        return TERRAIN_TYPES[kind]
+    return tuple(MULTI["types"])
+
+
+N_REF = 5000                      # particle units are scaled to this many particles
 VEC_NAMES = ("roll", "turn_rate_state", "course_minus_heading", "energy_left", "window_time_left", "prob_left", "allowed_low",
              "allowed_high")
 STAGE_MIX = {1: {1: 1.0}, 2: {2: 0.75, 1: 0.25}, 3: {3: 0.7, 2: 0.15, 1: 0.15}}   # default start mix by curriculum stage
@@ -138,6 +216,17 @@ class RealRLConfig:
     roll_reversal_deg: float = 10.0    # a side counts once |roll| reaches this (10 deg = 3 deg/s turn at 33 m/s)
     multi: bool = False                # typed training scenarios (rl_eval_set.MULTI, R5, user 2026-11-12); pool: POOL_DIR_MULTI
     type_weights: str | None = None    # JSON {type: share} the trainer updates; read at every new scenario (None or missing: equal)
+    # (j, n): this env takes the pool files of a type j, j + n, j + 2n, ... in seed order, then from the start again (user 2026-11-18: the envs
+    # never draw the same scenario before the pool is used up; the files were made independently by seed, so the seed order is as random);
+    # None: drawn at random with repeats, as before
+    pool_slot: tuple | None = None
+
+
+def _pool_seed(p) -> int:
+    """Seed of a pool file name (<type>_s<seed>.pkl or s<seed>.pkl)."""
+    import re
+    m = re.search(r"(\d+)$", p.stem)
+    return int(m.group(1)) if m else 0
 
 
 def training_scenario(vs, seed: int):
@@ -194,6 +283,12 @@ class RealRLEnv:
         self._save_at = None                                    # this launch flight saves its state at this time (s), or None
         self.start_kind = ""                                    # "launch", "stage1", "stage2" or "mid_<kind>"
         self._ep_typ = ""
+        self.terrain = terrain_kind(cfg.region)                 # "desert" or "mountain" (scenario rules of the redesigned training)
+        self.types = run_types(self.s, cfg.region)              # target types the training draws (setting "types")
+        # launch-distance curriculum (user 2026-11-18): the trainer narrows the ring of the stage 3 launches with set_ring (lo, hi m from the
+        # LKP: 10 km, then 10-20, then 10-40); None = the rule's own ring (V2: 10-40 km)
+        self.ring_m = None
+        self._pool_next = {}                                    # pool_slot: scenarios drawn so far per type (the trainer saves it)
         # launch_policy (user 2026-11-18): the policy flies from the launch, with no rule transit (neither the 120 s toward the LKP nor the
         # handover_km transit), so the first decisions read the particles on the large maps only and those maps matter in training
         self.launch_policy = bool(self.s.get("launch_policy"))
@@ -205,6 +300,12 @@ class RealRLEnv:
         # no_vis_obs (user 2026-11-18): the observation shows no ground visibility (no visibility channel, POS channels not weighted by
         # it); the detection and the reward keep the real visibility
         self.no_vis_obs = bool(self.s.get("no_vis_obs"))
+        # obs_u8 (user 2026-11-23): maps as uint8 (maps_to_u8, every channel 0..1). Only for the R15 maps (obs_r10, A off, and no
+        # visibility channel or visibility 0 off the map), whose channels were measured within 0..1 (scripts/rl_eval/obs_quant_check.py)
+        self.obs_u8 = bool(self.s.get("obs_u8"))
+        if self.obs_u8 and not (self.s.get("obs_r10") and float(self.s.get("a_weight", 1.0)) == 0.0
+                                and (self.no_vis_obs or self.s.get("off_map_zero"))):
+            raise ValueError("obs_u8 needs maps within 0..1: obs_r10, a_weight 0, and no_vis_obs or off_map_zero")
         if self.s.get("maps7"):
             if float(self.s.get("big_map_m", 0.0) or 0.0) or float(self.s.get("extra_map_m", 0.0) or 0.0):
                 raise ValueError("maps7 has its own 102.4 km map: no big_map_m or extra_map_m")
@@ -224,13 +325,22 @@ class RealRLEnv:
     # ------------------------------------------------------------------ static parts of the observation
     def _prepare_static(self):
         px = self.cfg.map_px
-        det = self.env.detector
-        self.vis_grids = []                                     # (stride, grid of cell means) per map
-        for _, side, _ in self.cfg.maps:
-            f = max(int(round(side/px/self.terr.cell)), 1)
-            A = det.A.astype(np.float32, copy=False)            # the detector's own array (no copy: 2026-11-17)
-            g = uniform_filter(A, size=f, mode="nearest")[::f, ::f] if f > 1 else A
-            self.vis_grids.append((f, g))
+        self._vis_grids = None                                  # built on first use (vis_grids): only the visibility channel reads it
+        self._prepare_offsets(px)
+
+    @property
+    def vis_grids(self) -> list:
+        """(stride, grid of cell means of the detector's visibility) per map, for the visibility channel. Built on first use and shared by
+        the envs of a process (``_vis_grid``). (2026-11-23) It was built for every env at construction and kept the full-size filtered
+        terrain alive behind each strided view: about 530 MB per env on the 120 km maps (4,800 x 4,800 cells x 6 maps), unused since
+        no_vis_obs (R15, M2) — 14 GB of the 27 UAV envs of M2b."""
+        if self._vis_grids is None:
+            A = self.env.detector.A
+            px = self.cfg.map_px
+            self._vis_grids = [(f, _vis_grid(A, f)) for f in (max(int(round(side/px/self.terr.cell)), 1) for _, side, _ in self.cfg.maps)]
+        return self._vis_grids
+
+    def _prepare_offsets(self, px: int):
         # map frame: row 0 = farthest ahead, column 0 = farthest left; centre offsets (forward, right) per cell
         self.offsets = []
         for _, side, _ in self.cfg.maps:
@@ -267,8 +377,7 @@ class RealRLEnv:
         """Target type of the next training scenario, by the trainer's current shares (equal when there are none yet)."""
         import json
         from pathlib import Path
-        from rl_search.rl_eval_set import MULTI
-        types = MULTI["types"]
+        types = self.types
         w = np.ones(len(types))
         p = Path(self.cfg.type_weights) if self.cfg.type_weights else None
         if p is not None and p.exists():
@@ -294,7 +403,14 @@ class RealRLEnv:
             files = [f for f in files if f.name.startswith(self._typ + "_")]
         if files:                                               # pre-built: the scenario and its area score
             import pickle
-            with open(files[int(self.rng.integers(len(files)))], "rb") as f:
+            if self.cfg.pool_slot:                              # this env's share in seed order, no repeats until used up (user 2026-11-18)
+                j, n = self.cfg.pool_slot
+                c = int(self._pool_next.get(self._typ, 0))
+                self._pool_next[self._typ] = c + 1
+                pick = sorted(files, key=_pool_seed)[(int(j) + c*int(n)) % len(files)]
+            else:
+                pick = files[int(self.rng.integers(len(files)))]
+            with open(pick, "rb") as f:
                 d = pickle.load(f)
             scen = d["scen"]
             if self.no_area:
@@ -314,6 +430,9 @@ class RealRLEnv:
         if self.s.get("scen_v2") and self.k != 1.0:            # stretched map: made on the base map at the speeds / k, then scaled
             from rl_search.stretch import stretched_training_scenario
             return stretched_training_scenario(self.vs, seed, self._typ or "road", self.k)[0]
+        if self.s.get("scen_v2") and self.terrain == "mountain":   # mountain terrain (Korea, user 2026-11-18): the "mountain:<type>" rules
+            from rl_search.rl_eval_set import kind_training_scenario
+            return kind_training_scenario(self.vs, seed, f"mountain:{self._typ or 'road'}")[0]
         if self.s.get("scen_v2"):                               # redesigned scenarios (rl_eval_set.V2), generated when the pool is empty
             from rl_search.rl_eval_set import v2_training_scenario
             return v2_training_scenario(self.vs, seed, self._typ or "road")[0]
@@ -379,7 +498,7 @@ class RealRLEnv:
         else:
             from rl_search.rl_eval_set import DIVERSE, MULTI, V2
             rule = V2 if self.s.get("scen_v2") else MULTI if self.cfg.multi else DIVERSE if self.cfg.diverse else None
-            ring = rule["ring_m"] if rule else (8000.0, 20000.0)
+            ring = self.ring_m or (rule["ring_m"] if rule else (8000.0, 20000.0))     # ring_m: the launch-distance curriculum
             t0, start, info = start_stage3(np.asarray(scen.lkp, float), self.rng, self.half, ring, terr=self.terr if rule is V2 else None)
             scen = replace(scen, start=np.array(start[:2], float), start_heading_deg=float(np.degrees(start[2])))
             out = dict(scenario=scen, stage=3, start_info=info)
@@ -395,8 +514,8 @@ class RealRLEnv:
             return self.cfg.stage_mix
         if self.s.get("scen_v2") and self.cfg.stage >= 3:
             from rl_search.rl_eval_set import V2
-            m = float(V2["midflight"])
-            return {3: 1.0 - m, 4: m}
+            m = float(self.s.get("midflight", V2["midflight"]))    # setting midflight (user 2026-11-18: 0 = launches only for now)
+            return {3: 1.0 - m, 4: m} if m > 0 else {3: 1.0}
         return STAGE_MIX[self.cfg.stage]
 
     def reset(self, seed: int | None = None, options: dict | None = None):
@@ -641,7 +760,8 @@ class RealRLEnv:
         env = self.env
         return dict(t_s=env.t, dA=d_area, dPOS=d_pos, A=self.A_cum, POS=self.pos_cum, total=env.area_w*self.A_cum + env.pos_w*self.pos_cum, look=self.look_cum,
                     bonus=self.bonus_cum, roll_rev=self.roll_rev, mask_cut=self.mask_cum, shield=bool(shield), energy_left=env.energy, stage=self.start_stage, steps=self.steps,
-                    typ=self._ep_typ, region=self.cfg.region, start=self.start_kind)
+                    typ=self._ep_typ, region=self.cfg.region, start=self.start_kind,
+                    launch_km=float(getattr(self, "start_info", {}).get("launch_dist_m", np.nan))/1000.0)
 
     # ------------------------------------------------------------------ observation
     def _bin(self, pts, vals, k):
@@ -688,6 +808,12 @@ class RealRLEnv:
         return v
 
     def observation(self) -> dict:
+        """The observation the policy gets: ``observation_raw``, its maps as uint8 with the setting ``obs_u8``."""
+        obs = self.observation_raw()
+        return maps_to_u8(obs) if self.obs_u8 else obs
+
+    def observation_raw(self) -> dict:
+        """The observation in float32 (also with ``obs_u8``: a caller that adds channels converts at the end, rl_multi)."""
         env, cfg = self.env, self.cfg
         b, det = env.belief, env.detector
         t = env.t
@@ -832,7 +958,8 @@ def make_gym(cfg: RealRLConfig | None = None, seed: int = 0):
             c = self.env.cfg
             px = c.map_px
             nch, nvec = obs_layout(self.env.s, c.maps)
-            maps = {name: spaces.Box(-1.0, np.inf, (nch[name], px, px), np.float32) for name, _, _ in c.maps}
+            maps = {name: (u8_map_space((nch[name], px, px)) if self.env.obs_u8 else spaces.Box(-1.0, np.inf, (nch[name], px, px), np.float32))
+                    for name, _, _ in c.maps}
             self.observation_space = spaces.Dict({**maps, "vec": spaces.Box(-2.0, 2.0, (nvec,), np.float32)})
             self.action_space = spaces.Box(-1.0, 1.0, (1,), np.float32)
 
@@ -846,5 +973,18 @@ def make_gym(cfg: RealRLConfig | None = None, seed: int = 0):
         def set_stage(self, stage: int):
             """Curriculum: starts from now on follow STAGE_MIX[stage] (called on every worker by the training script)."""
             self.env.cfg.stage, self.env.cfg.stage_mix = int(stage), None
+
+        def set_ring(self, lo_m: float, hi_m: float):
+            """Launch-distance curriculum (user 2026-11-18): stage 3 launches from now on lo_m-hi_m from the LKP (called on every worker by
+            the training script; an episode under way keeps its launch)."""
+            self.env.ring_m = (float(lo_m), float(hi_m))
+
+        def pool_cursor(self) -> dict:
+            """pool_slot: scenarios drawn so far per type (saved by the trainer with each checkpoint)."""
+            return dict(self.env._pool_next)
+
+        def set_pool_cursor(self, cursor: dict):
+            """pool_slot: go on from a saved count (a resumed run does not draw the same scenarios again)."""
+            self.env._pool_next = {str(k): int(v) for k, v in (cursor or {}).items()}
 
     return RealRLGym()
