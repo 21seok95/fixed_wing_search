@@ -13,7 +13,7 @@ starts, generated scenarios, particle rules; agreed item by item since 2026-11-1
 first. It holds the reasons, the decisions, the commands in order with checks, and what to report. Section 8 has the R10, R11 and R12 results
 (2026-11-15) and how to continue the analysis on the Mac (what is in git, what is not, the commands); section 9 sets up R13
 (a fifth 102.4 km map and the look reward A' at 0.1, decided 2026-11-16, with R10's PPO settings); section 10 has R14 (R13's settings trained on
-one target type only: road-only, then desert-only, 3.2M each, run on the Ubuntu PC the night of 2026-11-16; results and the Mac commands in 10.1). R13 was run on the local PC from the slim branch `local-pc-r13`. Since 2026-11-18 the local PC uses the slim branch `local-pc` (no shared
+one target type only: road-only, then desert-only, 3.2M each, run on the Ubuntu PC the night of 2026-11-16; results and the Mac commands in 10.1). R13 was run on the local PC from the slim branch `local-pc-r13`. Section 11 (2026-11-23) builds the R16 environment on the Ubuntu PC (the 120 km terrains, the 4,000-scenario pool rebuilt and checked against its fingerprint, a smoke test; R16 itself runs on the Mac, training on the Ubuntu PC only after the user decides). Since 2026-11-18 the local PC uses the slim branch `local-pc` (no shared
 history; never merge it into feat/rl-env), see `local_pc.md` section 0. It is kept small (user 2026-11-18): code, docs and small JSONs
 only, no model weights, logs, TensorBoard, web runs, figures or reports, the OSM raw downloads gzipped and no DEM / land cover (the local PC
 downloads them and checks the built maps with `python -m rl_search.scripts.terrain_fingerprint check`; after rebuilding a map on the Mac,

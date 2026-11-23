@@ -72,6 +72,67 @@ def _model(path: str):
     return _CACHE["model"]
 
 
+class SoloMates:
+    """A model trained in the multi-UAV env (``rl_multi`` design m2, ``train_rl --teams``) flown alone in a ``RealRLEnv`` (user 2026-11-23,
+    R16: one UAV in the multi-UAV env, validated as R15 was): the single-UAV observation plus the teammate channels with no teammate
+    airborne, made by the same functions as ``rl_multi.MultiRealEnv.mate_channels`` (claim -1 and danger 0 on maps up to SMALL_SIDE, plan B
+    -1 on the larger ones), 1 / team size = 1 at the end of the vector, and the maps as uint8 with the ranges of
+    ``MultiRealEnv.mate_ranges`` when the model's maps are uint8. Everything else is the wrapped env's (attribute pass-through)."""
+
+    def __init__(self, env, u8: bool):
+        self.env_, self.u8 = env, bool(u8)
+
+    def __getattr__(self, name):
+        return getattr(self.env_, name)
+
+    def _obs(self) -> dict:
+        from rl_search.mate_maps import claim_map, danger_map, time_adv_map
+        from rl_search.rl_multi import DESIGNS, SMALL_SIDE
+        from rl_search.rl_real import maps_to_u8
+        u = self.env_
+        obs = u.observation_raw()
+        x, y, yaw = u.env.plant.pose
+        px = u.cfg.map_px
+        ranges = {}
+        for name, side, lead in u.cfg.maps:
+            n_base = obs[name].shape[0]
+            if side <= SMALL_SIDE:
+                ch = [claim_map(x, y, yaw, [], side, px), danger_map(x, y, yaw, [], side, float(lead), DESIGNS["m2"]["d_soft"], px)]
+                extra = [(-1.0, 1.0), (0.0, 1.0)]
+            else:
+                ch = [time_adv_map(x, y, yaw, [], side, float(lead), float(u.env.v), px)]
+                extra = [(-1.0, 1.0)]
+            obs[name] = np.concatenate([obs[name], np.stack(ch).astype(np.float32)], 0)
+            ranges[name] = [(0.0, 1.0)]*n_base + extra
+        obs["vec"] = np.concatenate([obs["vec"], np.array([1.0], np.float32)])
+        return maps_to_u8(obs, ranges) if self.u8 else obs
+
+    def reset(self, **kw):
+        _, info = self.env_.reset(**kw)
+        return self._obs(), info
+
+    def step(self, a):
+        _, r, term, trunc, info = self.env_.step(a)
+        return self._obs(), r, term, trunc, info
+
+
+def solo_view(model, env):
+    """``env`` as ``model`` sees it: wrapped in ``SoloMates`` when the model's vector is one longer than the single-UAV layout of the env's
+    settings and its maps carry the m2 teammate channels (a ``--teams`` model of design m2 without sequential turns); else ``env``."""
+    from rl_search.rl_multi import SMALL_SIDE
+    from rl_search.rl_real import obs_layout
+    sp = getattr(getattr(model, "observation_space", None), "spaces", None)
+    if not sp or "vec" not in sp:
+        return env
+    ch, n_vec = obs_layout(env.s, env.cfg.maps)
+    if sp["vec"].shape[0] != n_vec + 1:
+        return env
+    for name, side, _ in env.cfg.maps:
+        if name not in sp or sp[name].shape[0] != ch[name] + (2 if side <= SMALL_SIDE else 1):
+            return env
+    return SoloMates(env, u8=np.dtype(sp[env.cfg.maps[0][0]].dtype) == np.uint8)
+
+
 def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, save_web: bool = True, settings: dict | None = None,
                   launch_s: float | None = None, built: tuple | None = None, web: bool = False, progress=None) -> dict:
     """Fly the policy on one case; returns the belief and hold-out scores (A, POS, total) and the SAROPS reference of the case.
@@ -91,7 +152,8 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
     if launch_s is not None:
         from dataclasses import replace
         case = replace(case, t_launch_s=float(launch_s), info=dict(case.info) | {"delay_s": float(launch_s), "delay_case_s": float(case.t_launch_s)})
-    model, env = _model(model_path), _env(settings, case.region)
+    model = _model(model_path)
+    env = solo_view(model, _env(settings, case.region))      # a --teams model of design m2 (R16) sees the no-teammate channels
     e = env.env
     e.sample_log = []
     obs, info = env.reset(options=case.options(scen))

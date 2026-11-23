@@ -27,6 +27,13 @@ One single-UAV env (``rl_real.RealRLEnv``: its flight, camera, detections, obser
   command that brings a pair within d_hard to the nearest one that does not (no such command: the one with the largest separation); the
   cut is charged like the edge mask (``mask_cost``). Within d_hard all the same: penalty ``P_HARD`` and a violation count (0 expected).
 
+- sequential decisions (``sequential=True``, user 2026-11-23 "순차 결정"): within each 5 s step the active UAVs decide one after another in a
+  random order; each flies its 5 s at once, its detections lower the shared belief, and the next UAV's observation shows that (the moved
+  UAVs where they are after the step, the belief after their detections) plus one more vector entry, its turn (0 first .. 1 last).
+  The filter of a sequential step keeps each UAV d_hard from the UAVs that already moved (their flown step and their command held 15 s
+  more) and from those still to move (flying straight on); the reward, penalty and episode records are the same as ``step``.
+  ``begin_step`` -> (``turn_observation(m)``, ``turn_act(m, a)``) for m in the order -> ``end_step``; ``seq_step(act_fn)`` runs one.
+
     env = MultiRealEnv(3, cfg, seed=0, design="m2"); obs = env.reset(options=case.options(scen)); obs, rewards, done, info = env.step(actions)
 """
 from __future__ import annotations
@@ -95,11 +102,16 @@ def cpa(p_i, h_i, p_j, h_j, v: float) -> tuple:
 class MultiRealEnv:
     """k UAVs (``RealRLEnv`` each, same settings) on one scenario with a shared belief, staggered launches and the safety filter."""
 
-    def __init__(self, k: int, cfg, seed: int = 0, safety: bool = True, gaps_s=None, design: str = "m1"):
+    def __init__(self, k: int, cfg, seed: int = 0, safety: bool = True, gaps_s=None, design: str = "m1", sequential: bool = False):
         from rl_search.rl_real import RealRLEnv
         if design not in DESIGNS:
             raise ValueError(f"design {design!r}: one of {sorted(DESIGNS)}")
         self.k, self.safety, self.design = int(k), bool(safety), design
+        self.sequential = bool(sequential)
+        if self.sequential and DESIGNS[design]["mates"] != "zones":
+            raise ValueError("sequential decisions need the m2 teammate channels (design m2)")
+        self._seq = None                  # the sequential step under way (begin_step .. end_step)
+        self._turn = np.zeros(self.k, np.float32)      # sequential: each UAV's turn in the current step (0 first .. 1 last)
         d = DESIGNS[design]
         self.d_soft, self.d_hard, self.closing_only = float(d["d_soft"]), float(d["d_hard"]), bool(d["closing_only"])
         self.reward_mode, self.mates_mode = d["reward"], d["mates"]
@@ -153,7 +165,30 @@ class MultiRealEnv:
             es = [self.uavs[j].env for j in act]
             fans = reach_fans([e.plant for e in es], [float(e.chi_tgt) for e in es], [float(e.turn) for e in es], self.dt, T) if act and T > 0 else []
             c["fans"] = dict(zip(act, fans))
+        elif self._seq is not None:                             # sequential: the fans of the UAVs that moved since, from where they are now
+            from rl_search.mate_maps import reach_fans
+            stale = [int(j) for j in np.flatnonzero(self.active) if int(j) not in c["fans"]]
+            T = max([float(lead) for _, side, lead in self.maps if side <= SMALL_SIDE] + [0.0])
+            if stale and T > 0:
+                es = [self.uavs[j].env for j in stale]
+                c["fans"].update(zip(stale, reach_fans([e.plant for e in es], [float(e.chi_tgt) for e in es], [float(e.turn) for e in es],
+                                                       self.dt, T)))
         return c["fans"]
+
+    def _mate_path(self, j: int) -> np.ndarray:
+        """UAV j's 1 s positions over LOOK_S s from the step's start as the filter and the safety range see it: flying straight on (its
+        course target held) from where it is; in a sequential step, once it has moved: its flown 1 s samples of the step, then its new
+        course target held from where it is now (S, 2)."""
+        c = self._step_cache()
+        if ("mate", j) not in c:
+            if self._seq is not None and self._seq["moved"][j]:
+                h = [p for p in self.hist[j] if p[0] > self.T + 1e-9]
+                done = np.array([p[1:] for p in h], float).reshape(-1, 2)
+                more = predict_paths(self.uavs[j].env.plant, [self.uavs[j].env.chi_tgt], LOOK_S - len(done))[0] if len(done) < LOOK_S else np.zeros((0, 2))
+                c[("mate", j)] = np.concatenate([done, more])[:int(round(LOOK_S))]
+            else:
+                c[("mate", j)] = self._straight_path(j)
+        return c[("mate", j)]
 
     def _clock(self, key: str, t0: float) -> float:
         """Add the time since t0 to ``timing[key]`` (when timing is on); returns now."""
@@ -202,6 +237,8 @@ class MultiRealEnv:
             u.env.belief.w[:] = self.W
         self.T = t0
         self._cache_T = None                                    # the per-step cache of the last episode is not valid any more
+        self._seq = None
+        self._turn[:] = 0.0
         self.launched = self.join_t <= self.T + 1e-9
         self.ended = np.zeros(self.k, bool)
         self.found = 0.0
@@ -262,7 +299,7 @@ class MultiRealEnv:
             return -1.0, 1.0
         cand = np.linspace(-1.0, 1.0, N_CAND)
         P = self._cand_paths(i)
-        sep = np.min([np.hypot(*(P - self._straight_path(j)[None]).transpose(2, 0, 1)).min(1) for j in act], axis=0)
+        sep = np.min([np.hypot(*(P - self._mate_path(j)[None]).transpose(2, 0, 1)).min(1) for j in act], axis=0)
         ok = np.flatnonzero(sep >= self.d_hard)
         return (float(cand[ok[0]]), float(cand[ok[-1]])) if len(ok) else (float(cand[np.argmax(sep)]),)*2
 
@@ -271,6 +308,8 @@ class MultiRealEnv:
         """One 5 s decision of every active UAV. Returns (observations, rewards, done, info); rewards and observations of inactive UAVs
         are 0 / their last state (the trainer masks them, ``info["active"]`` of the step's start; ``info["ended_now"]`` = flights that
         ended in this step)."""
+        if self._seq is not None:
+            raise RuntimeError("a sequential step is under way (begin_step .. end_step)")
         act0 = self.active.copy()
         ended0 = self.ended.copy()
         t0 = time.perf_counter()
@@ -278,7 +317,7 @@ class MultiRealEnv:
         t0 = self._clock("filter", t0)
         W0 = self.W.copy()
         s = np.ones((self.k, self.N))
-        rewards, infos, look = np.zeros(self.k), [None]*self.k, np.zeros(self.k)
+        infos, look = [None]*self.k, np.zeros(self.k)
         for i in np.flatnonzero(act0):
             t0 = time.perf_counter()
             u = self.uavs[i]
@@ -297,6 +336,14 @@ class MultiRealEnv:
             self._clock("fly_detect", t0)
         t0 = time.perf_counter()
         W1 = W0*np.prod(s, axis=0)
+        rewards, info = self._finish(act0, ended0, W0, W1, s, a, cut, look, infos, t0)
+        obs = [self.observation(i) for i in range(self.k)] if self.return_obs else [None]*self.k
+        return obs, rewards, self.done, info
+
+    def _finish(self, act0, ended0, W0, W1, s, a, cut, look, infos, t0) -> tuple:
+        """The end of a step (simultaneous or sequential): the shared belief W1, team / own finds, the clock, the safety penalty over the
+        step's 1 s samples, the rewards, the launches due, the log. Returns (rewards, info)."""
+        rewards = np.zeros(self.k)
         team = float((W0.sum() - W1.sum())/self.N)
         share = np.array([float((W0*np.prod(np.delete(s, i, 0), axis=0)*(1 - s[i])).sum()/self.N) for i in range(self.k)])
         seen = np.array([float((W0*(1 - s[i])).sum()/self.N) for i in range(self.k)])
@@ -356,8 +403,99 @@ class MultiRealEnv:
         self.log["seen"].append(seen)
         info = dict(active=act0, team=team, found=self.found, share=share, seen=seen, cut=cut, penalty=pen, violation=viol, dmin=dmin,
                     applied=a, uav=infos, look=look, ended_now=self.ended & ~ended0, rem=rem, parts=parts, follow=follow)
-        obs = [self.observation(i) for i in range(self.k)] if self.return_obs else [None]*self.k
-        return obs, rewards, self.done, info
+        return rewards, info
+
+    # ------------------------------------------------------------------ sequential decisions (user 2026-11-23, see the module doc)
+    def begin_step(self) -> list:
+        """Start a sequential 5 s step: the active UAVs in a random order (returned); every UAV's turn entry is set (0 first .. 1 last;
+        a UAV not flying this step: 0)."""
+        if not self.sequential:
+            raise RuntimeError("begin_step needs sequential=True")
+        if self._seq is not None:
+            raise RuntimeError("the last sequential step was not ended")
+        act0 = self.active.copy()
+        order = [int(i) for i in self.rng.permutation(np.flatnonzero(act0))]
+        self._turn[:] = 0.0
+        for m, i in enumerate(order):
+            self._turn[i] = m/max(len(order) - 1, 1)
+        self._seq = dict(act0=act0, ended0=self.ended.copy(), W0=self.W.copy(), s=np.ones((self.k, self.N)), order=order,
+                         a=np.zeros(self.k), cut=np.zeros(self.k), look=np.zeros(self.k), infos=[None]*self.k, moved=np.zeros(self.k, bool))
+        return order
+
+    def turn_observation(self, m: int) -> dict:
+        """The observation of the m-th UAV of the order: the belief after the detections of the UAVs before it, those UAVs where they are
+        after the step, its turn in the vector."""
+        return self.observation(self._seq["order"][m])
+
+    def _seq_safe(self, i: int, prop: float) -> float:
+        """The filter of a sequential step for UAV i's command ``prop``: kept unless, held for LOOK_S s, it brings UAV i within d_hard of
+        another active UAV's ``_mate_path``; then the nearest command that does not (none: the largest separation)."""
+        mates = [int(j) for j in np.flatnonzero(self.active) if j != i]
+        if not self.safety or not mates:
+            return prop
+        others = [self._mate_path(j) for j in mates]
+        own = predict_paths(self.uavs[i].env.plant, [self._chi(i, prop)], LOOK_S)[0]
+        if min(np.hypot(*(own - p).T).min() for p in others) >= self.d_hard:
+            return prop
+        P = self._cand_paths(i)
+        sep = np.min([np.hypot(*(P - p[None]).transpose(2, 0, 1)).min(1) for p in others], axis=0)
+        ok = np.flatnonzero(sep >= self.d_hard)
+        cand = np.linspace(-1.0, 1.0, N_CAND)
+        return float(cand[ok[np.argmin(np.abs(cand[ok] - prop))]] if len(ok) else cand[int(np.argmax(sep))])
+
+    def turn_act(self, m: int, action) -> None:
+        """The m-th UAV of the order flies its 5 s with ``action`` (after the filter); its detections lower the shared belief at once."""
+        q = self._seq
+        i = q["order"][m]
+        prop = float(np.clip(np.ravel(action)[0], -1.0, 1.0))
+        t0 = time.perf_counter()
+        a = self._seq_safe(i, prop)
+        t0 = self._clock("filter", t0)
+        Wb = self.W.copy()
+        u = self.uavs[i]
+        u.env.belief.w[:] = Wb
+        lc = u.look_cum
+        _, term, _, inf = u._advance(np.array([a]))
+        mk = Wb > 0
+        q["s"][i, mk] = u.env.belief.w[mk]/Wb[mk]
+        q["look"][i] = u.look_cum - lc
+        q["infos"][i] = inf
+        q["a"][i], q["cut"][i] = a, abs(a - prop)
+        smp = getattr(u.env, "last_samples", None)
+        t_s = self.T + np.arange(1, 6)*self.dt/5
+        if smp is not None and len(smp):
+            self.hist[i] += [(float(t), float(p[0]), float(p[1])) for t, p in zip(t_s, smp)]
+        self.ended[i] |= bool(term)
+        self.W = u.env.belief.w.copy()
+        for v in self.uavs:
+            v.env.belief.w[:] = self.W
+        q["moved"][i] = True
+        c = self._step_cache()                                  # what was computed from UAV i's state before it moved
+        for key in (("cand", i), ("straight", i), ("mate", i), ("hist", i)):
+            c.pop(key, None)
+        c.get("fans", {}).pop(i, None)
+        self._clock("fly_detect", t0)
+
+    def end_step(self) -> tuple:
+        """End the sequential step: (rewards, done, info) as ``step`` (info also has the order); the observations come with the next
+        step's turns."""
+        q = self._seq
+        unmoved = [i for i in q["order"] if not q["moved"][i]]
+        if unmoved:
+            raise RuntimeError(f"UAVs {unmoved} have not moved in this sequential step")
+        rewards, info = self._finish(q["act0"], q["ended0"], q["W0"], self.W.copy(), q["s"], q["a"], q["cut"], q["look"], q["infos"],
+                                     time.perf_counter())
+        info["order"] = np.array(q["order"], int)
+        self._seq = None
+        self._turn[:] = 0.0
+        return rewards, self.done, info
+
+    def seq_step(self, act_fn) -> tuple:
+        """One sequential step with ``act_fn(i, obs) -> action`` for the UAV i whose turn it is (evaluation flights): (rewards, done, info)."""
+        order = self.begin_step()
+        for m, i in enumerate(order):
+            self.turn_act(m, act_fn(i, self.turn_observation(m)))
+        return self.end_step()
 
     def following(self) -> np.ndarray:
         """Per UAV: a teammate (active) within FOLLOW_M ahead, within FOLLOW_DEG of its heading, flying within FOLLOW_DEG of the same
@@ -491,6 +629,8 @@ class MultiRealEnv:
                 obs[name] = np.concatenate([obs[name], np.stack(ch[name]).astype(np.float32)], 0)
             if self.vec_k:                                      # 1 / team size, pending UAVs included (user 11-23)
                 obs["vec"] = np.concatenate([obs["vec"], np.array([1.0/self.k], np.float32)])
+            if self.sequential:                                 # its turn in the step (0 first .. 1 last; user 11-23 "순차 결정")
+                obs["vec"] = np.concatenate([obs["vec"], self._turn[i:i + 1]])
             self._clock("obs_mates", t0)
         else:
             x, y, yaw = self.uavs[i].env.plant.pose

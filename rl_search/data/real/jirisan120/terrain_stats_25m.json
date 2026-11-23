@@ -1,0 +1,49 @@
+{
+ "region": "jirisan120",
+ "name": "지리산·덕유산 (남원·함양·장수) 120 km",
+ "centre": [
+  35.6,
+  127.7
+ ],
+ "elevation_m_p1_p99": [
+  12.685036659240723,
+  1138.4219970703125
+ ],
+ "forest": 0.7592027297999648,
+ "built_outside_city": 0.035650682196190726,
+ "city": 0.012277739645037674,
+ "water": 0.014452441063947268,
+ "steep_nogo": 0.09729847384343009,
+ "forbidden": 0.11175113183087204,
+ "city_zones": 13,
+ "bridge_cells": 2104,
+ "bridge_groups": 785,
+ "surface_fast": 0.02004052044111306,
+ "surface_slow": 0.039290875360488885,
+ "cell_m": 25.0,
+ "land_parts_km2": {
+  "bridges_open": [
+   14194.0,
+   2.2,
+   0.5
+  ],
+  "bridges_closed": [
+   14188.1,
+   2.8,
+   2.2
+  ]
+ },
+ "graph_nodes": 124147,
+ "graph_edges": 147511,
+ "road_km_fast": 12627.41796875,
+ "road_km_slow": 21843.296875,
+ "road_km_by_highway": {
+  "motorway": 1704.9237060546875,
+  "trunk": 1015.2211303710938,
+  "primary": 2157.4130859375,
+  "secondary": 3087.62890625,
+  "tertiary": 4662.23095703125,
+  "unclassified": 4915.4072265625,
+  "track": 16927.888671875
+ }
+}

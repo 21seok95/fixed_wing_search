@@ -59,15 +59,19 @@ def _surv8(W, W0) -> np.ndarray:
     return np.round(np.clip(s, 0.0, 1.0)*255).astype(np.uint8)
 
 
-def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=None, web: bool = False, design: str = "m1") -> dict:
+def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=None, web: bool = False, design: str = "m1",
+        sequential: bool = False) -> dict:
     """One team flight on case ``case_k``: with ``model`` (planner particles, filter on) or replaying ``actions`` (hold-out particles, filter
-    off, the commands as applied). ``web``: also keep what a web run needs (camera samples, team survival per step) under ``out["web"]``."""
+    off, the commands as applied). ``web``: also keep what a web run needs (camera samples, team survival per step) under ``out["web"]``.
+    ``sequential``: the model decides one UAV after another within each step (rl_multi sequential=True, user 11-23); a replay flies the
+    applied commands together (the filter is off, so each path is the same; the belief after a step does not depend on the order)."""
     from rl_search.rl_multi import MultiRealEnv
     from rl_search.rl_real import RealRLConfig
     from rl_search.rl_real_eval import _case
     case, scen, vres, hold = _case("v2j", 3, case_k)
     replay = actions is not None
-    env = MultiRealEnv(k, RealRLConfig(region="jirisan120", settings=s), seed=case_k, safety=not replay, design=design)
+    seq = bool(sequential) and not replay
+    env = MultiRealEnv(k, RealRLConfig(region="jirisan120", settings=s), seed=case_k, safety=not replay, design=design, sequential=seq)
     env.return_obs = not replay
     if web:
         for u in env.uavs:
@@ -75,17 +79,25 @@ def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=
     env.reset(options=case.options(hold if replay else scen), gaps=_gaps(case_k, k, design))
     W_init = env.W.copy()
     rec_t, rec_w = [env.T], [np.full(env.N, 255, np.uint8)]
-    applied, n = [], 0
+    applied, n, act_hist = [], 0, []
+    def act_one(i, o):                                    # sequential: the UAV whose turn it is
+        a, _ = model.predict({key: v[None] for key, v in o.items()}, deterministic=True)
+        return np.atleast_1d(float(np.ravel(a)[0]))
+
     while not env.done:
-        if replay:
-            acts = actions[n] if n < len(actions) else [0.0]*k
+        if seq:
+            _, _, info = env.seq_step(act_one)
         else:
-            obs = [env.base_observation(i) if single else env.observation(i) for i in range(k)]
-            batch = {key: np.stack([o[key] for o in obs]) for key in obs[0]}
-            acts, _ = model.predict(batch, deterministic=True)
-            acts = np.ravel(acts).tolist()
-        _, _, _, info = env.step([np.atleast_1d(a) for a in acts])
+            if replay:
+                acts = actions[n] if n < len(actions) else [0.0]*k
+            else:
+                obs = [env.base_observation(i) if single else env.observation(i) for i in range(k)]
+                batch = {key: np.stack([o[key] for o in obs]) for key in obs[0]}
+                acts, _ = model.predict(batch, deterministic=True)
+                acts = np.ravel(acts).tolist()
+            _, _, _, info = env.step([np.atleast_1d(a) for a in acts])
         applied.append([float(x) for x in info["applied"]])
+        act_hist.append(np.asarray(info["active"], bool))
         n += 1
         if web:
             rec_t.append(env.T)
@@ -94,7 +106,20 @@ def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=
     d = np.array(lg["dist"], float)
     fin = d[np.isfinite(d)]
     share = np.array(lg["share"]).sum(0)
-    out = dict(found=float(env.found), curve=[float(x) for x in lg["found"]], t=[float(x) for x in lg["t"]], applied=applied,
+    # turning habit (11-23, M2 0.4M flew springs): the mean applied command and its share to the plus side over the active steps, and the
+    # share of minutes in a circle (heading turned one way by >= 330 deg over 3 min, as rl_eval/circle_check) per UAV
+    A, M = np.array(applied, float), np.array(act_hist, bool)
+    circ = []
+    for h in env.hist:
+        h = np.array(h, float)
+        if len(h) > 200:
+            t1 = np.arange(h[0, 0], h[-1, 0], 1.0)
+            hd = np.unwrap(np.arctan2(np.diff(np.interp(t1, h[:, 0], h[:, 2])), np.diff(np.interp(t1, h[:, 0], h[:, 1]))))
+            mins = np.arange(0, len(hd) - 180, 60)
+            circ.append(float(np.mean([abs(hd[m + 180] - hd[m]) >= np.radians(330) for m in mins])) if len(mins) else np.nan)
+    turn = dict(act_mean=float(A[M].mean()) if M.any() else 0.0, act_plus=float((A[M] > 0).mean()) if M.any() else 0.0,
+                circling=float(np.nanmean(circ)) if circ else float("nan"))
+    out = dict(found=float(env.found), curve=[float(x) for x in lg["found"]], t=[float(x) for x in lg["t"]], applied=applied, **turn,
                close1km=float((fin < 1000).mean()) if len(fin) else 0.0, dmin=float(fin.min()) if len(fin) else float("nan"),
                cuts=int((np.array(lg["cut"]) > 0).sum()), viol=float(np.array(lg["viol"]).sum()/2), share=share.tolist(),
                hist=[np.array(h)[::5].tolist() for h in env.hist] if not replay else None, launch_t=env.launch_t.tolist())
@@ -159,9 +184,10 @@ def save_web(label: str, k: int, case_k: int, s: dict, r: dict, holdout_pos: flo
     return rid
 
 
-def run(model_path: str, label: str, single: bool, web: bool = True, design: str | None = None):
+def run(model_path: str, label: str, single: bool, web: bool = True, design: str | None = None, teams=TEAMS, holdout: bool = True):
     """``design``: the env's multi-UAV design (gaps, safety distances, teammate inputs); default the model run's (a single-UAV model: m1,
-    as the 11-20 baseline; give m2 to compare with an m2 run)."""
+    as the 11-20 baseline; give m2 to compare with an m2 run). ``teams``: team sizes to fly; ``holdout`` False: no replay on the hold-out
+    particles (the planner score is stored as both; 11-23: the two agreed within 0.01 in every evaluation so far)."""
     warnings.filterwarnings("ignore")
     import torch
     from stable_baselines3 import PPO
@@ -169,25 +195,31 @@ def run(model_path: str, label: str, single: bool, web: bool = True, design: str
     torch.set_num_threads(1)
     c, run_design = run_config(model_path, single)
     design = design or ("m1" if single else run_design)
+    seq = bool(c.get("sequential", False)) and not single              # a run trained with sequential decisions flies them (11-23)
     s = settings_of(c)
-    print(f"{label}: design {design}", flush=True)
+    print(f"{label}: design {design}{', sequential decisions' if seq else ''}", flush=True)
     model = PPO.load(model_path, device="cpu")
     WORK.mkdir(parents=True, exist_ok=True)
     rows = []
     t0 = time.perf_counter()
     for case_k in CASES:
-        for k in TEAMS:
+        for k in teams:
             t1 = time.perf_counter()
-            r = fly(k, case_k, s, model=model, single=single, web=web, design=design)
-            h = fly(k, case_k, s, actions=r.pop("applied"), design=design)
+            r = fly(k, case_k, s, model=model, single=single, web=web, design=design, sequential=seq)
+            applied = r.pop("applied")
+            h = fly(k, case_k, s, actions=applied, design=design) if holdout else dict(found=r["found"], curve=r["curve"])
             if web:
                 save_web(label, k, case_k, s, r, h["found"], single, time.perf_counter() - t1)
-            rows.append(dict(k=k, case=case_k, belief=r["found"], holdout=h["found"], curve=r["curve"], curve_h=h["curve"], t=r["t"],
+            rows.append(dict(k=k, case=case_k, belief=r["found"], holdout=h["found"], holdout_replayed=bool(holdout), curve=r["curve"],
+                             curve_h=h["curve"], t=r["t"],
+                             act_mean=r["act_mean"], act_plus=r["act_plus"], circling=r["circling"],
                              close1km=r["close1km"], dmin=r["dmin"], cuts=r["cuts"], viol=r["viol"], share=r["share"], hist=r["hist"],
                              launch_t=r["launch_t"]))
             print(f"{label} case {case_k + 1} k={k}: team POS {r['found']:.3f} (hold-out {h['found']:.3f}), 1 km {r['close1km']*100:.0f}%, "
-                  f"min {r['dmin']:.0f} m, cuts {r['cuts']}, violations {r['viol']:.0f}, {time.perf_counter() - t0:.0f} s", flush=True)
-    (WORK/f"{label}.json").write_text(json.dumps(dict(label=label, model=model_path, single=single, design=design, rows=rows)))
+                  f"min {r['dmin']:.0f} m, cuts {r['cuts']}, violations {r['viol']:.0f}, circling {r['circling']*100:.0f}%, mean command {r['act_mean']:+.2f}, "
+                  f"{time.perf_counter() - t0:.0f} s", flush=True)
+    (WORK/f"{label}.json").write_text(json.dumps(dict(label=label, model=model_path, single=single, design=design, sequential=seq, teams=list(teams),
+                                                      holdout=bool(holdout), rows=rows)))
 
 
 def figure(labels):
@@ -247,9 +279,11 @@ def main():
     ap.add_argument("--labels", nargs="+")
     ap.add_argument("--no-web", action="store_true", help="do not save the flights as web runs")
     ap.add_argument("--design", choices=("m1", "m2"), default=None, help="env design (default: the model run's; single models m1)")
+    ap.add_argument("--teams", type=int, nargs="+", default=list(TEAMS), help="team sizes to fly (default 1 2 3 4)")
+    ap.add_argument("--no-holdout", action="store_true", help="skip the replay on the hold-out particles (planner score only)")
     a = ap.parse_args()
     if a.what == "run":
-        run(a.model, a.label, a.single, web=not a.no_web, design=a.design)
+        run(a.model, a.label, a.single, web=not a.no_web, design=a.design, teams=tuple(a.teams), holdout=not a.no_holdout)
     else:
         figure(a.labels)
 

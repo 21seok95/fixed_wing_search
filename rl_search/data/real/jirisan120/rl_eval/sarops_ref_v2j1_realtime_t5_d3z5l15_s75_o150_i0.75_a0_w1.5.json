@@ -1,0 +1,224 @@
+[
+ {
+  "id": "eval-v2j1-s3-k0-sarops-realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5",
+  "case": {
+   "split": "v2j1",
+   "stage": 3,
+   "k": 0,
+   "seed": 163000,
+   "lkp": [
+    6702.220450417005,
+    -8115.154321420895
+   ],
+   "heading": 358.1933069093178,
+   "t0_s": 0.0,
+   "start": [
+    12404.386297669907,
+    88.40227719036011,
+    -2.1778361245308733
+   ],
+   "info": {
+    "launch_dist_m": 10000.0,
+    "type": "road",
+    "out_share": 0.0022
+   },
+   "t_launch_s": 0.0,
+   "vc": {
+    "fast_kmh": 50.0,
+    "slow_kmh": 30.0,
+    "speed_cap_kmh": 70.0,
+    "p_leave_fast_min": 0.0,
+    "p_leave_slow_min": 0.0,
+    "p_return_min": 1.0,
+    "duration_s": 4200.0,
+    "fast_std_kmh": 9.081149288601054,
+    "slow_std_kmh": 4.540574644300527,
+    "off_kmh": 10.0,
+    "off_std_kmh": 2.2702873221502635,
+    "speed_clip_sd": 2.0,
+    "speed_band": 0.0,
+    "p_stop_min": 0.0,
+    "heading_std_deg": 46.2166666604453,
+    "reorient_std_deg_min": 0.3315021271237689,
+    "p_detour": 0.04149836114235066,
+    "goal_sector_deg": 20.0,
+    "start_by_route": true,
+    "no_return": true,
+    "deadend_offroad": false,
+    "detour_deadend_deg": 45.0,
+    "detour_max_deg": 90.0,
+    "off_follow": true,
+    "exit_straight": true,
+    "exit_trend_min": 5.0,
+    "detour_keep_tier": true
+   },
+   "typ": "road",
+   "region": "jirisan120",
+   "label": "지리산 10 km 도로형 검증 3단계 · 시나리오 1"
+  },
+  "belief": {
+   "pos": 0.35109563138618205,
+   "A": 0.05922552446826539,
+   "total": 0.5858689715475385
+  },
+  "holdout": {
+   "pos": 0.36235961843700204,
+   "A": 0.060892089668936104,
+   "total": 0.543539427655503,
+   "A_window": 0.09758465422262647,
+   "area_def": "realtime_t",
+   "ref_key": "realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5"
+  },
+  "plans": 5,
+  "drift_m": 0.0,
+  "sec": 266.1
+ },
+ {
+  "id": "eval-v2j1-s3-k1-sarops-realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5",
+  "case": {
+   "split": "v2j1",
+   "stage": 3,
+   "k": 1,
+   "seed": 163001,
+   "lkp": [
+    1935.2285366536,
+    -8365.170141895847
+   ],
+   "heading": 101.24060791590843,
+   "t0_s": 0.0,
+   "start": [
+    10359.185577171802,
+    -3002.429511879146,
+    -2.5744111082547527
+   ],
+   "info": {
+    "launch_dist_m": 10000.0,
+    "type": "road",
+    "out_share": 0.0
+   },
+   "t_launch_s": 0.0,
+   "vc": {
+    "fast_kmh": 50.0,
+    "slow_kmh": 30.0,
+    "speed_cap_kmh": 70.0,
+    "p_leave_fast_min": 0.0,
+    "p_leave_slow_min": 0.0,
+    "p_return_min": 1.0,
+    "duration_s": 4200.0,
+    "fast_std_kmh": 8.211000033697296,
+    "slow_std_kmh": 4.105500016848648,
+    "off_kmh": 10.0,
+    "off_std_kmh": 2.052750008424324,
+    "speed_clip_sd": 2.0,
+    "speed_band": 0.0,
+    "p_stop_min": 0.0,
+    "heading_std_deg": 55.4456502211194,
+    "reorient_std_deg_min": 0.8509697795677232,
+    "p_detour": 0.020439831306648244,
+    "goal_sector_deg": 20.0,
+    "start_by_route": true,
+    "no_return": true,
+    "deadend_offroad": false,
+    "detour_deadend_deg": 45.0,
+    "detour_max_deg": 90.0,
+    "off_follow": true,
+    "exit_straight": true,
+    "exit_trend_min": 5.0,
+    "detour_keep_tier": true
+   },
+   "typ": "road",
+   "region": "jirisan120",
+   "label": "지리산 10 km 도로형 검증 3단계 · 시나리오 2"
+  },
+  "belief": {
+   "pos": 0.3537876617825797,
+   "A": 0.047043980085248065,
+   "total": 0.5777254727591176
+  },
+  "holdout": {
+   "pos": 0.36443325347041433,
+   "A": 0.04772067116249564,
+   "total": 0.5466498802056214,
+   "A_window": 0.10663289589751747,
+   "area_def": "realtime_t",
+   "ref_key": "realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5"
+  },
+  "plans": 4,
+  "drift_m": 0.0,
+  "sec": 198.1
+ },
+ {
+  "id": "eval-v2j1-s3-k2-sarops-realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5",
+  "case": {
+   "split": "v2j1",
+   "stage": 3,
+   "k": 2,
+   "seed": 163002,
+   "lkp": [
+    10843.971228273991,
+    4780.150224491041
+   ],
+   "heading": 122.3812961061095,
+   "t0_s": 0.0,
+   "start": [
+    7464.828891452494,
+    -4634.602359603472,
+    1.2254558086997194
+   ],
+   "info": {
+    "launch_dist_m": 10000.0,
+    "type": "road",
+    "out_share": 0.0
+   },
+   "t_launch_s": 0.0,
+   "vc": {
+    "fast_kmh": 50.0,
+    "slow_kmh": 30.0,
+    "speed_cap_kmh": 70.0,
+    "p_leave_fast_min": 0.0,
+    "p_leave_slow_min": 0.0,
+    "p_return_min": 1.0,
+    "duration_s": 4200.0,
+    "fast_std_kmh": 7.890581940330157,
+    "slow_std_kmh": 3.9452909701650785,
+    "off_kmh": 10.0,
+    "off_std_kmh": 1.9726454850825392,
+    "speed_clip_sd": 2.0,
+    "speed_band": 0.0,
+    "p_stop_min": 0.0,
+    "heading_std_deg": 89.42097339229078,
+    "reorient_std_deg_min": 0.772433594264227,
+    "p_detour": 0.005639798745863767,
+    "goal_sector_deg": 20.0,
+    "start_by_route": true,
+    "no_return": true,
+    "deadend_offroad": false,
+    "detour_deadend_deg": 45.0,
+    "detour_max_deg": 90.0,
+    "off_follow": true,
+    "exit_straight": true,
+    "exit_trend_min": 5.0,
+    "detour_keep_tier": true
+   },
+   "typ": "road",
+   "region": "jirisan120",
+   "label": "지리산 10 km 도로형 검증 3단계 · 시나리오 3"
+  },
+  "belief": {
+   "pos": 0.19866326242863724,
+   "A": 0.019104547252079093,
+   "total": 0.31709944089503495
+  },
+  "holdout": {
+   "pos": 0.18942003292671175,
+   "A": 0.017001166755031587,
+   "total": 0.28413004939006764,
+   "A_window": 0.05045220085618523,
+   "area_def": "realtime_t",
+   "ref_key": "realtime_t5_d3z5l15_s75_o150_i0.75_a0_w1.5"
+  },
+  "plans": 3,
+  "drift_m": 0.0,
+  "sec": 211.4
+ }
+]

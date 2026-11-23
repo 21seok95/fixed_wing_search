@@ -173,10 +173,23 @@ def main():
                     help="multi-UAV (docs/multi_agent_design.md, user 2026-11-19/20): one world per entry with that many UAVs (e.g. 2 3 4 2 3 4), every UAV "
                          "is one slot of the vector env (shared policy, reward and teammate inputs by --ma-design, safety filter, rl_search.rl_multi); --n-envs is ignored, the "
                          "periodic single-UAV evaluation is off (checkpoints only); steps before a launch / after the battery are masked")
+    ap.add_argument("--worlds-per-proc", type=int, default=1,
+                    help="multi-UAV: worlds per worker process (user 2026-11-23: 3-UAV worlds x 20 on the Mac; the terrain is held once per process, "
+                         "the worlds of a process step one after another)")
     ap.add_argument("--ma-design", choices=("m1", "m2"), default="m2",
                     help="multi-UAV design (rl_multi.DESIGNS): m1 = the M1 run (team reward, 150 / 200 m, gaps 5 / 10 / 15 s, tail channel + 7-entry "
                          "vector); m2 = user 2026-11-20 ~ 11-23 (own-share reward, 100 / 250 m with the distance penalty only while closing, gaps "
                          "5-10 s per UAV, small maps claim + danger zone, large maps plan B, no teammate vector)")
+    ap.add_argument("--sym-policy", action="store_true",
+                    help="left-right symmetric policy (rl_search/sym_policy.py, user 2026-11-23): mean(mirror(o)) = -mean(o), value(mirror(o)) = "
+                         "value(o); with --init the old weights are kept; a resumed run keeps its saved policy class")
+    ap.add_argument("--sequential", action="store_true",
+                    help="multi-UAV: sequential decisions (user 2026-11-23 \"순차 결정\", rl_multi sequential=True, rl_search/seq_ppo.py): within a 5 s "
+                         "step the UAVs of a world decide one after another in a random order, each seeing the belief after the ones before it and "
+                         "where they flew; one more vector entry (the turn, 0 first .. 1 last); design m2 only")
+    ap.add_argument("--sat-stop", type=float, default=0.0,
+                    help="multi-UAV: save and stop when, two rollouts in a row, more than this share of the policy's mean actions lies beyond "
+                         "the action range (user 2026-11-23, after M2's collapse; 0 = off, the share is logged anyway as multi/act_sat)")
     ap.add_argument("--value-warmup", type=int, default=0,
                     help="the first N PPO updates train only the value head (policy and the shared CNN frozen): after a change of reward "
                          "form or gamma (user 2026-11-23: 5 for the next multi-UAV run)")
@@ -257,6 +270,13 @@ def main():
             ap.error("--ring-eval: one validation split per launch-distance stage but the last (--ring-stages)")
         if any(x not in SEED_BASE for x in ring_evals):
             ap.error(f"--ring-eval: unknown split in {ring_evals}")
+    # R16 (user 2026-11-23): one UAV in the multi-UAV env (--teams 1 1 ..., design m2), validated as R15 was: the periodic and launch-stage
+    # evaluations fly the model alone in RealRLEnv with the no-teammate channels (rl_real_eval.SoloMates; same flight as MultiRealEnv k=1)
+    solo = bool(args.teams) and set(args.teams) == {1}
+    if args.teams and not solo and ring_evals:
+        ap.error("--ring-eval flies the model alone: only with one-UAV worlds (--teams 1 1 ...)")
+    if solo and (args.sequential or args.ma_design != "m2"):
+        ap.error("one-UAV worlds are validated alone with the m2 no-teammate inputs: design m2, no --sequential")
     if args.pool_order is None:
         args.pool_order = "slot" if args.scen_v2 else "random"
 
@@ -355,9 +375,9 @@ def main():
                                    pool=pool_dir_multi(area_over, region) if args.multi else None, reuse=args.reuse,
                                    type_weights=str(tw_path) if args.multi else None, mask_cost=args.mask_cost,
                                    pool_slot=(j//nreg, len(range(j % nreg, len(args.teams), nreg))) if args.pool_order == "slot" else None)
-                return MultiRealEnv(k, cfg, seed=args.seed*1000 + j, design=args.ma_design)
+                return MultiRealEnv(k, cfg, seed=args.seed*1000 + j, design=args.ma_design, sequential=args.sequential)
             return f
-        venv = MultiWorldVecEnv([world_fn(j, k) for j, k in enumerate(args.teams)])
+        venv = MultiWorldVecEnv([world_fn(j, k) for j, k in enumerate(args.teams)], worlds_per_proc=args.worlds_per_proc)
         args.n_envs = venv.num_envs
         print(f"multi-UAV: worlds {args.teams}, {venv.num_envs} UAV slots", flush=True)
     elif args.envs_per_proc > 1:                     # several envs per worker process (rl_search.vec_group, user 2026-11-12)
@@ -390,6 +410,14 @@ def main():
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
     from rl_search.rl_gym import RealMapExtractor
+    if args.sequential and not args.teams:
+        raise SystemExit("--sequential needs --teams (multi-UAV worlds)")
+    if args.sequential:                                   # sequential decisions (user 11-23): rollouts collected turn by turn
+        from rl_search.seq_ppo import SeqPPO as PPO       # noqa: N814 (the same PPO update; collect_rollouts per turn)
+    policy_cls = "MultiInputPolicy"
+    if args.sym_policy:                                   # left-right symmetric policy (user 11-23, rl_search/sym_policy.py)
+        from rl_search.sym_policy import SymmetricMultiInputPolicy
+        policy_cls = SymmetricMultiInputPolicy
     ok = dict(cuda=torch.cuda.is_available(), mps=torch.backends.mps.is_available(), cpu=True)
     device = args.device if ok.get(args.device, False) else "cpu"
     resume = None
@@ -404,12 +432,14 @@ def main():
         over = dict(learning_rate=args.lr, lr_schedule=ConstantSchedule(args.lr), clip_range=ConstantSchedule(args.clip), n_steps=args.n_steps,
                     batch_size=args.batch_size, n_epochs=args.n_epochs, gamma=args.gamma, gae_lambda=args.gae_lambda, ent_coef=args.ent_coef,
                     vf_coef=args.vf_coef, max_grad_norm=args.max_grad_norm, target_kl=args.target_kl, tensorboard_log=str(out/"tb"), seed=args.seed)
+        if args.sym_policy:
+            over["policy_class"] = policy_cls                # the same weights in the symmetric policy
         old_space = PPO.load(args.init, device="cpu").observation_space
         if old_space == venv.observation_space:
             model = PPO.load(args.init, env=venv, device=device, custom_objects=over)
         else:                                      # more map channels (--rel-maps): copy the weights, new input channels start at zero
             from rl_search.rl_gym import load_expanded
-            model, grown = load_expanded(args.init, venv, device, learning_rate=args.lr, n_steps=args.n_steps, batch_size=args.batch_size,
+            model, grown = load_expanded(args.init, venv, device, policy=policy_cls, algo=PPO, learning_rate=args.lr, n_steps=args.n_steps, batch_size=args.batch_size,
                                          n_epochs=args.n_epochs, gamma=args.gamma, gae_lambda=args.gae_lambda, clip_range=args.clip,
                                          ent_coef=args.ent_coef, vf_coef=args.vf_coef, max_grad_norm=args.max_grad_norm, target_kl=args.target_kl,
                                          tensorboard_log=str(out/"tb"), seed=args.seed, verbose=1)
@@ -425,7 +455,7 @@ def main():
     else:
         pk = dict(features_extractor_class=RealMapExtractor, share_features_extractor=True, net_arch=dict(pi=[128, 128], vf=[128, 128]),
                   activation_fn=nn.Tanh, log_std_init=args.log_std_init)
-        model = PPO("MultiInputPolicy", venv, learning_rate=args.lr, n_steps=args.n_steps, batch_size=args.batch_size, n_epochs=args.n_epochs,
+        model = PPO(policy_cls, venv, learning_rate=args.lr, n_steps=args.n_steps, batch_size=args.batch_size, n_epochs=args.n_epochs,
                     gamma=args.gamma, gae_lambda=args.gae_lambda, clip_range=args.clip, ent_coef=args.ent_coef, vf_coef=args.vf_coef,
                     max_grad_norm=args.max_grad_norm, target_kl=args.target_kl, policy_kwargs=pk, tensorboard_log=str(out/"tb"),
                     seed=args.seed, device=device, verbose=1, use_sde=args.use_sde, sde_sample_freq=args.sde_freq if args.use_sde else -1)
@@ -544,6 +574,7 @@ def main():
                 return
             masked = mask_inactive(buf, act)
             self.logger.record("multi/masked_share", masked)
+            self._act_watch(buf, act)
             off = np.concatenate([[0], np.cumsum(args.teams)])
             spread = []
             for w in range(len(args.teams)):
@@ -568,6 +599,36 @@ def main():
                         vals = [x[key] for x in e if key in x]
                         if vals:
                             self.logger.record(f"team_k{k}/{key}", float(np.mean(vals)))
+
+        def _act_watch(self, buf, act):
+            """(user 11-23, after M2 collapsed into a saturated hard turn) the policy's mean action over this rollout's flying steps:
+            multi/act_mean, act_absmean, act_plus (share > 0), act_sat (share with |mean| > 1, beyond the action range: the samples are all
+            clipped there, so nothing in the env depends on the mean and nothing pulls it back). --sat-stop x: save and stop after two
+            rollouts in a row with act_sat > x."""
+            import torch
+            a = act.reshape(-1)
+            if not a.any():
+                return
+            obs = {k: v.reshape(-1, *v.shape[2:])[a] for k, v in buf.observations.items()}
+            n = len(obs["vec"])
+            mus = []
+            with torch.no_grad():
+                for s in range(0, n, 512):
+                    ot, _ = self.model.policy.obs_to_tensor({k: v[s:s + 512] for k, v in obs.items()})
+                    mus.append(self.model.policy.get_distribution(ot).distribution.mean.cpu().numpy().ravel())
+            mu = np.concatenate(mus)
+            sat = float((np.abs(mu) > 1.0).mean())
+            for key, v in (("act_mean", float(mu.mean())), ("act_absmean", float(np.abs(mu).mean())), ("act_plus", float((mu > 0).mean())),
+                           ("act_sat", sat)):
+                self.logger.record(f"multi/{key}", v)
+            if args.sat_stop:
+                self.sat_streak = getattr(self, "sat_streak", 0) + 1 if sat > args.sat_stop else 0
+                if self.sat_streak >= 2:
+                    path = out/"ckpt"/f"model_{int(self.num_timesteps)}_saturated.zip"
+                    self.model.save(path)
+                    print(f"STOP (--sat-stop {args.sat_stop:g}): {sat*100:.0f}% of the policy means beyond the action range two rollouts in a "
+                          f"row (mean {mu.mean():+.2f}); saved {path.name}", flush=True)
+                    self.sat_stop_now = True
 
         def _value_warmup(self):
             """--value-warmup N (user 11-23): the first N updates train the value head only (the CNN is shared with the policy, so it is
@@ -641,6 +702,8 @@ def main():
                 self._submit()
             if self.num_timesteps >= args.stop_at:
                 return False
+            if getattr(self, "sat_stop_now", False):            # --sat-stop: the policy mean left the action range (see _act_watch)
+                return False
             return True
 
         def _submit(self):
@@ -650,7 +713,7 @@ def main():
             if args.pool_order == "slot":                        # with the checkpoint: how far each env is in its share of the pool
                 state["pool_cursor"] = self.training_env.env_method("pool_cursor")
             st = state["stage"]
-            if args.teams:                                       # multi-UAV: checkpoint only (the single-UAV evaluation cannot fly it)
+            if args.teams and not solo:                          # multi-UAV: checkpoint only (scripts/multi_design/ma_eval_watch flies it)
                 state_path.write_text(json.dumps(state, indent=1))
                 print(f"checkpoint {path.name} (multi-UAV: no periodic evaluation yet)", flush=True)
                 return

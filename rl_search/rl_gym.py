@@ -108,15 +108,17 @@ class RealMapExtractor(BaseFeaturesExtractor):
         return self.joint(torch.cat(feats, dim=1))
 
 
-def load_expanded(path, env, device: str = "cpu", **ppo_kw):
+def load_expanded(path, env, device: str = "cpu", policy="MultiInputPolicy", algo=None, **ppo_kw):
     """A new PPO on ``env`` with the weights of the model at ``path`` when ``env``'s maps have more channels (user 2026-11-12: the
     relative-POS channel, appended last). Every weight is copied; the first convolution of each map gets zero weights for the new input
     channels, so the new model acts and values exactly like the old one until training uses the new channels. ``ppo_kw``: PPO arguments
-    (learning rate, n_steps, ...); the policy architecture is the old model's."""
+    (learning rate, n_steps, ...); the policy architecture is the old model's; ``policy``: the policy class (e.g.
+    ``sym_policy.SymmetricMultiInputPolicy``, same parameters); ``algo``: the PPO class of the new model (default PPO; e.g.
+    ``seq_ppo.SeqPPO``, sequential decisions)."""
     import torch
     from stable_baselines3 import PPO
     old = PPO.load(path, device="cpu")
-    model = PPO("MultiInputPolicy", env, policy_kwargs=old.policy_kwargs, device=device, **ppo_kw)
+    model = (algo or PPO)(policy, env, policy_kwargs=old.policy_kwargs, device=device, **ppo_kw)
     sd_old, sd_new = old.policy.state_dict(), model.policy.state_dict()
     grown = []
     for k, v in sd_new.items():

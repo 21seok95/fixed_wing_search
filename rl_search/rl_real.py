@@ -72,6 +72,21 @@ def maps_to_u8(obs: dict, ranges: dict | None = None) -> dict:
     return out
 
 
+_VIS_CACHE: dict = {}             # (id of a visibility array, stride) -> (that array, its strided cell means): one copy per process
+
+
+def _vis_grid(A: np.ndarray, f: int) -> np.ndarray:
+    """Cell means of the visibility array ``A`` over f x f blocks, every f-th cell, as its own small array (not a view of the full-size
+    filtered terrain), shared by every env of the process with the same ``A`` (the cache keeps A, so its id is not reused)."""
+    key = (id(A), int(f))
+    hit = _VIS_CACHE.get(key)
+    if hit is None:
+        A32 = A.astype(np.float32, copy=False)
+        g = np.ascontiguousarray(uniform_filter(A32, size=f, mode="nearest")[::f, ::f]) if f > 1 else A32
+        hit = _VIS_CACHE[key] = (A, g)
+    return hit[1]
+
+
 def u8_map_space(shape):
     """Gymnasium space of a uint8 map (``maps_to_u8``): SB3 treats it as an image and divides by 255."""
     from gymnasium import spaces
@@ -310,13 +325,22 @@ class RealRLEnv:
     # ------------------------------------------------------------------ static parts of the observation
     def _prepare_static(self):
         px = self.cfg.map_px
-        det = self.env.detector
-        self.vis_grids = []                                     # (stride, grid of cell means) per map
-        for _, side, _ in self.cfg.maps:
-            f = max(int(round(side/px/self.terr.cell)), 1)
-            A = det.A.astype(np.float32, copy=False)            # the detector's own array (no copy: 2026-11-17)
-            g = uniform_filter(A, size=f, mode="nearest")[::f, ::f] if f > 1 else A
-            self.vis_grids.append((f, g))
+        self._vis_grids = None                                  # built on first use (vis_grids): only the visibility channel reads it
+        self._prepare_offsets(px)
+
+    @property
+    def vis_grids(self) -> list:
+        """(stride, grid of cell means of the detector's visibility) per map, for the visibility channel. Built on first use and shared by
+        the envs of a process (``_vis_grid``). (2026-11-23) It was built for every env at construction and kept the full-size filtered
+        terrain alive behind each strided view: about 530 MB per env on the 120 km maps (4,800 x 4,800 cells x 6 maps), unused since
+        no_vis_obs (R15, M2) — 14 GB of the 27 UAV envs of M2b."""
+        if self._vis_grids is None:
+            A = self.env.detector.A
+            px = self.cfg.map_px
+            self._vis_grids = [(f, _vis_grid(A, f)) for f in (max(int(round(side/px/self.terr.cell)), 1) for _, side, _ in self.cfg.maps)]
+        return self._vis_grids
+
+    def _prepare_offsets(self, px: int):
         # map frame: row 0 = farthest ahead, column 0 = farthest left; centre offsets (forward, right) per cell
         self.offsets = []
         for _, side, _ in self.cfg.maps:
