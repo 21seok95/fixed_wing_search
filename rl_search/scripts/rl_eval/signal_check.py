@@ -46,7 +46,7 @@ def settings_of(c: dict) -> dict:
         | ({"pos_norm": True} if c.get("pos_norm") else {}) | ({"no_area": True} if c.get("no_area") else {}) \
         | ({"obs_r10": True} if c.get("obs_r10") else {}) | ({"no_stop": True} if c.get("no_stop") else {}) \
         | ({"maps7": True} if c.get("maps7") else {}) | ({"no_vis_obs": True} if c.get("no_vis_obs") else {}) \
-        | ({"launch_policy": True} if c.get("launch_policy") else {})
+        | ({"launch_policy": True} if c.get("launch_policy") else {}) | ({"obs_u8": True} if c.get("obs_u8") else {})
 
 
 def fly(job) -> dict:

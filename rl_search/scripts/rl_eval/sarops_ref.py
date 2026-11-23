@@ -58,7 +58,7 @@ def ref_path(split: str, key: str = "window"):
     return d/(f"sarops_ref_{split}.json" if key == "window" else f"sarops_ref_{split}_{key}.json")
 
 
-def holdout_replay(s: dict, terr, case, hold, actions):
+def holdout_replay(s: dict, terr, case, hold, actions, gimbal=None):
     """The same actions on the hold-out particles: (POS, A, A_window x 70, replay run). With the seen A (``s["area_def"] == "seen"``) the
     replay env carries a ``SeenArea`` of the hold-out particles; the window A comes from the camera frames either way."""
     from rl_search.area_score import RealtimeArea, SeenArea, score_frames
@@ -68,6 +68,9 @@ def holdout_replay(s: dict, terr, case, hold, actions):
     seen = adef != "window"
     region = getattr(case, "region", "amboy")
     env = team_env(s, region, terr, case.seed, area=seen)
+    if s.get("launch_policy"):          # (fix 2026-11-18) an RL flight with launch_policy had no 120 s rule transit, so neither has its replay;
+        from dataclasses import replace  # before the fix the replay flew 120 s toward the LKP first and the actions came 120 s late (R15 to 1.1M)
+        env.preset = replace(env.preset, handover=replace(env.preset.handover, t_plan_s=0.0))
     if adef == "seen":
         env.area = SeenArea(hold.track, hold.exit_step, hold.save_dt_s, float(s["area_x"]), float(s["seen_pod"]))
     elif adef in ("realtime", "realtime_q", "realtime_t"):
@@ -80,6 +83,15 @@ def holdout_replay(s: dict, terr, case, hold, actions):
     if seen:
         env.pos_w, env.area_w = 1.0, 1.0
     env.sample_log = []
+    if gimbal is not None:              # (2026-11-18) rules that point the gimbal (road following): the same ground points, step by step
+        gt, gxy = gimbal
+        step0 = env.step
+
+        def step(a):
+            i = int(np.searchsorted(gt, env.t + 1e-6))
+            env.gimbal_target = tuple(gxy[i]) if i < len(gt) and np.isfinite(gxy[i]).all() else None
+            return step0(a)
+        env.step = step
     h = run_team_launch([env], None, case.options(hold), 60.0, actions=actions)
     log = np.array(env.sample_log)
     aw = score_frames(terr, env.h, hold.track, hold.save_dt_s, X_WINDOW_REF if seen else float(s["area_x"]), [log], env.detector.cfg)
@@ -98,6 +110,7 @@ def run_job(job):
     img_min = job[10] if len(job) > 10 else 0.0
     sigma_off = job[11] if len(job) > 11 else 0.0
     a_weight = job[12] if len(job) > 12 else 1.0
+    planner = job[13] if len(job) > 13 else "sarops"     # "corridor": road corridors (rl_search/corridor.py, 2026-11-18)
     warnings.filterwarnings("ignore")
     from dataclasses import asdict
     from rl_search.area_score import score_frames
@@ -119,20 +132,33 @@ def run_job(job):
         | ({"area_w": pos_w} if pos_w else {}) | ({"blur_dead_roll": blur_dead} if blur_dead else {}) \
         | ({"blur_tau_low": blur_low} if blur_low else {}) | ({"area_sigma": sigma} if sigma and float(sigma) != 150.0 else {}) \
         | ({"area_img_min": img_min} if img_min else {}) | ({"area_sigma_off": sigma_off} if sigma_off else {}) \
-        | ({"a_weight": float(a_weight)} if float(a_weight) != 1.0 else {}) | ({"score": "pos"} if float(a_weight) == 0.0 else {})
+        | ({"a_weight": float(a_weight)} if float(a_weight) != 1.0 else {}) | ({"score": "pos"} if float(a_weight) == 0.0 else {}) \
+        | ({"planner": planner} if planner != "sarops" else {})
     view = dict(region=region, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
     out = run_case(region, scen, vres, vc, view, s, options=case.options(scen), terr=terr)
-    pos_h, a_h, a_win, h = holdout_replay(s, terr, case, hold, out["actions"])          # the same actions on the hold-out particles
+    gimbal = None
+    if planner == "roadfollow":
+        import base64
+        u = out["opt"]["uavs"][0]
+        gimbal = (np.frombuffer(base64.b64decode(u["log_t"]), np.float32).astype(float),
+                  np.frombuffer(base64.b64decode(u["target"]), np.float32).reshape(-1, 2).astype(float))
+    pos_h, a_h, a_win, h = holdout_replay(s, terr, case, hold, out["actions"], gimbal)          # the same actions on the hold-out particles
     drift = float(np.hypot(*(np.asarray(h["xy"][0][-1]) - np.asarray(out["paths"][0][-1]))))
     holdout = dict(pos=pos_h, A=float(a_h), total=float(float(s.get("a_weight", 1.0))*a_h + float(s["area_w"])*pos_h), A_window=float(a_win), area_def=s.get("area_def", "window"),
                    ref_key=ref_key_of(s))
     o = out["opt"]
     key = ref_key_of(s)
-    rid = f"eval-{split}-s{stage}-k{k}-sarops" + ("" if key == "window" else f"-{key}")
+    rid = f"eval-{split}-s{stage}-k{k}-sarops" + ("" if key == "window" else f"-{key}") + ("" if planner == "sarops" else f"-{planner}")
     method = {"window": "SAROPS", "seen": "SAROPS (본 particle A)", "realtime": "SAROPS (실시간 A)", "realtime_q": "SAROPS (실시간 A + 화면 품질)",
               "realtime_t": "SAROPS (실시간 A, 롤 기준)"}[area_def]
     if area_def == "realtime_t":
         method += f" {float(s['area_roll_max']):g}°"
+    if planner == "corridor":
+        method = method.replace("SAROPS", "SAROPS 도로 회랑", 1)
+    elif planner == "patrol":
+        method = method.replace("SAROPS", "규칙 도로 순찰", 1)
+    elif planner == "roadfollow":
+        method = method.replace("SAROPS", "규칙 길 따라가기 (짐벌로 앞 도로 봄)", 1)
     if blur_tau:
         method += (f" · 흔들림 D4 (롤 {blur_dead:g}°까지 ω₀ {blur_low:g}, 그 위 τ {blur_tau:g})" if blur_dead and blur_low else
                    f" · 흔들림 ω₀ {blur_tau:g}" + (f" (롤 {blur_dead:g}°까지 1)" if blur_dead else ""))
@@ -155,7 +181,8 @@ def run_job(job):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--split", default="val", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest", "bval", "btest"))
+    ap.add_argument("--split", default="val", choices=("val", "test", "dval", "dtest", "mval", "mtest", "nval", "ntest", "bval", "btest",
+                                                       "v2a", "v2b", "v2j", "v2j1", "v2j2"))
     ap.add_argument("--stages", type=int, nargs="*", default=[1, 2, 3])
     ap.add_argument("--cases", type=int, default=None, help="Cases per stage (default 5 for val, 30 for test)")
     ap.add_argument("--workers", type=int, default=5, help="Processes at once (each about 1.2 GB)")
@@ -169,19 +196,21 @@ def main():
     ap.add_argument("--area-sigma-off", type=float, default=0.0, help="blur width (m) of the off-road particles in the real-time A region (0 = same)")
     ap.add_argument("--a-weight", type=float, default=1.0, help="score a_weight x A + w x POS; 0 = plan and score on POS only (A still reported)")
     ap.add_argument("--tag", default=None, help="suffix of the reference file and web runs (default: the A definition, plus d<tau> with --blur-tau)")
+    ap.add_argument("--planner", default="sarops", choices=("sarops", "corridor", "patrol", "roadfollow"), help="corridor: road corridors instead of rectangles; patrol: road patrol")
+    ap.add_argument("--ks", type=int, nargs="*", default=None, help="only these case indices")
     ap.add_argument("--area-def", default="window", choices=("window", "realtime", "realtime_q", "realtime_t", "seen"),
                     help="A of the plan and the score (realtime: the window A every 10 s; seen: the particle option, x 80)")
     args = ap.parse_args()
     from rl_search.rl_eval_set import MULTI_N
     n = args.cases or MULTI_N.get(args.split) or (5 if args.split in ("val", "dval") else 30)
     jobs = [(args.split, st, k, args.area_def, args.blur_tau, args.area_roll_max, args.pos_w, args.blur_dead_roll, args.blur_tau_low, args.area_sigma,
-             args.area_img_min, args.area_sigma_off, args.a_weight) for st in args.stages for k in range(n)]
+             args.area_img_min, args.area_sigma_off, args.a_weight, args.planner) for st in args.stages for k in (args.ks if args.ks is not None else range(n))]
     key = ref_key(args.area_def, args.blur_tau, args.area_roll_max, args.pos_w, args.blur_dead_roll, args.blur_tau_low, args.area_sigma,
                   args.area_img_min, args.area_sigma_off, args.a_weight)
-    out = ref_path(args.split, key)
+    out = ref_path(args.split, key if args.planner == "sarops" else f"{key}_{args.planner}")
     rows = json.loads(out.read_text()) if out.exists() else []
     done = {r["id"] for r in rows}
-    sfx = "" if key == "window" else f"-{key}"
+    sfx = ("" if key == "window" else f"-{key}") + ("" if args.planner == "sarops" else f"-{args.planner}")
     rows = [r for r in rows if r["id"] not in {f"eval-{args.split}-s{j[1]}-k{j[2]}-sarops{sfx}" for j in jobs}]
     with get_context("spawn").Pool(args.workers, maxtasksperchild=1) as pool:
         for r in pool.imap_unordered(run_job, jobs):

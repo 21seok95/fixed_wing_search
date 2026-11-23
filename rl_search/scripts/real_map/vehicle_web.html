@@ -11,13 +11,13 @@
   html, body { height:100%; }
   body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.45 -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   [hidden] { display:none !important; }
-  #app { height:100dvh; display:grid; grid-template-rows:auto minmax(0, 1fr); }
-  header { display:flex; align-items:center; gap:14px; padding:9px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
+  #app { height:100dvh; display:grid; grid-template-rows:auto minmax(0, 1fr); grid-template-columns:minmax(0, 1fr); }
+  header { min-width:0; display:flex; align-items:center; gap:14px; padding:9px 16px; background:var(--panel); border-bottom:1px solid var(--line); }
   header h1 { margin:0; font-size:15px; font-weight:650; white-space:nowrap; }
   #status { flex:1; min-width:0; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #status.err { color:var(--danger); }
-  #replay { display:flex; align-items:center; gap:8px; padding:3px 4px 3px 10px; border-radius:6px; background:var(--accent-soft); color:var(--accent); font-weight:600; max-width:46%; }
-  #replay span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #replay { display:flex; align-items:center; gap:8px; padding:3px 4px 3px 10px; border-radius:6px; background:var(--accent-soft); color:var(--accent); font-weight:600; max-width:46%; min-width:0; }
+  #replay span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #replay button { padding:2px 8px; font-size:12px; flex:none; }
   main { display:grid; grid-template-columns:minmax(0, 1fr) 6px var(--aside-w, 430px); min-height:0; }
   #splitter { cursor:col-resize; background:var(--line); position:relative; touch-action:none; }
@@ -141,6 +141,16 @@
   .job .bar div { height:100%; background:var(--accent); transition:width .4s; }
   .jday { position:sticky; top:0; z-index:1; background:var(--panel); padding:10px 4px 4px; font-size:12px; font-weight:700; color:var(--muted);
           border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+  .jcase { position:sticky; top:0; z-index:1; background:var(--panel); padding:10px 4px 5px; border-bottom:1px solid var(--line);
+           display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .jcase b { font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .jcase span { color:var(--muted); font-size:12px; white-space:nowrap; }
+  .job.ingroup { padding-left:14px; }
+  .same { display:grid; grid-template-columns:18px 12px 1fr auto auto; gap:4px 8px; align-items:center; padding:5px 2px; border-bottom:1px solid var(--line); font-size:12.5px; }
+  .same.cur { background:var(--accent-soft); border-radius:6px; }
+  .same i { width:12px; height:3px; border-radius:2px; }
+  .same .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .same .sc { font-variant-numeric:tabular-nums; color:var(--muted); }
   .empty { color:var(--muted); text-align:center; padding:40px 12px; }
   @media (max-width:1000px) {
     #app { height:auto; }
@@ -252,11 +262,11 @@
           <div class="filters">
             <select id="runfilter" aria-label="시험 종류">
             <option value="all">모든 종류</option><option value="web">웹에서 돌린 실행</option>
-            <option value="eval1">검증 1단계 (분포 근처 1~3 km)</option><option value="eval2">검증 2단계 (분포 밖 3~10 km)</option><option value="eval3">검증 3단계 (이륙)</option><option value="test3">시험 30개 (이륙)</option><option value="dval3">다양 검증 5개</option><option value="dtest3">다양 시험 30개</option><option value="mval3">유형별 검증 15개 (도로·혼합·사막)</option><option value="mtest3">유형별 시험 30개 (도로·혼합·사막)</option><option value="nval3">정지 없음 유형별 검증 15개 (R10)</option><option value="ntest3">정지 없음 유형별 시험 30개 (R10)</option>
+            <option value="eval1">검증 1단계 (분포 근처 1~3 km)</option><option value="eval2">검증 2단계 (분포 밖 3~10 km)</option><option value="eval3">검증 3단계 (이륙)</option><option value="test3">시험 30개 (이륙)</option><option value="dval3">다양 검증 5개</option><option value="dtest3">다양 시험 30개</option><option value="mval3">유형별 검증 15개 (도로·혼합·사막)</option><option value="mtest3">유형별 시험 30개 (도로·혼합·사막)</option><option value="nval3">정지 없음 유형별 검증 15개 (R10)</option><option value="ntest3">정지 없음 유형별 시험 30개 (R10)</option><option value="bval3">바스토 유형별 검증 15개</option><option value="btest3">바스토 유형별 시험</option><option value="v2a3">사막 120 km 검증 (암보이)</option><option value="v2b3">사막 120 km 검증 (바스토)</option><option value="v2j3">지리산 120 km 검증</option>
             </select>
             <select id="runmethod" aria-label="방법"><option value="all">모든 방법</option><option value="sarops">SAROPS</option><option value="rl">RL</option><option value="web">웹 실행</option></select>
             <select id="runcond" aria-label="점수 조건"><option value="all">모든 점수 조건</option></select>
-            <select id="runsort" aria-label="정렬"><option value="new">최근 순</option><option value="score">점수 높은 순</option><option value="case">사례 순</option></select>
+            <select id="runsort" aria-label="정렬"><option value="new">최근 순</option><option value="score">점수 높은 순</option><option value="case">사례별 묶음 (SAROPS·RL 함께)</option></select>
             <input type="text" id="runsearch" placeholder="이름 검색 (예: R1, 시나리오 10, amboy_r1)" style="grid-column:1 / 3">
           </div>
           <div class="hint" id="runcount" style="margin-bottom:4px"></div>
@@ -279,6 +289,11 @@
             </div>
             <div class="cmp" id="s_cmp" hidden></div>
             <div class="hint" id="s_note" style="margin-top:6px"></div>
+          </div>
+          <div class="sec" id="samesec" hidden>
+            <div class="head"><h2>같은 사례의 비행</h2><button class="small" id="sameall">모두 겹쳐 보기</button></div>
+            <div class="hint" style="margin-bottom:4px">이름을 누르면 그 비행으로 바꿔 봅니다 (시각은 그대로). 체크하면 지금 보는 비행 위에 그 경로를 겹쳐 그립니다 (시각을 따라감, 점 = 그 시각의 위치).</div>
+            <div id="samelist"></div>
           </div>
           <div class="sec">
             <h2>세부 값</h2>
@@ -414,6 +429,7 @@ function decode(b64, Type) {
 }
 function fmt(v, step) { return Number(v).toFixed(Math.min((String(step).split(".")[1] || "").length, 3)); }
 const km1 = p => `${(p[0]/1000).toFixed(1)}, ${(p[1]/1000).toFixed(1)} km`;
+const f3 = v => (v == null || !Number.isFinite(Number(v))) ? "–" : Number(v).toFixed(3);   // empty scores (e.g. A of the multi-UAV runs) print as "–"
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // ---------------------------------------------------------------- tabs and modes
@@ -851,6 +867,7 @@ function drawMap() {
   if (OPT && OPT.area && $("o_area").checked) drawAreaMap();
   if (VIEW.disp === "density") drawDensity(); else drawDots();
   if (OPT && $("o_swath").checked) drawSwath();
+  if (OPT) drawOverlays();
   drawOpt();
   drawStart();
   const [lx, ly] = toPx(RES.lkp_road[0]/1000, RES.lkp_road[1]/1000);
@@ -1289,11 +1306,11 @@ function kindMatch(j, f) {
   if (f === "all") return true;
   if (f === "web") return !j.group || j.group === "web";
   if (f.startsWith("test")) return j.group === "eval" && j.split === "test" && `test${j.stage}` === f;
-  if (/^(dval|dtest|mval|mtest|nval|ntest)/.test(f)) return j.group === "eval" && `${j.split}${j.stage}` === f;
+  if (/^(dval|dtest|mval|mtest|nval|ntest|bval|btest|v2a|v2b|v2j)/.test(f)) return j.group === "eval" && `${j.split}${j.stage}` === f;
   return j.group === "eval" && (j.split || "val") === "val" && `eval${j.stage}` === f;
 }
 const methodType = j => (j.method || "").startsWith("RL") ? "rl"           // RL flights, from the validation scripts or the web
-  : !j.group || j.group !== "eval" ? "web" : ((j.method || "").startsWith("SAROPS") ? "sarops" : "rl");
+  : !j.group || j.group !== "eval" ? "web" : (/^(SAROPS|규칙)/.test(j.method || "") ? "sarops" : "rl");   // 규칙: rule flights (road patrol)
 const METHOD_NAME = { sarops: "SAROPS", rl: "RL", web: "웹" };
 function refKeyOf(j) {
   if (j.holdout && j.holdout.ref_key) return j.holdout.ref_key;
@@ -1316,6 +1333,104 @@ function condLabel(key) {
     (m[10] ? ` · ${m[9] && Number(m[9]) === 0 ? "" : "A + "}${m[10]} POS` : "");
 }
 const jobScore = j => j.holdout ? j.holdout.total : (j.area != null ? j.area + Number((j.settings || {}).area_w ?? 1)*(j.final || 0) : (j.final || 0));
+// ---- runs of one case together (user 2026-11-18): validation runs by split, stage and case; web runs by map, seed, LKP, start and target settings
+function caseKey(j) {
+  if (!j || j.state !== "done") return null;
+  if (j.group === "eval" && j.split != null && j.case != null) return `eval|${j.split}|${j.stage}|${j.case}`;
+  const v = j.view || {};
+  if (!v.lkp) return null;
+  const r = x => Math.round(Number(x)/10);
+  return `web|${v.region || ""}|${v.seed}|${r(v.lkp[0])},${r(v.lkp[1])}|${(v.start || []).slice(0, 2).map(r).join(",")}|${JSON.stringify(j.config || {})}`;
+}
+function caseName(j) {
+  if (j.case_info && j.case_info.label) return j.case_info.label;
+  const v = j.view || {}, reg = ((META.regions || []).find(r => r.key === v.region) || {}).name || v.region || "";
+  return `${reg} · 씨앗 ${v.seed}` + (v.lkp ? ` · LKP ${km1(v.lkp)}` : "");
+}
+const isPlanner = j => methodType(j) !== "rl";                 // SAROPS: the validation references and the web runs
+const caseOrder = (a, b) => isPlanner(b) - isPlanner(a) || jobScore(b) - jobScore(a);
+const caseRuns = key => key ? JOBS.filter(x => caseKey(x) === key).sort(caseOrder) : [];
+const shortName = j => methodType(j) === "rl" ? (j.method || "RL")
+  : methodType(j) === "sarops" ? ((j.method || "").startsWith("규칙 길 따라가기") ? "규칙: 길 따라가기" : (j.method || "").startsWith("규칙 도로 순찰") ? "규칙: 도로 순찰" : (j.method || "").startsWith("SAROPS 도로 회랑") ? "SAROPS 도로 회랑" : "SAROPS")
+  : "SAROPS (웹) · " + j.label;
+const isPlainSarops = j => isPlanner(j) && !/^(SAROPS 도로 회랑|규칙)/.test(j.method || "");
+const jobPos = j => j.holdout ? j.holdout.pos : (j.final || 0);
+function saropsRef(j, list) {                                    // the SAROPS flight of the same case and score condition
+  const key = refKeyOf(j);
+  return methodType(j) === "rl" || !isPlainSarops(j) ? list.find(x => x !== j && isPlainSarops(x) && refKeyOf(x) === key) || null : null;
+}
+const OVER_COLORS = ["#E6007E", "#00A39B", "#E69F00", "#5B3FD1", "#8C564B", "#1F77B4"];
+const TRACKS = new Map();
+let OVER_ON = new Set(), overCase = null;
+function overColor(id) {
+  const i = caseRuns(overCase).findIndex(x => x.id === id);
+  return OVER_COLORS[Math.max(0, i) % OVER_COLORS.length];
+}
+async function trackOf(id) {
+  if (!TRACKS.has(id)) {
+    const r = await fetch(`/api/track/${id}`);
+    if (!r.ok) throw new Error("경로를 불러오지 못했습니다");
+    const d = await r.json();
+    d.uavs.forEach(U => { U.T = decode(U.tt, Float32Array); U.XY = decode(U.xy, Float32Array); });
+    TRACKS.set(id, d);
+  }
+  return TRACKS.get(id);
+}
+async function loadOverlays() {
+  for (const id of [...OVER_ON]) { try { await trackOf(id); } catch (e) { OVER_ON.delete(id); status(e.message, true); } }
+  renderSame(); drawMap();
+}
+async function openCase(list) {                                // the first run (SAROPS if there is one) with all the others drawn over it
+  await openRun(list[0].id, list.slice(1, 1 + OVER_COLORS.length).map(j => j.id));
+}
+function renderSame() {
+  const cur = JOBS.find(x => x.id === viewing), list = caseRuns(caseKey(cur));
+  $("samesec").hidden = list.length < 2;
+  if (list.length < 2) return;
+  const box = $("samelist"); box.innerHTML = "";
+  list.forEach(j => {
+    const me = j.id === viewing, ref = saropsRef(j, list), d = ref ? jobPos(j) - jobPos(ref) : null, mt = methodType(j);
+    const el = document.createElement("div"); el.className = "same" + (me ? " cur" : "");
+    el.innerHTML = (me ? `<i class="ph"></i><i style="background:${OVER_ON.size ? "#1f1f1e" : "#555"}" title="보는 비행 (겹쳐 볼 때는 검정, 아니면 계획 색 · RL은 회색)"></i>`
+                       : `<input type="checkbox" ${OVER_ON.has(j.id) ? "checked" : ""} title="지도에 겹쳐 그리기"><i style="background:${overColor(j.id)}"></i>`)
+      + `<span class="nm" title="${esc(j.label)}"><span class="mbadge ${mt}">${METHOD_NAME[mt]}</span>${esc(shortName(j))}${me ? " · 보는 중" : ""}</span>`
+      + `<span class="sc">POS ${jobPos(j).toFixed(3)}${d != null ? ` <b style="color:${d >= 0 ? "#1a7f37" : "#b3261e"}">${d >= 0 ? "+" : ""}${d.toFixed(3)}</b>` : ""}</span>`
+      + (me ? `<span></span>` : `<button class="small">보기</button>`);
+    const c = el.querySelector("input");
+    if (c) c.onchange = () => { c.checked ? OVER_ON.add(j.id) : OVER_ON.delete(j.id); loadOverlays(); };
+    const b = el.querySelector("button");
+    if (b) b.onclick = () => openRun(j.id, [...OVER_ON, viewing].filter(Boolean));      // the flight seen so far stays drawn over the new one
+    box.appendChild(el);
+  });
+  const sc = list.some(j => j.holdout) ? "POS는 계획에 쓰지 않은 별도 particle 점수, 색 숫자는 같은 점수 조건의 SAROPS 대비 차이" : "POS는 계획 particle 점수";
+  box.insertAdjacentHTML("beforeend", `<div class="hint" style="margin-top:4px">${sc}</div>`);
+}
+// with flights drawn over it, the viewed flight is one dark colour (the plan colours would mix with the overlay colours)
+const mainCol = (u, c) => OVER_ON.size && TRACKS.size ? "#1f1f1e" : c < 0 ? "#555" : planColor(u, c);
+function drawOverlays() {
+  if (!OVER_ON.size) return;
+  const dpr = DPR(), km = v => v/1000;
+  OVER_ON.forEach(id => {
+    const d = TRACKS.get(id);
+    if (!d || id === viewing) return;
+    const col = overColor(id);
+    d.uavs.forEach(U => {
+      const T = U.T, XY = U.XY, n = U.n_path;
+      if (!n || T[0] > simT) return;
+      let s = 0;
+      while (s < n - 1 && T[s + 1] <= simT) s++;
+      ctx.beginPath();
+      for (let i = 0; i <= s; i++) { const [px, py] = toPx(km(XY[2*i]), km(XY[2*i + 1])); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+      let nx = XY[2*s], ny = XY[2*s + 1];
+      if (s < n - 1 && T[s + 1] > T[s]) { const a = clamp((simT - T[s])/(T[s + 1] - T[s]), 0, 1); nx += a*(XY[2*s + 2] - nx); ny += a*(XY[2*s + 3] - ny); }
+      const [qx, qy] = toPx(km(nx), km(ny));
+      ctx.lineTo(qx, qy); ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.lineWidth = 4*dpr; ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = 2*dpr; ctx.stroke();
+      ctx.beginPath(); ctx.arc(qx, qy, 5*dpr, 0, 6.2832); ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5*dpr; ctx.stroke();
+    });
+  });
+}
 function runMatch(j) {
   if (!kindMatch(j, $("runfilter").value)) return false;
   const m = $("runmethod").value, c = $("runcond").value, q = $("runsearch").value.trim().toLowerCase();
@@ -1359,6 +1474,28 @@ function renderJobs() {
   // newest first: a header per day with the number of runs that day
   const dayCount = {};
   if (order === "new") shown.forEach(j => { const k = live(j) ? "live" : dayKey(j.t); dayCount[k] = (dayCount[k] || 0) + 1; });
+  if (order === "case") {                       // one block per case: header, SAROPS first, then the RL flights by score
+    const groups = new Map(), loose = [];
+    shown.forEach(j => { const k = caseKey(j); if (!k) loose.push(j); else { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(j); } });
+    const last = l => Math.max(...l.map(j => j.t || 0));
+    [...groups.values()].sort((a, b) => (b.length > 1) - (a.length > 1) || last(b) - last(a)).forEach(l => {
+      l.sort(caseOrder);
+      const all = caseRuns(caseKey(l[0])), h = document.createElement("div"); h.className = "jcase";
+      const nS = l.filter(isPlanner).length, nR = l.length - nS;
+      h.innerHTML = `<b title="${esc(caseName(l[0]))}">${esc(caseName(l[0]))}</b><span>SAROPS ${nS} · RL ${nR} `
+        + (l.length > 1 ? `<button class="small">함께 보기</button>` : "") + `</span>`;
+      const b = h.querySelector("button"); if (b) b.onclick = () => openCase(l);
+      box.appendChild(h);
+      l.forEach(j => box.appendChild(jobRow(j, all, true)));
+    });
+    if (loose.length) {
+      const h = document.createElement("div"); h.className = "jday";
+      h.innerHTML = `<span>사례로 묶을 수 없는 실행 (진행 중·오류 등)</span><span>${loose.length}개</span>`; box.appendChild(h);
+      loose.forEach(j => box.appendChild(jobRow(j)));
+    }
+    drawCompare(); renderSame();
+    return;
+  }
   let lastDay = null;
   shown.forEach(j => {
     if (order === "new") {
@@ -1369,23 +1506,30 @@ function renderJobs() {
         box.appendChild(h); lastDay = k;
       }
     }
-    const el = document.createElement("div"); el.className = "job" + (viewing === j.id ? " viewing" : "");
+    box.appendChild(jobRow(j));
+  });
+  drawCompare(); renderSame();
+}
+function jobRow(j, caseList = null, inGroup = false) {
+    const el = document.createElement("div"); el.className = "job" + (viewing === j.id ? " viewing" : "") + (inGroup ? " ingroup" : "");
     let sub;
-    if (j.state === "done" && j.holdout) sub = `${timeText(j.t)} · 별도 particle 점수 ${j.holdout.total.toFixed(3)} (POS ${j.holdout.pos.toFixed(3)} · A ${j.holdout.A.toFixed(3)}) · ${condLabel(refKeyOf(j))}`;
+    const conds = caseList ? new Set(caseList.map(refKeyOf)).size : 1;     // in a case block the condition is named only when the block mixes several
+    if (inGroup && j.state === "done") sub = `${timeText(j.t)} · ${j.holdout ? "별도 particle " : ""}POS ${jobPos(j).toFixed(3)}` + (conds > 1 ? ` · ${condLabel(refKeyOf(j))}` : "");
+    else if (j.state === "done" && j.holdout) sub = `${timeText(j.t)} · 별도 particle 점수 ${f3(j.holdout.total)} (POS ${f3(j.holdout.pos)} · A ${f3(j.holdout.A)}) · ${condLabel(refKeyOf(j))}`;
     else if (j.state === "done") sub = `${timeText(j.t)} · POS ${j.final.toFixed(3)}${j.area != null ? ` · A ${j.area.toFixed(3)}` : ""}${j.n_uav > 1 ? ` · ${j.n_uav}대` : ""} · 계획 ${j.plans}번 · ${condLabel(refKeyOf(j))}`;
     else if (j.state === "running") sub = `${j.stage || "준비"} · ${(j.elapsed || 0).toFixed(0)}초` + (j.plans ? ` · 비행 ${j.t_min.toFixed(0)}분` : "");
     else sub = (STATE_TEXT[j.state] || j.state) + (j.msg ? ": " + j.msg.split("\n").slice(-2).join(" ") : "");
     const chk = j.state === "done" ? `<input type="checkbox" ${CMP.has(j.id) ? "checked" : ""} title="POS 비교에 넣기">` : `<i class="ph"></i>`;
     const acts = j.state === "done" ? `<button class="small" data-a="open">보기</button><button class="small" data-a="delete">삭제</button>`
       : j.state === "running" || j.state === "queued" ? `<button class="small" data-a="stop">취소</button>` : `<button class="small" data-a="delete">삭제</button>`;
-    const mt = methodType(j);
-    el.innerHTML = `${chk}<div class="name" title="${esc(j.label)}"><span class="mbadge ${mt}">${METHOD_NAME[mt]}</span>${esc(j.label)}</div><div class="acts">${acts}</div><div class="sub">${esc(sub)}</div>`
+    const mt = methodType(j), ref = caseList ? saropsRef(j, caseList) : null, d = ref ? jobPos(j) - jobPos(ref) : null;
+    const name = inGroup ? shortName(j) : j.label;
+    el.innerHTML = `${chk}<div class="name" title="${esc(j.label)}"><span class="mbadge ${mt}">${METHOD_NAME[mt]}</span>${esc(name)}</div><div class="acts">${acts}</div>`
+      + `<div class="sub">${esc(sub)}${d != null ? ` · SAROPS 대비 POS <b style="color:${d >= 0 ? "#1a7f37" : "#b3261e"}">${d >= 0 ? "+" : ""}${d.toFixed(3)}</b>` : ""}</div>`
       + (j.state === "running" ? `<div class="bar"><div style="width:${j.t_min ? clamp(j.t_min/60, 0, 1)*100 : 3}%"></div></div>` : "");
     const c = el.querySelector("input"); if (c) c.onchange = () => { c.checked ? CMP.add(j.id) : CMP.delete(j.id); drawCompare(); };
     el.querySelectorAll("button").forEach(b => b.onclick = () => jobAction(j, b.dataset.a));
-    box.appendChild(el);
-  });
-  drawCompare();
+    return el;
 }
 async function jobAction(j, a) {
   if (a === "open") { openRun(j.id); return; }
@@ -1395,7 +1539,7 @@ async function jobAction(j, a) {
   if (a === "delete" && viewing === j.id) await backToLive();
   refreshJobs();
 }
-async function openRun(id) {
+async function openRun(id, over = null) {                     // over: ids of flights of the same case to draw over it
   status("저장된 결과를 불러오는 중 ...");
   try {
     const r = await fetch(`/api/jobs/${id}`);
@@ -1407,6 +1551,12 @@ async function openRun(id) {
     setParticles(d.res);
     setOpt(d.opt);
     viewing = id;
+    const key = caseKey(JOBS.find(x => x.id === id));
+    if (over) OVER_ON = new Set(over);                               // set after the load: changing the map clears the view
+    else if (key !== overCase) OVER_ON = new Set();                  // another case: no overlays carried over
+    overCase = key;
+    OVER_ON.delete(id);
+    loadOverlays();
     fillSummary(d.meta);
     $("replay").hidden = false; $("replayname").textContent = "저장된 실행: " + d.meta.label; $("replayname").title = d.meta.label;
     simT = Math.min(simT, (RES.T - 1)*RES.dt_s);
@@ -1417,9 +1567,9 @@ async function openRun(id) {
     refreshJobs();
   } catch (e) { status("불러오지 못했습니다: " + e.message, true); }
 }
-async function backToLive() { viewing = null; $("replay").hidden = true; await run(); renderJobs(); refreshJobs(); }
+async function backToLive() { viewing = null; OVER_ON = new Set(); overCase = null; $("replay").hidden = true; await run(); renderJobs(); refreshJobs(); }
 function clearView(force) {
-  if (viewing || force) { viewing = null; $("replay").hidden = true; }
+  if (viewing || force) { viewing = null; OVER_ON = new Set(); overCase = null; $("replay").hidden = true; }
   OPT = null; showResult(false); updateHud(); updateKindHint(); updateLegend();
 }
 function showResult(on) { $("optresult").hidden = !on; $("optempty").hidden = on; }
@@ -1429,10 +1579,10 @@ function fillSummary(meta) {
   $("s_badge").innerHTML = `<span class="mbadge ${mt}">${mt === "rl" ? "RL 정책" : mt === "sarops" ? "SAROPS" : "웹 실행"}</span>`;
   if (j.holdout) {
     const aw = Number((j.settings || {}).a_weight ?? 1);
-    $("s_total").textContent = j.holdout.total.toFixed(3);
+    $("s_total").textContent = f3(j.holdout.total);
     $("s_total_l").textContent = (aw === 0 ? `총점 ${w} × POS (A 끔)` : "총점 A + POS") + " · 계획에 쓰지 않은 별도 particle로 채점"
       + (j.launch_min != null ? ` · 보고 후 ${j.launch_min}분 이륙` : "");
-    $("s_pos").textContent = j.holdout.pos.toFixed(3); $("s_A").textContent = j.holdout.A.toFixed(3);
+    $("s_pos").textContent = f3(j.holdout.pos); $("s_A").textContent = f3(j.holdout.A);
   } else {
     $("s_total").textContent = (A ? A.total : OPT.final).toFixed(3);
     $("s_total_l").textContent = A ? `총점 A + ${w} × POS` : "POS";
@@ -1445,7 +1595,7 @@ function fillSummary(meta) {
     if (ref) {
       const d = j.holdout.total - ref.holdout.total;
       cmp.hidden = false;
-      cmp.innerHTML = `같은 사례·같은 점수 조건의 SAROPS <b>${ref.holdout.total.toFixed(3)}</b> → RL이 <b style="color:${d >= 0 ? "#1a7f37" : "#b3261e"}">${d >= 0 ? "+" : ""}${d.toFixed(3)}</b> ${d >= 0 ? "높음" : "낮음"} `
+      cmp.innerHTML = `같은 사례·같은 점수 조건의 SAROPS <b>${f3(ref.holdout.total)}</b> → RL이 <b style="color:${d >= 0 ? "#1a7f37" : "#b3261e"}">${d >= 0 ? "+" : ""}${d.toFixed(3)}</b> ${d >= 0 ? "높음" : "낮음"} `
         + `<button class="small" id="s_openref">SAROPS 비행 열기</button>`;
       $("s_openref").onclick = () => openRun(ref.id);
     }
@@ -1572,7 +1722,7 @@ function drawUav(U, u) {
       while (a < split) {
         const c = tid(a); let b = a + 1;
         while (b < split && tid(b) === c) b++;
-        trace(a, b); ctx.strokeStyle = c < 0 ? "#555" : planColor(u, c); ctx.lineWidth = 1.8*dpr; ctx.stroke();
+        trace(a, b); ctx.strokeStyle = mainCol(u, c); ctx.lineWidth = 1.8*dpr; ctx.stroke();
         a = b;
       }
     }
@@ -1583,7 +1733,7 @@ function drawUav(U, u) {
   const nowX = lerp(U.logP, 3, 0), nowY = lerp(U.logP, 3, 1);
   if (pm !== "off" && split < nP - 1) {                 // from the last 5 s path point to where the UAV is now
     const [ax, ay] = toPx(km(XY[2*split]), km(XY[2*split + 1])), [bx, by] = toPx(km(nowX), km(nowY));
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.strokeStyle = cur < 0 ? "#555" : planColor(u, cur); ctx.lineWidth = 1.8*dpr; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.strokeStyle = mainCol(u, cur); ctx.lineWidth = 1.8*dpr; ctx.stroke();
   }
   if ($("o_fov").checked) {
     poly([0, 1, 2, 3, 0].map(c => [lerp(U.quadArr, 8, 2*c), lerp(U.quadArr, 8, 2*c + 1)]));
@@ -1730,6 +1880,7 @@ function makeMuted() {
   $("rlsubmit").onclick = submitRL; loadRlModels();
   ["runfilter", "runmethod", "runcond", "runsort"].forEach(id => $(id).onchange = renderJobs);
   $("runsearch").oninput = renderJobs;
+  $("sameall").onclick = () => { caseRuns(overCase).forEach(j => { if (j.id !== viewing) OVER_ON.add(j.id); }); loadOverlays(); };
   initSplitter(); initGuide();
   $("optdefaults").onclick = buildOptParams; $("fitpath").onclick = fitPath;
   window.addEventListener("resize", resize);

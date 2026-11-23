@@ -171,6 +171,22 @@ def run_case(region: str, scen, vres, vc, view: dict, s: dict, q=None, options: 
         return np.round(np.prod([e.surv for e in envs], axis=0)*255).astype(np.uint8)
 
     base = (NoOverlapAreaSarops if area_on else NoOverlapSarops) if n_uav > 1 else (AreaSaropsPlanner if area_on else SaropsPlanner)
+    extra = {}
+    if s.get("planner") == "corridor":           # road corridors instead of rectangles (rl_search/corridor.py, user 2026-11-18)
+        if n_uav > 1 or area_on:
+            raise ValueError("the corridor planner is 1 UAV, POS only for now")
+        from rl_search.corridor import CorridorPlanner
+        base, extra = CorridorPlanner, dict(region=region)
+    elif s.get("planner") == "patrol":           # road patrol (rl_search/patrol.py, user 2026-11-18)
+        if n_uav > 1 or area_on:
+            raise ValueError("the patrol rule is 1 UAV, POS only for now")
+        from rl_search.patrol import PatrolPlanner
+        base, extra = PatrolPlanner, dict(region=region)
+    elif s.get("planner") == "roadfollow":       # "just follow the road where the distribution is high" (rl_search/roadfollow.py)
+        if n_uav > 1 or area_on:
+            raise ValueError("the road-following rule is 1 UAV, POS only for now")
+        from rl_search.roadfollow import RoadFollowPlanner
+        base, extra = RoadFollowPlanner, dict(region=region)
     rec_t, rec_w = [], []
 
     class Planner(base):
@@ -187,7 +203,7 @@ def run_case(region: str, scen, vres, vc, view: dict, s: dict, q=None, options: 
 
     pols = [Planner(W=float(s["pass_pod"])*float(s["cover_m"]), n_starts=3, big_jump=True, search_s=60.0*float(s["search_min"]),
                     max_transit_s=60.0*float(s["max_transit_min"]), lane_mode="cover", peak_timing="intercept",
-                    extra_s=7200.0 if s["cap"] == "none" else 120.0) for _ in range(n_uav)]
+                    extra_s=7200.0 if s["cap"] == "none" else 120.0, **extra) for _ in range(n_uav)]
     for k in pols:
         k.team, k.strict_overlap = pols, n_uav > 1 and bool(s.get("strict", 1))
     res = run_team_launch(envs, pols, options, 60.0)
@@ -208,7 +224,9 @@ def run_case(region: str, scen, vres, vc, view: dict, s: dict, q=None, options: 
         logs.append(log)
         cw = e.fp_cross
         rects = [dict(tp=float(tp), cx=float(r.cx), cy=float(r.cy), ell=float(r.ell), wid=float(r.wid), theta=float(r.theta),
-                      k=int(round(cw/r.spacing)) if r.spacing else None, lanes=np.round(pts, 1).tolist()) for tp, r, pts in pol.rects]
+                      k=int(round(cw/r.spacing)) if r.spacing else None, lanes=np.round(pts, 1).tolist(),
+                      **({"outline": np.round(r.outline(), 1).tolist(), "line_m": round(r.frame.L)} if hasattr(r, "outline") else {}))
+                 for tp, r, pts in pol.rects]
         tasks = [dict(t0=float(k["t0"]), lane_t=k["lane_t"], end=k["end"], how=k["how"]) for k in pol.tasks]
         uavs.append(dict(rects=rects, tasks=tasks, tt=b64(np.asarray(res["tt"][u], np.float32)), xy=b64(np.asarray(res["xy"][u], np.float32)), n_path=len(res["tt"][u]),
                          log_t=b64(log[:, 0].astype(np.float32)), log_xyyaw=b64(log[:, 1:4].astype(np.float32)), quad=b64(footprints(log, e.detector.cfg).astype(np.float32)),

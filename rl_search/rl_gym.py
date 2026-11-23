@@ -128,6 +128,13 @@ def load_expanded(path, env, device: str = "cpu", **ppo_kw):
             w[:, :o.shape[1]] = o
             sd_new[k] = w
             grown.append(f"{k} {o.shape[1]} -> {v.shape[1]}")
+        elif o.dim() == 2 and o.shape[0] == v.shape[0] and o.shape[1] < v.shape[1]:
+            # (2026-11-20, multi-UAV) a longer observation vector (teammate entries appended last): the first vector layer gets zero
+            # weights for the new inputs, so the model acts and values exactly like the old one until training uses them
+            w = torch.zeros_like(v)
+            w[:, :o.shape[1]] = o
+            sd_new[k] = w
+            grown.append(f"{k} {o.shape[1]} -> {v.shape[1]}")
         else:
             raise ValueError(f"cannot carry {k}: {tuple(o.shape)} -> {tuple(v.shape)}")
     model.policy.load_state_dict(sd_new)
