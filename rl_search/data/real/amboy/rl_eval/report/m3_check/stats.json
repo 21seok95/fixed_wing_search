@@ -1,0 +1,98 @@
+{
+ "m3_c0": {
+  "found": 0.5271297137013581,
+  "cuts_transit": 0,
+  "cuts_search": 13,
+  "viol": 0.0,
+  "gain": 252.0850686483492,
+  "search_steps": 588,
+  "in1km": 0.09863945578231292,
+  "dmin_search": 236.27319588745476,
+  "dmin_all": 236.26678190241097,
+  "pen_step": 56.983538497917145,
+  "share_step": 0.22604884455654692,
+  "pen_linear": 38.04679094906925,
+  "share_linear": 0.15092837966592673,
+  "search_min": [
+   10.7,
+   10.6
+  ]
+ },
+ "m3_c1": {
+  "found": 0.540787669318355,
+  "cuts_transit": 0,
+  "cuts_search": 11,
+  "viol": 0.0,
+  "gain": 261.8024779322172,
+  "search_steps": 603,
+  "in1km": 0.0779436152570481,
+  "dmin_search": 266.1396205141758,
+  "dmin_all": 263.99476665573326,
+  "pen_step": 65.40572618446626,
+  "share_step": 0.2498285222548594,
+  "pen_linear": 42.0852098779334,
+  "share_linear": 0.16075176297158505,
+  "search_min": [
+   9.5,
+   9.4
+  ]
+ },
+ "m3_c2": {
+  "found": 0.3371318274708154,
+  "cuts_transit": 0,
+  "cuts_search": 36,
+  "viol": 0.0,
+  "gain": 138.5298776216987,
+  "search_steps": 603,
+  "in1km": 0.23548922056384744,
+  "dmin_search": 221.3926515149437,
+  "dmin_all": 220.49401420415882,
+  "pen_step": 211.60840537695955,
+  "share_step": 1.5275289995911625,
+  "pen_linear": 112.1975696943924,
+  "share_linear": 0.8099160384793286,
+  "search_min": [
+   9.6,
+   9.6
+  ]
+ },
+ "m2_c0": {
+  "found": 0.45156470858300457,
+  "cuts_transit": 17,
+  "cuts_search": 0,
+  "viol": 0.0,
+  "gain": 202.94938650601023,
+  "search_steps": 0,
+  "in1km": NaN,
+  "dmin_search": NaN,
+  "dmin_all": 101.94381571337401,
+  "pen_m2": 98.76452997425797,
+  "share_m2": 0.4866461124844697
+ },
+ "m2_c1": {
+  "found": 0.581776147514976,
+  "cuts_transit": 0,
+  "cuts_search": 0,
+  "viol": 0.0,
+  "gain": 293.43144766782996,
+  "search_steps": 0,
+  "in1km": NaN,
+  "dmin_search": NaN,
+  "dmin_all": 138.20168363813363,
+  "pen_m2": 17.330988066664542,
+  "share_m2": 0.05906315837791031
+ },
+ "m2_c2": {
+  "found": 0.6032390940582902,
+  "cuts_transit": 2,
+  "cuts_search": 0,
+  "viol": 0.0,
+  "gain": 311.78990558204146,
+  "search_steps": 0,
+  "in1km": NaN,
+  "dmin_search": NaN,
+  "dmin_all": 112.91155996814881,
+  "pen_m2": 31.070385532668784,
+  "share_m2": 0.09965167241276583
+ }
+}

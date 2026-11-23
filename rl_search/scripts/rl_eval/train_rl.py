@@ -73,6 +73,33 @@ def ring_next(blocks: list, used: int, rise: float, min_steps: int, max_steps: i
     return None
 
 
+def balance_teams(teams, per_proc: int) -> list:
+    """The world sizes ordered so that every group of ``per_proc`` consecutive worlds (one worker process) holds about the same number of
+    UAVs: largest first into the least loaded group that has room (11-24, R18: 1-4 UAVs mixed)."""
+    import math
+    n = math.ceil(len(teams)/per_proc)
+
+    def lpt():
+        groups = [[] for _ in range(n)]
+        for k in sorted(teams, reverse=True):
+            min((g for g in groups if len(g) < per_proc), key=lambda g: (sum(g), len(g))).append(k)
+        return groups
+
+    def snake():                                     # largest first, row by row, every other row backwards
+        groups = [[] for _ in range(n)]
+        for i, k in enumerate(sorted(teams, reverse=True)):
+            r, c = divmod(i, n)
+            groups[c if r % 2 == 0 else n - 1 - c].append(k)
+        return groups
+    def flat(groups):                                # a short group goes last, so the processes' consecutive slices are the groups
+        return [k for g in sorted(groups, key=len, reverse=True) for k in g]
+
+    def spread(order):
+        s = [sum(order[g:g + per_proc]) for g in range(0, len(order), per_proc)]
+        return max(s) - min(s)
+    return min((flat(lpt()), flat(snake())), key=spread)
+
+
 def random_value_init(venv, gamma: float, steps: int, rng) -> float:
     """Mean discounted return over the states of finished episodes of a smooth random policy (scaled reward)."""
     n = venv.num_envs
@@ -173,10 +200,20 @@ def main():
                     help="multi-UAV (docs/multi_agent_design.md, user 2026-11-19/20): one world per entry with that many UAVs (e.g. 2 3 4 2 3 4), every UAV "
                          "is one slot of the vector env (shared policy, reward and teammate inputs by --ma-design, safety filter, rl_search.rl_multi); --n-envs is ignored, the "
                          "periodic single-UAV evaluation is off (checkpoints only); steps before a launch / after the battery are masked")
+    ap.add_argument("--pool-by-team", action="store_true",
+                    help="multi-UAV with --pool-order slot (user 2026-11-24, R18): the worlds of each team size share out the whole pool among "
+                         "themselves (world r of the n worlds of size k takes files r, r + n, ...), so every scenario is flown by every team size; "
+                         "without it world j of all J takes j, j + J, ... (a scenario is always flown by the same team size)")
+    ap.add_argument("--balance-worlds", action="store_true",
+                    help="multi-UAV with --worlds-per-proc > 1: order the worlds so that every worker process holds about the same number of UAVs "
+                         "(largest first into the least loaded process); a process steps its worlds one after another")
+    ap.add_argument("--in-updates", action="store_true",
+                    help="(user 2026-11-24, R18: hundreds of envs) --eval-every, --save-every, --ring-eval-every, --ring-block, --ring-min, "
+                         "--ring-max and --stop-at count PPO updates (n_steps x envs decisions each) instead of steps; give all of them")
     ap.add_argument("--worlds-per-proc", type=int, default=1,
                     help="multi-UAV: worlds per worker process (user 2026-11-23: 3-UAV worlds x 20 on the Mac; the terrain is held once per process, "
                          "the worlds of a process step one after another)")
-    ap.add_argument("--ma-design", choices=("m1", "m2"), default="m2",
+    ap.add_argument("--ma-design", choices=("m1", "m2", "m3"), default="m2",
                     help="multi-UAV design (rl_multi.DESIGNS): m1 = the M1 run (team reward, 150 / 200 m, gaps 5 / 10 / 15 s, tail channel + 7-entry "
                          "vector); m2 = user 2026-11-20 ~ 11-23 (own-share reward, 100 / 250 m with the distance penalty only while closing, gaps "
                          "5-10 s per UAV, small maps claim + danger zone, large maps plan B, no teammate vector)")
@@ -272,11 +309,15 @@ def main():
             ap.error(f"--ring-eval: unknown split in {ring_evals}")
     # R16 (user 2026-11-23): one UAV in the multi-UAV env (--teams 1 1 ..., design m2), validated as R15 was: the periodic and launch-stage
     # evaluations fly the model alone in RealRLEnv with the no-teammate channels (rl_real_eval.SoloMates; same flight as MultiRealEnv k=1)
-    solo = bool(args.teams) and set(args.teams) == {1}
+    # (11-24, user) a team model is not validated alone when it never flew alone (its team-size input would be either never seen or untrue):
+    # worlds that all hold more than one UAV keep checkpoints only and their team flights are scored by scripts/multi_design/ma_eval_watch;
+    # R17 passes the launch stages at R16's steps (--ring-max, no --ring-eval). With one-UAV worlds among them (R16; R18: 1-4 UAVs mixed) the
+    # model flown alone is a situation it trains on, so the periodic and launch-stage validations fly it alone as R16's
+    solo = bool(args.teams) and 1 in args.teams and not args.sequential
     if args.teams and not solo and ring_evals:
-        ap.error("--ring-eval flies the model alone: only with one-UAV worlds (--teams 1 1 ...)")
-    if solo and (args.sequential or args.ma_design != "m2"):
-        ap.error("one-UAV worlds are validated alone with the m2 no-teammate inputs: design m2, no --sequential")
+        ap.error("--ring-eval flies the model alone: only when one-UAV worlds are among the worlds (--teams 1 ...)")
+    if solo and (args.sequential or args.ma_design not in ("m2", "m3")):
+        ap.error("one-UAV worlds are validated alone with the m2 / m3 no-teammate inputs: design m2 or m3, no --sequential")
     if args.pool_order is None:
         args.pool_order = "slot" if args.scen_v2 else "random"
 
@@ -366,6 +407,20 @@ def main():
     if args.teams:                                   # multi-UAV: worlds of k UAVs, every UAV one slot (rl_search.rl_multi_vec)
         from rl_search.rl_multi_vec import MultiWorldVecEnv
 
+        if args.balance_worlds and args.worlds_per_proc > 1:
+            args.teams = balance_teams(args.teams, args.worlds_per_proc)
+            print(f"worlds ordered for the processes (UAVs per process): "
+                  f"{[sum(args.teams[g:g + args.worlds_per_proc]) for g in range(0, len(args.teams), args.worlds_per_proc)]}", flush=True)
+
+        def pool_slot_of(j: int):
+            """(share, of) of world j's pool: by region (as before), or by team size and region (--pool-by-team)."""
+            if args.pool_order != "slot":
+                return None
+            if args.pool_by_team:
+                same = [q for q in range(len(args.teams)) if args.teams[q] == args.teams[j] and q % nreg == j % nreg]
+                return same.index(j), len(same)
+            return j//nreg, len(range(j % nreg, len(args.teams), nreg))
+
         def world_fn(j: int, k: int):
             def f():
                 from rl_search.rl_multi import MultiRealEnv
@@ -374,7 +429,7 @@ def main():
                 cfg = RealRLConfig(region=region, stage=3, settings=dict(area_over), multi=args.multi,
                                    pool=pool_dir_multi(area_over, region) if args.multi else None, reuse=args.reuse,
                                    type_weights=str(tw_path) if args.multi else None, mask_cost=args.mask_cost,
-                                   pool_slot=(j//nreg, len(range(j % nreg, len(args.teams), nreg))) if args.pool_order == "slot" else None)
+                                   pool_slot=pool_slot_of(j))
                 return MultiRealEnv(k, cfg, seed=args.seed*1000 + j, design=args.ma_design, sequential=args.sequential)
             return f
         venv = MultiWorldVecEnv([world_fn(j, k) for j, k in enumerate(args.teams)], worlds_per_proc=args.worlds_per_proc)
@@ -385,6 +440,15 @@ def main():
         venv = GroupedSubprocVecEnv(env_fns, args.envs_per_proc, start_method="fork")
     else:
         venv = SubprocVecEnv(env_fns, start_method="fork")
+    if args.in_updates:                              # (11-24, R18) the intervals and the length count PPO updates
+        per = args.n_steps*args.n_envs
+        names = ("eval_every", "save_every", "ring_eval_every", "ring_block", "ring_min", "ring_max", "stop_at")
+        big = [n for n in names if getattr(args, n) and getattr(args, n) > 100_000]
+        if big:
+            raise SystemExit(f"--in-updates: {big} look like step counts (give every interval in updates)")
+        for n in names:
+            setattr(args, n, int(getattr(args, n))*per)
+        print(f"--in-updates: {per:,} decisions per update -> " + ", ".join(f"{n} {getattr(args, n):,}" for n in names), flush=True)
     if args.pool_order == "slot":                    # a resumed run goes on where each env stopped in its share of the pool
         cur = state.get("pool_cursor") or []
         if len(cur) == args.n_envs:

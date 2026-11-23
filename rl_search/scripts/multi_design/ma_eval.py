@@ -36,7 +36,7 @@ CASES = (0, 1, 2)
 def _gaps(case_k: int, k: int, design: str = "m1") -> list:
     """Launch gaps of a case, fixed per case: m1 drawn from 5 / 10 / 15 s, m2 uniform in 5-10 s (rl_multi.DESIGNS)."""
     rng = np.random.default_rng(1000 + case_k)
-    if design == "m2":
+    if design in ("m2", "m3"):
         return [float(x) for x in rng.uniform(5.0, 10.0, 3)][:k - 1]
     return [float(x) for x in rng.choice((5.0, 10.0, 15.0), 3)][:k - 1]
 
@@ -60,7 +60,7 @@ def _surv8(W, W0) -> np.ndarray:
 
 
 def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=None, web: bool = False, design: str = "m1",
-        sequential: bool = False) -> dict:
+        sequential: bool = False, solo: bool = False) -> dict:
     """One team flight on case ``case_k``: with ``model`` (planner particles, filter on) or replaying ``actions`` (hold-out particles, filter
     off, the commands as applied). ``web``: also keep what a web run needs (camera samples, team survival per step) under ``out["web"]``.
     ``sequential``: the model decides one UAV after another within each step (rl_multi sequential=True, user 11-23); a replay flies the
@@ -73,6 +73,7 @@ def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=
     seq = bool(sequential) and not replay
     env = MultiRealEnv(k, RealRLConfig(region="jirisan120", settings=s), seed=case_k, safety=not replay, design=design, sequential=seq)
     env.return_obs = not replay
+    env.solo_view = bool(solo)                          # (11-24) a one-UAV model of the multi env (R16) in a team: no-teammate inputs
     if web:
         for u in env.uavs:
             u.env.sample_log = []                         # every real 1 s sample with the camera axes (footprints, A)
@@ -184,7 +185,8 @@ def save_web(label: str, k: int, case_k: int, s: dict, r: dict, holdout_pos: flo
     return rid
 
 
-def run(model_path: str, label: str, single: bool, web: bool = True, design: str | None = None, teams=TEAMS, holdout: bool = True):
+def run(model_path: str, label: str, single: bool, web: bool = True, design: str | None = None, teams=TEAMS, holdout: bool = True,
+        solo: bool = False):
     """``design``: the env's multi-UAV design (gaps, safety distances, teammate inputs); default the model run's (a single-UAV model: m1,
     as the 11-20 baseline; give m2 to compare with an m2 run). ``teams``: team sizes to fly; ``holdout`` False: no replay on the hold-out
     particles (the planner score is stored as both; 11-23: the two agreed within 0.01 in every evaluation so far)."""
@@ -205,7 +207,7 @@ def run(model_path: str, label: str, single: bool, web: bool = True, design: str
     for case_k in CASES:
         for k in teams:
             t1 = time.perf_counter()
-            r = fly(k, case_k, s, model=model, single=single, web=web, design=design, sequential=seq)
+            r = fly(k, case_k, s, model=model, single=single, web=web, design=design, sequential=seq, solo=solo)
             applied = r.pop("applied")
             h = fly(k, case_k, s, actions=applied, design=design) if holdout else dict(found=r["found"], curve=r["curve"])
             if web:
@@ -278,12 +280,14 @@ def main():
     ap.add_argument("--single", action="store_true", help="the model is a single-UAV one (R15): every UAV flies on its own inputs only")
     ap.add_argument("--labels", nargs="+")
     ap.add_argument("--no-web", action="store_true", help="do not save the flights as web runs")
-    ap.add_argument("--design", choices=("m1", "m2"), default=None, help="env design (default: the model run's; single models m1)")
+    ap.add_argument("--design", choices=("m1", "m2", "m3"), default=None, help="env design (default: the model run's; single models m1)")
     ap.add_argument("--teams", type=int, nargs="+", default=list(TEAMS), help="team sizes to fly (default 1 2 3 4)")
     ap.add_argument("--no-holdout", action="store_true", help="skip the replay on the hold-out particles (planner score only)")
+    ap.add_argument("--solo", action="store_true", help="every UAV flies on its own inputs with the multi-env layout (no-teammate channels, "
+                                                        "1 / k = 1): a one-UAV model of the multi env (R16) as the team baseline")
     a = ap.parse_args()
     if a.what == "run":
-        run(a.model, a.label, a.single, web=not a.no_web, design=a.design, teams=tuple(a.teams), holdout=not a.no_holdout)
+        run(a.model, a.label, a.single, web=not a.no_web, design=a.design, teams=tuple(a.teams), holdout=not a.no_holdout, solo=a.solo)
     else:
         figure(a.labels)
 

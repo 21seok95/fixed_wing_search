@@ -79,8 +79,8 @@ class SoloMates:
     -1 on the larger ones), 1 / team size = 1 at the end of the vector, and the maps as uint8 with the ranges of
     ``MultiRealEnv.mate_ranges`` when the model's maps are uint8. Everything else is the wrapped env's (attribute pass-through)."""
 
-    def __init__(self, env, u8: bool):
-        self.env_, self.u8 = env, bool(u8)
+    def __init__(self, env, u8: bool, inv_k: float = 1.0):
+        self.env_, self.u8, self.inv_k = env, bool(u8), float(inv_k)
 
     def __getattr__(self, name):
         return getattr(self.env_, name)
@@ -104,7 +104,7 @@ class SoloMates:
                 extra = [(-1.0, 1.0)]
             obs[name] = np.concatenate([obs[name], np.stack(ch).astype(np.float32)], 0)
             ranges[name] = [(0.0, 1.0)]*n_base + extra
-        obs["vec"] = np.concatenate([obs["vec"], np.array([1.0], np.float32)])
+        obs["vec"] = np.concatenate([obs["vec"], np.array([self.inv_k], np.float32)])
         return maps_to_u8(obs, ranges) if self.u8 else obs
 
     def reset(self, **kw):
@@ -116,7 +116,7 @@ class SoloMates:
         return self._obs(), r, term, trunc, info
 
 
-def solo_view(model, env):
+def solo_view(model, env, inv_k: float = 1.0):
     """``env`` as ``model`` sees it: wrapped in ``SoloMates`` when the model's vector is one longer than the single-UAV layout of the env's
     settings and its maps carry the m2 teammate channels (a ``--teams`` model of design m2 without sequential turns); else ``env``."""
     from rl_search.rl_multi import SMALL_SIDE
@@ -130,7 +130,7 @@ def solo_view(model, env):
     for name, side, _ in env.cfg.maps:
         if name not in sp or sp[name].shape[0] != ch[name] + (2 if side <= SMALL_SIDE else 1):
             return env
-    return SoloMates(env, u8=np.dtype(sp[env.cfg.maps[0][0]].dtype) == np.uint8)
+    return SoloMates(env, u8=np.dtype(sp[env.cfg.maps[0][0]].dtype) == np.uint8, inv_k=inv_k)
 
 
 def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, save_web: bool = True, settings: dict | None = None,
@@ -153,7 +153,7 @@ def evaluate_case(model_path: str, split: str, stage: int, k: int, step: int, sa
         from dataclasses import replace
         case = replace(case, t_launch_s=float(launch_s), info=dict(case.info) | {"delay_s": float(launch_s), "delay_case_s": float(case.t_launch_s)})
     model = _model(model_path)
-    env = solo_view(model, _env(settings, case.region))      # a --teams model of design m2 (R16) sees the no-teammate channels
+    env = solo_view(model, _env(settings, case.region))      # a --teams model of one-UAV worlds (R16) sees the no-teammate channels
     e = env.env
     e.sample_log = []
     obs, info = env.reset(options=case.options(scen))

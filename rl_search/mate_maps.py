@@ -129,3 +129,36 @@ def time_adv_map(x: float, y: float, yaw: float, mates_xy, side: float, lead: fl
     M = np.asarray(mates_xy, float)
     d_m = np.sqrt(np.min((WX[None] - M[:, 0, None, None])**2 + (WY[None] - M[:, 1, None, None])**2, axis=0))
     return np.clip((np.sqrt(F*F + R*R) - d_m)/(speed*max(float(lead), 1.0)), -1.0, 1.0).astype(np.float32)
+
+
+def danger_map_graded(x: float, y: float, yaw: float, fans, side: float, lead: float, level, d_max: float, px: int = 64,
+                      n_levels: int = 8) -> np.ndarray:
+    """위험 구역, graded (design m3 search rules, user 2026-11-24): every cell gets max over the teammates' fan points of (time value of the
+    point, as ``danger_map``) x level(distance from the point), ``level`` a decreasing function of metres (``rl_multi.danger_level``: 1
+    within 500 m, 0.7 -> 0.3 out to 1 km, 0 beyond) that is 0 beyond ``d_max``. The time values are taken on ``n_levels`` steps from
+    DANGER_LOW to 1 and the distances from cell centres (Euclidean distance transform), so a cell is within one time step and half a cell
+    of the exact value."""
+    from scipy.ndimage import distance_transform_edt
+    cell = side/px
+    pad = int(np.ceil(d_max/cell)) + 1
+    g = np.zeros((px + 2*pad, px + 2*pad), np.float32)
+    cs, sn = np.cos(yaw), np.sin(yaw)
+    for pts, ts in fans:
+        m = ts <= lead + 1e-9
+        dd = pts[m] - np.array([x, y])
+        fwd, right = dd[:, 0]*cs + dd[:, 1]*sn, dd[:, 0]*sn - dd[:, 1]*cs
+        row = np.floor((side/2 - fwd)/cell).astype(int) + pad
+        col = np.floor((right + side/2)/cell).astype(int) + pad
+        ok = (row >= 0) & (row < g.shape[0]) & (col >= 0) & (col < g.shape[1])
+        val = (1.0 - (1.0 - DANGER_LOW)*ts[m]/max(lead, 1e-9)).astype(np.float32)
+        np.maximum.at(g, (row[ok], col[ok]), val[ok])
+    out = np.zeros_like(g)
+    if not (g > 0).any():
+        return out[pad:pad + px, pad:pad + px]
+    for v in np.linspace(DANGER_LOW, 1.0, n_levels):
+        mask = g >= v - 1e-6
+        if not mask.any():
+            continue
+        dist = distance_transform_edt(~mask)*cell
+        out = np.maximum(out, v*np.asarray(level(dist), np.float32))
+    return out[pad:pad + px, pad:pad + px]

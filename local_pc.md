@@ -1,8 +1,102 @@
 # local PC 안내 (2026-11-12 작성, 2026-11-13 R8 추가, 2026-11-16 R13 추가, 2026-11-17 충주 시험 추가)
 
 이 문서는 local PC에서 이 프로젝트를 이어 가는 사람이나 에이전트(Claude Code 등)에게 남기는 안내입니다.
-**지금 할 일은 00장(충주 가시도·가장자리 시험을 R13으로)입니다.** 0장(R13 학습)은 끝난 일이고, 0′장(R8)과 1~9장(R7)은 이전 안내입니다.
+**지금 할 일은 000장(R18: 1~4대를 섞은 세계, 처음부터)입니다.** 00장(충주 시험), 0장(R13), 0′장(R8), 1~9장(R7)은 이전 안내입니다.
 7장(작업 방식)과 8장(문제 해결)은 그대로 지킵니다.
+
+## 000. 최신 (2026-11-24): R18 — 한 정책으로 1~4대 팀, 처음부터, 이륙 거리 커리큘럼
+
+### 000-1. 그동안 맥에서 있었던 일 (local PC가 모르는 부분, 자세히는 `docs/rl_experiments.md`, `docs/multi_agent_design.md`)
+
+| 실행 | 바꾼 것 | 결과 (지리산 v2j 3사례, RL ÷ SAROPS) |
+|---|---|---|
+| R15 | 학습 A: 충주 120 km 도로형 풀 4,000개, 이륙만, **이륙 거리 단계** 10 → 10~20 → 10~40 km, 지도 7장(1.6~102.4 km), 가시도 관측 없음 | 680만 1.82 |
+| M1~M2c | 여러 대(같은 가중치) — 여러 가지를 한꺼번에 바꿔 무엇이 효과였는지 가릴 수 없었고, 평균 행동이 한쪽으로 쏠려 원 선회로 무너짐 | 멈춤 |
+| R16 | "처음부터 다시": 다수 기체 환경(설계 m2)을 **1대**로, **좌우 대칭 정책**(`rl_search/sym_policy.py`: 평균 행동이 거울 관측에서 정확히 반대), 8비트 지도 | 600만 1.757 (같은 스텝 R15보다 평균 +0.07) |
+| R17 | 2대 세계 20개, 설계 **m3**(아래), 처음부터, 맥에서 진행 중 | — |
+
+- 설계 m3(`rl_search/rl_multi.py` DESIGNS): 기체가 6.4 km 지도에 남은 확률 1% 이상을 보면 "탐색 중"(그 전은 이동 중). 둘 다 이동 중이면 100 m 절대 금지 ·
+  250 m부터 다가갈 때만 벌점, 하나라도 탐색 중이면 **500 m 절대 금지(필터, 35초 예측) · 1 km부터 벌점**(step: 500 m 안 1, 바로 밖 0.7 → 1 km 0.3, 그 밖 0),
+  위험 구역 채널도 같은 step. 보상 = 100 × 1.5 × (팀이 찾은 확률 + 0.25 × 내가 찾은 확률) ÷ 걸음 전 남은 확률 + A′ 0.1 − 벌점.
+- 다수 기체 학습은 `train_rl --teams k1 k2 ...`(세계마다 대수, 기체마다 학습 칸 하나, `rl_search/rl_multi_vec.py`), 팀 비행 채점은
+  `scripts/multi_design/ma_eval.py`, 체크포인트를 따라가며 채점은 `ma_eval_watch.py`.
+
+### 000-2. R18: 무엇을 왜 (사용자 결정, 2026-11-24)
+
+| 항목 | R18 | 이유 / R16과 비교 |
+|---|---|---|
+| 대수 | **세계마다 대수 고정, 1·2·3·4대 세계를 8 : 6 : 5 : 4로 섞음**(SCALE × (8, 6, 5, 4), SCALE 10 = 230세계 · 510칸; 표본 약 15 / 22 / 27 / 30%) | 1~4대를 고루 쓸 예정. 한 세계가 비행마다 대수를 바꾸면 빈칸이 약 40% 생겨 낭비 |
+| 시나리오 배분 | 대수마다 풀 전체를 자기 순서로 돎(`--pool-by-team`), 같은 시나리오를 바로 다시 날지 않음(`--reuse 1`) | 같은 시나리오를 여러 대수로 날아 다양성↑, 풀 절약 |
+| 풀 | 충주 120 km 도로형 **15,000개**(씨앗 14,000,000 + i, 약 255 GB) | 업데이트 2,000번이면 세계 비행 약 11만 번 |
+| 업데이트 | 칸마다 **154걸음**(R16과 같음) × 칸 수, **미니배치 4,096**(에폭당 약 19묶음 × 5 = R16의 12 × 5와 비슷한 경사 단계), 학습률 1e-4, KL 0.02 | R16과 같은 리듬 |
+| 길이 · 주기 | **업데이트 수로**(`--in-updates`): 단계 평가 32번마다, 지리산 검증 · 체크포인트 130번마다, 단계당 최대 487번, **총 2,000번** | R16의 10만 / 40만 / 150만 / 600만 스텝을 업데이트로 |
+| 커리큘럼 | R16과 같은 규칙: 지리산 단계 사례(v2j1, v2j2)에서 정책을 **혼자** 날려 SAROPS의 0.9배(최근 3번)면 다음 단계 | 1대 세계가 섞여 있어 혼자 나는 것도 학습하는 상황 |
+| 나머지 | 설계 m3, 좌우 대칭, 이륙 5~10초 간격, 8비트, γ 0.995, 엔트로피 0.01, A′ 0.1, 처음부터 | R16 · R17과 같음 |
+| 기계 | GPU 1장(L40S, `GPU=0`), 세계 수는 규모 시험(000-3 4번)으로 정함, 프로세스당 세계 `W` 1(기본) | |
+
+시작 스크립트 `rl_search/scripts/rl_eval/r18_start.sh`(설정이 모두 여기 있음), 실행 이름 `r18_mix`.
+
+### 000-3. 순서와 확인 기준 (bash, 저장소 최상위; 단계마다 결과를 적어 두고, 다르면 멈추고 보고)
+
+1. **[ ] 코드:** `git fetch && git checkout local-pc && git pull`, 가상환경 켜기. `python -c "import torch; print(torch.cuda.device_count())"` → 2.
+   웹 서버는 끔(메모리).
+2. **[ ] 지형** (고도 · 토지피복을 내려받음):
+   ```bash
+   python -m rl_search.scripts.make_real_terrain --region chungju120 --cell 25
+   python -m rl_search.scripts.make_real_terrain --region jirisan120 --cell 25
+   python -m rl_search.scripts.terrain_fingerprint check --region chungju120 jirisan120
+   ```
+   확인: 두 줄 모두 `same as the Mac (18 arrays)`. 다르면 학습하지 말고 보고.
+3. **[ ] 학습 풀 15,000개** (하나 약 4초 · 코어 1개, 17 MB):
+   ```bash
+   python -m rl_search.scripts.rl_eval.make_pool --v2 --kind mountain:road --region chungju120 --n 15000 --workers 360
+   python -m rl_search.scripts.rl_eval.pool_fingerprint check --region chungju120
+   ```
+   확인: `15000 scenario files here` 이상 · `PASS`(맥에서 만든 4,000개 중 40개 표본과 같음).
+4. **[ ] 규모 시험** (세계 수 정하기; SCALE마다 업데이트 4번, 평가 없음, 하나에 몇 분):
+   ```bash
+   python -m rl_search.scripts.rl_eval.scale_test --scales 2 4 6 8 10 11 --updates 4
+   ```
+   표: SCALE, 세계 · 칸 수, 초당 결정, 업데이트 한 번 시간, 가장 낮았던 남은 메모리. 마지막 줄 `proposed: SCALE ...`(메모리 15% 이상 남는 것 중 가장 빠른 것).
+   초당 결정이 SCALE을 키워도 거의 안 오르면(메인 프로세스가 관측을 모으는 데 막힘) 작은 쪽을 고른다. 표를 보고에 넣는다.
+5. **[ ] 짧은 시험** (단계 넘김 · 평가 · 저장이 도는지):
+   ```bash
+   TAG=r18_smoke SCALE=2 STOP=6 EXTRA="--ring-eval-every 1 --eval-every 3 --save-every 3 --ring-max 2" bash rl_search/scripts/rl_eval/r18_start.sh
+   grep -E "multi-UAV|in-updates|launch ring|eval stage|checkpoint|stopped" rl_search/data/rl_real/r18_smoke_train.log
+   python -m rl_search.scripts.multi_design.sym_policy_check exact --model $(ls -t rl_search/data/rl_real/r18_smoke/ckpt/model_*.zip | head -1)
+   ```
+   확인: `multi-UAV: worlds [...], N UAV slots`, `--in-updates: ... decisions per update`, `launch ring: stage 0 -> 1`, `eval stage 3 at ...`(지리산 검증 줄),
+   `checkpoint`/`stopped at`, 대칭 시험 7줄 모두 PASS. 끝나면 `rm -rf rl_search/data/rl_real/r18_smoke*`.
+6. **[ ] 학습 시작과 팀 채점** (SCALE은 4번에서 고른 값):
+   ```bash
+   SCALE=<4번 값> nohup bash rl_search/scripts/rl_eval/r18_start.sh > /dev/null 2>&1 &
+   nohup python -m rl_search.scripts.multi_design.ma_eval_watch --run rl_search/data/rl_real/r18_mix --prefix r18 > rl_search/data/rl_real/r18_eval_watch.log 2>&1 &
+   ```
+   - 처음 10분: 로그 `rl_search/data/rl_real/r18_mix_train.log`에 업데이트가 쌓이는지, `multi/act_sat` 거의 0, `multi/act_mean` 0 근처, 메모리.
+   - 첫 체크포인트(업데이트 130번)에 5번의 대칭 시험을 다시 돌려 7줄 PASS.
+   - 끊기면 `RESUME=1 SCALE=<같은 값> nohup bash rl_search/scripts/rl_eval/r18_start.sh > /dev/null 2>&1 &`.
+7. **[ ] 끝나면 가져올 것:** `python -m rl_search.scripts.rl_eval.export_run --run r18_mix`(설정, 검증 기록, TensorBoard CSV, 최고 · 마지막 모델) +
+   `rl_search/data/real/amboy/rl_eval/report/ma_eval/r18_*.json`(팀 채점) + 로그 `r18_mix_train.log`, `r18_eval_watch.log` + 4번 표를 zip 하나로.
+
+### 000-4. 볼 것과 비교 기준 (결론을 미리 내리지 말고 그림 · 표로 보고)
+
+- 지리산 검증(혼자, SAROPS 대비): 학습 로그 `eval stage 3 at ...`. 비교: R16 같은 업데이트 수(R16 업데이트 130번 = 40만 스텝 1.32, 260번 1.41, 390번 1.59,
+  520번 1.72, 780번 1.82, 1,950번 1.757).
+- 단위 주의: 학습 로그의 `eval stage 3 ... RL x vs SAROPS y`와 단계 평가의 RL · SAROPS 값은 **점수 = 1.5 × POS**(A 끔)이고, 비율은 그 둘의 비입니다.
+  `ma_eval`(팀 채점)의 `team POS`는 POS 그대로입니다.
+- 팀 채점(1~4대, 채점용 팀 POS, `r18_eval_watch.log`). 맥의 기준선은 R16 600만을 대수만큼 각자(서로 모름, 입력은 "동료 없음") m3 규칙으로 날린 값입니다
+  (`ma_eval --solo`, 사례 1 / 2 / 3, 평균):
+
+  | 대수 | R16 각자 | 평균 | 참고 |
+  |---|---|---|---|
+  | 1 | 0.341 / 0.426 / 0.296 | 0.354 | R16 자신의 지리산 검증 점수 0.511 / 0.640 / 0.444의 1/1.5 |
+  | 2 | 0.530 / 0.544 / 0.323 | 0.466 | 1 km 안 23~36%, 필터 개입 11~37번 |
+  | 3 | 0.700 / 0.658 / 0.352 | 0.570 | 1 km 안 25~40%, 개입 33~163번 |
+  | 4 | 0.517 / 0.619 / 0.666 | 0.601 | 1 km 안 42~93%, 개입 119~377번, **위반 1번(사례 1, 3)**: 서로 모르는 4대가 몰리면 안전한 명령이 없을 때가 있음 |
+- 학습 로그의 대수별 줄 `team_k1..k4/POS`, `pen_share`(벌점 ÷ 탐색 보상), `close1km`, `viol`(0이어야 함), `cuts`.
+- 처음 몇 백 번 업데이트 동안 대수별 POS가 같이 오르는지, 어느 대수가 처지는지.
+- 주의(맥 R17에서 본 것): 학습한 적 없는 먼 이륙(31 km)에서 R17 40만이 입자 반대로 꺾은 뒤, 입자가 정뒤에 오자 직진만 함(대칭 정책은 거울 관측에서 행동이 반대라,
+  정뒤처럼 거의 대칭인 관측에서는 행동이 0에 가까움). 이륙 거리 3단계(10~40 km) 전후의 검증에서 이런 비행이 있는지 볼 것.
 
 ## 00. 최신 (2026-11-17): 충주 가시도·가장자리 시험을 R13으로
 

@@ -53,11 +53,33 @@ C_CPA, C_DIST, P_HARD = 1.0, 1.0, 10.0   # penalty sizes
 N_CAND = 21                       # commands tried by the filter in [-1, 1]
 EXTRA_NAMES = ("mates_airborne", "mates_pending", "next_launch", "launch_rank", "nearest_m", "cpa_m", "cpa_t")   # m1 vector
 SMALL_SIDE = 6400.0               # m2: maps up to this side get ③ + danger, larger maps plan B
+# m3 (user 2026-11-24, docs/multi_agent_design.md "2대 단계: 이동 중과 탐색 중 충돌 규칙"): a UAV is in transit until the first step at which
+# at least SEARCH_FRAC of the belief left lies inside its 6.4 km map (it sees the particles there), then it searches (for good). A pair keeps
+# m2's rules (never within 100 m, penalty from 250 m while closing, 20 s look-ahead) while both are in transit, and the search rules once
+# either searches: never within 500 m (head-on and following alike), 35 s look-ahead; a pair that is closer than 500 m when the rules change
+# may not get closer than it has been (the limit rises with the separation up to 500 m). Each UAV's penalty follows its own mode: searching,
+# C_DIST x g(distance) while the pair is not moving apart faster than sep_mps, plus C_CPA x (1 - t / look) x g(closest approach) with g =
+# ``danger_level`` (the same g draws its danger channel); in transit m2's penalty.
+SEARCH_FRAC, SEARCH_SIDE = 0.01, 6400.0
+STEP_IN, STEP_EDGE = 0.7, 0.3     # m3 "step" level just outside d_hard and at d_soft
 DESIGNS = {
     "m1": dict(d_soft=D_SOFT, d_hard=D_HARD, gaps=GAPS_S, gap_range=None, closing_only=False, reward="team", mates="tail"),
     "m2": dict(d_soft=250.0, d_hard=100.0, gaps=None, gap_range=(5.0, 10.0), closing_only=True, reward="team_rel", own_w=0.25,
                mates="zones", vec_k=True),
+    "m3": dict(d_soft=250.0, d_hard=100.0, gaps=None, gap_range=(5.0, 10.0), closing_only=True, reward="team_rel", own_w=0.25,
+               mates="zones", vec_k=True, search=dict(d_hard=500.0, d_soft=1000.0, look=35.0, sep_mps=3.0, shape="step")),
 }
+
+
+def danger_level(d, shape: str = "step", d_hard: float = 500.0, d_soft: float = 1000.0) -> np.ndarray:
+    """m3 search rules: the penalty level per step (x C_DIST) and the danger channel's value at distance d (m) from a teammate. "step": 1
+    within d_hard (never allowed), STEP_IN just outside it falling linearly to STEP_EDGE at d_soft, 0 beyond (both lines show); "linear":
+    1 - d / d_soft."""
+    d = np.asarray(d, float)
+    if shape == "linear":
+        return np.clip(1.0 - d/d_soft, 0.0, 1.0)
+    out = np.where(d <= d_hard, 1.0, STEP_IN + (STEP_EDGE - STEP_IN)*(d - d_hard)/(d_soft - d_hard))
+    return np.where(d > d_soft, 0.0, out)
 REM_FLOOR = 0.02                  # "team_rel": the belief left is taken as at least this (a flight never gets near it; 11-23 check 0.45-0.66 at 45 min)
 FOLLOW_M, FOLLOW_DEG = 1500.0, 20.0     # "following" (logged, user 11-23): a teammate within 1.5 km ahead, within 20 deg of my heading, heading within 20 deg
 
@@ -83,6 +105,36 @@ def predict_paths(plant, chi_cmd, seconds: float, every_s: float = 1.0) -> np.nd
         if (i + 1) % k == 0:
             out.append(np.stack([x, y], 1))
     return np.stack(out, 1)
+
+
+def predict_paths_multi(plants, chis, seconds: float, every_s: float = 1.0) -> list:
+    """``predict_paths`` for several plants at once (one integration loop; 11-24: a call costs about 4 ms whatever the number of commands,
+    so the filter and the allowed range of a world's UAVs share one): ``chis`` one list of course commands per plant; returns one (M_u, S, 2)
+    array per plant, element for element the same numbers as ``predict_paths`` (the plants share their flight model)."""
+    p0 = plants[0]
+    for p in plants[1:]:
+        if (p.h, p.omega, p.zeta, p.phi_max, p.tau, p.p_max) != (p0.h, p0.omega, p0.zeta, p0.phi_max, p0.tau, p0.p_max):
+            raise ValueError("predict_paths_multi: the plants must share their flight model")
+    sizes = [len(np.atleast_1d(c)) for c in chis]
+    chi = np.concatenate([np.atleast_1d(np.asarray(c, float)) for c in chis])
+    rep = lambda f: np.concatenate([np.full(m, float(f(p))) for p, m in zip(plants, sizes)])
+    x, y, yaw = rep(lambda p: p.pose[0]), rep(lambda p: p.pose[1]), rep(lambda p: p.pose[2])
+    phi, r, v = rep(lambda p: p.phi), rep(lambda p: p.r), rep(lambda p: p.v)
+    h = p0.h
+    n, k = int(round(seconds/h)), max(1, int(round(every_s/h)))
+    w2, c2 = p0.omega**2, 2*p0.zeta*p0.omega
+    out = []
+    for i in range(n):
+        err = (chi - yaw + np.pi) % (2*np.pi) - np.pi
+        r = r + (w2*err - c2*r)*h
+        phi_cmd = np.clip(np.arctan(r*v/G), -p0.phi_max, p0.phi_max)
+        phi = phi + np.clip((phi_cmd - phi)/p0.tau, -p0.p_max, p0.p_max)*h
+        yaw = yaw + G*np.tan(phi)/v*h
+        x, y = x + v*np.cos(yaw)*h, y + v*np.sin(yaw)*h
+        if (i + 1) % k == 0:
+            out.append(np.stack([x, y], 1))
+    allp = np.stack(out, 1)
+    return np.split(allp, np.cumsum(sizes)[:-1])
 
 
 def cpa(p_i, h_i, p_j, h_j, v: float) -> tuple:
@@ -116,6 +168,10 @@ class MultiRealEnv:
         self.d_soft, self.d_hard, self.closing_only = float(d["d_soft"]), float(d["d_hard"]), bool(d["closing_only"])
         self.reward_mode, self.mates_mode = d["reward"], d["mates"]
         self.own_w, self.vec_k = float(d.get("own_w", 0.0)), bool(d.get("vec_k", False))
+        self.search_rules = dict(d["search"]) if d.get("search") else None          # m3: the rules once a UAV searches
+        self.look_max = max(LOOK_S, self.search_rules["look"]) if self.search_rules else LOOK_S
+        self.danger_shape = self.search_rules["shape"] if self.search_rules else None
+        self.solo_view = False            # True: every UAV's teammate inputs read "no teammate" (a one-UAV model flown in a team, e.g. R16)
         self.gaps_s = tuple(gaps_s) if gaps_s is not None else d["gaps"]
         self.gap_range = None if gaps_s is not None else d["gap_range"]
         self.uavs = [RealRLEnv(replace(cfg, settings=dict(cfg.settings)), seed=seed + 1000*i) for i in range(self.k)]
@@ -133,18 +189,32 @@ class MultiRealEnv:
             self._cache_T, self._cache = self.T, {}
         return self._cache
 
+    def _prepare_paths(self, i: int):
+        """Fill the step cache with ("cand", u) (N_CAND candidate commands, (N_CAND, S, 2)) and ("straight", u) (course target held, (S, 2))
+        of UAV i, and of every other active UAV still missing them, in one ``predict_paths_multi`` call (11-24; the same numbers as one call
+        per UAV and kind)."""
+        c = self._step_cache()
+        todo = [int(u) for u in np.flatnonzero(self.active) if ("cand", int(u)) not in c or ("straight", int(u)) not in c]
+        if i not in todo:
+            todo.append(int(i))
+        cand = np.linspace(-1.0, 1.0, N_CAND)
+        res = predict_paths_multi([self.uavs[u].env.plant for u in todo],
+                                  [[self._chi(u, x) for x in cand] + [self.uavs[u].env.chi_tgt] for u in todo], self.look_max)
+        for u, P in zip(todo, res):
+            c[("cand", u)], c[("straight", u)] = P[:N_CAND], P[N_CAND]
+
     def _cand_paths(self, i: int) -> np.ndarray:
         """UAV i's N_CAND candidate commands held for LOOK_S s from its present state: (N_CAND, S, 2)."""
         c = self._step_cache()
         if ("cand", i) not in c:
-            c[("cand", i)] = predict_paths(self.uavs[i].env.plant, [self._chi(i, x) for x in np.linspace(-1.0, 1.0, N_CAND)], LOOK_S)
+            self._prepare_paths(i)
         return c[("cand", i)]
 
     def _straight_path(self, i: int) -> np.ndarray:
         """UAV i flying on (its course target held) for LOOK_S s: (S, 2)."""
         c = self._step_cache()
         if ("straight", i) not in c:
-            c[("straight", i)] = predict_paths(self.uavs[i].env.plant, [self.uavs[i].env.chi_tgt], LOOK_S)[0]
+            self._prepare_paths(i)
         return c[("straight", i)]
 
     def _recent(self, j: int) -> np.ndarray:
@@ -184,8 +254,8 @@ class MultiRealEnv:
             if self._seq is not None and self._seq["moved"][j]:
                 h = [p for p in self.hist[j] if p[0] > self.T + 1e-9]
                 done = np.array([p[1:] for p in h], float).reshape(-1, 2)
-                more = predict_paths(self.uavs[j].env.plant, [self.uavs[j].env.chi_tgt], LOOK_S - len(done))[0] if len(done) < LOOK_S else np.zeros((0, 2))
-                c[("mate", j)] = np.concatenate([done, more])[:int(round(LOOK_S))]
+                more = predict_paths(self.uavs[j].env.plant, [self.uavs[j].env.chi_tgt], self.look_max - len(done))[0] if len(done) < self.look_max else np.zeros((0, 2))
+                c[("mate", j)] = np.concatenate([done, more])[:int(round(self.look_max))]
             else:
                 c[("mate", j)] = self._straight_path(j)
         return c[("mate", j)]
@@ -240,9 +310,14 @@ class MultiRealEnv:
         self._seq = None
         self._turn[:] = 0.0
         self.launched = self.join_t <= self.T + 1e-9
+        self.searching = np.zeros(self.k, bool)                 # m3: in search mode (for good) since search_t
+        self.search_t = np.full(self.k, np.nan)
+        self.lim = np.full((self.k, self.k), np.nan)            # m3: the hard limit of a pair under the search rules (<= 500 m)
         self.ended = np.zeros(self.k, bool)
         self.found = 0.0
         self.log = dict(t=[], found=[], dist=[], cut=[], viol=[], share=[], seen=[])
+        if self.search_rules:
+            self._update_search()
         return [self.observation(i) for i in range(self.k)]
 
     # ------------------------------------------------------------------ trainer hooks (rl_multi_vec forwards env_method to the worlds)
@@ -276,20 +351,40 @@ class MultiRealEnv:
         act = np.flatnonzero(self.active)
         if not self.safety or len(act) < 2:
             return a, np.zeros(self.k)
-        paths = {i: predict_paths(self.uavs[i].env.plant, [self._chi(i, a[i])], LOOK_S)[0] for i in act}
+        paths = dict(zip(act, (P[0] for P in predict_paths_multi([self.uavs[i].env.plant for i in act], [[self._chi(i, a[i])] for i in act],
+                                                                   self.look_max))))
         cand = np.linspace(-1.0, 1.0, N_CAND)
         for _ in range(2):
             for i in act:
-                others = [paths[j] for j in act if j != i]
-                if min(np.hypot(*(paths[i] - p).T).min() for p in others) >= self.d_hard:
+                others = [(paths[j], *self._pair_rule(i, j)) for j in act if j != i]
+                if self._margins(paths[i][None], others)[0] >= 0.0:
                     continue
                 P = self._cand_paths(i)                                                                     # (M, S, 2)
-                sep = np.min([np.hypot(*(P - p[None]).transpose(2, 0, 1)).min(1) for p in others], axis=0)
-                ok = np.flatnonzero(sep >= self.d_hard)
-                j = ok[np.argmin(np.abs(cand[ok] - a[i]))] if len(ok) else int(np.argmax(sep))
+                marg = self._margins(P, others)
+                ok = np.flatnonzero(marg >= 0.0)
+                j = ok[np.argmin(np.abs(cand[ok] - a[i]))] if len(ok) else int(np.argmax(marg))
                 a[i], paths[i] = float(cand[j]), P[j]
         prop = np.array([float(np.clip(np.ravel(x)[0], -1.0, 1.0)) for x in actions])
         return a, np.abs(a - prop)*self.active
+
+    def _pair_rule(self, i: int, j: int) -> tuple:
+        """(hard limit m, look-ahead s) of the pair now: the design's (m1 / m2, and m3 while both are in transit), or m3's search rules once
+        either searches (the pair's limit, at most 500 m)."""
+        s = self.search_rules
+        if s is None or not (self.searching[i] or self.searching[j]):
+            return self.d_hard, LOOK_S
+        lim = self.lim[min(i, j), max(i, j)]
+        return (float(lim) if np.isfinite(lim) else s["d_hard"]), s["look"]
+
+    @staticmethod
+    def _margins(P: np.ndarray, others) -> np.ndarray:
+        """Per candidate path in P (M, S, 2): the smallest (separation - hard limit) to the ``others`` [(path (S', 2), limit, look s)] over
+        each pair's look-ahead (1 s samples); >= 0 keeps every limit."""
+        out = []
+        for path, dh, look in others:
+            n = int(round(look))
+            out.append(np.hypot(*(P[:, :n] - path[None, :n]).transpose(2, 0, 1)).min(1) - dh)
+        return np.min(out, axis=0)
 
     def safe_range(self, i: int) -> tuple:
         """Commands of UAV i that keep d_hard from every other active UAV flying straight on (its course target held), as (low, high);
@@ -299,9 +394,9 @@ class MultiRealEnv:
             return -1.0, 1.0
         cand = np.linspace(-1.0, 1.0, N_CAND)
         P = self._cand_paths(i)
-        sep = np.min([np.hypot(*(P - self._mate_path(j)[None]).transpose(2, 0, 1)).min(1) for j in act], axis=0)
-        ok = np.flatnonzero(sep >= self.d_hard)
-        return (float(cand[ok[0]]), float(cand[ok[-1]])) if len(ok) else (float(cand[np.argmax(sep)]),)*2
+        marg = self._margins(P, [(self._mate_path(j), *self._pair_rule(i, j)) for j in act])
+        ok = np.flatnonzero(marg >= 0.0)
+        return (float(cand[ok[0]]), float(cand[ok[-1]])) if len(ok) else (float(cand[np.argmax(marg)]),)*2
 
     # ------------------------------------------------------------------ step
     def step(self, actions) -> tuple:
@@ -355,6 +450,7 @@ class MultiRealEnv:
         t0 = self._clock("merge", t0)
         # safety: distances over the step's 1 s samples, the penalty from d_soft, violations within d_hard
         pen, viol, dmin = np.zeros(self.k), np.zeros(self.k), np.inf
+        pairs = []
         act_ids = np.flatnonzero(act0)
         for x, i in enumerate(act_ids):
             for j in act_ids[x + 1:]:
@@ -364,6 +460,12 @@ class MultiRealEnv:
                 dmin = min(dmin, float(d.min()))
                 ei, ej = self.uavs[i].env.plant, self.uavs[j].env.plant
                 t_c, d_c = cpa(ei.pose[:2], ei.pose[2], ej.pose[:2], ej.pose[2], ei.v)
+                if self.search_rules is not None:               # m3: each UAV's penalty by its own mode, the pair's limit by the pair's rule
+                    pen_ij, v, row = self._pair_penalty_m3(i, j, d, t_c, d_c)
+                    pen[[i, j]] += pen_ij
+                    viol[[i, j]] += v
+                    pairs.append(row)
+                    continue
                 closing = True
                 if self.closing_only:                           # m2: the distance term only while the pair closes in
                     rel = np.asarray(ej.pose[:2], float) - np.asarray(ei.pose[:2], float)
@@ -394,6 +496,8 @@ class MultiRealEnv:
         follow = self.following() & act0
         newly = (~self.launched) & (self.join_t <= self.T + 1e-9)
         self.launched |= newly
+        if self.search_rules is not None:
+            self._update_search()
         self.log["t"].append(self.T)
         self.log["found"].append(self.found)
         self.log["dist"].append(dmin)
@@ -403,7 +507,65 @@ class MultiRealEnv:
         self.log["seen"].append(seen)
         info = dict(active=act0, team=team, found=self.found, share=share, seen=seen, cut=cut, penalty=pen, violation=viol, dmin=dmin,
                     applied=a, uav=infos, look=look, ended_now=self.ended & ~ended0, rem=rem, parts=parts, follow=follow)
+        if self.search_rules is not None:
+            info.update(searching=self.searching.copy(), pairs=pairs)
         return rewards, info
+
+    # ------------------------------------------------------------------ m3: transit / search rules (user 2026-11-24, see DESIGNS)
+    def _pair_penalty_m3(self, i: int, j: int, d: np.ndarray, t_c: float, d_c: float) -> tuple:
+        """m3: (penalty of i and j, violation 0/1, record) of a pair over the step: ``d`` the distances at the step's 1 s samples, (t_c, d_c)
+        the closest approach if both fly straight on from the end of the step. The limit is the pair's rule at the step's start."""
+        s = self.search_rules
+        ei, ej = self.uavs[i].env.plant, self.uavs[j].env.plant
+        rel = np.asarray(ej.pose[:2], float) - np.asarray(ei.pose[:2], float)
+        vrel = ej.v*np.array([np.cos(ej.pose[2]), np.sin(ej.pose[2])]) - ei.v*np.array([np.cos(ei.pose[2]), np.sin(ei.pose[2])])
+        rdot = float(rel @ vrel)/max(float(np.hypot(*rel)), 1e-9)        # m/s, > 0 moving apart
+        dh, _ = self._pair_rule(i, j)
+        tol = 1.0 if dh < s["d_hard"] else 0.0               # a limit below 500 m (rules changed with the pair closer): 1 m slack
+        v = float((d < dh - tol).any())
+        out = np.zeros(2)
+        for q, u in enumerate((i, j)):
+            if self.searching[u]:
+                g = lambda x: float(danger_level(x, self.danger_shape, s["d_hard"], s["d_soft"]))
+                out[q] = (C_DIST*g(d[-1]) if rdot <= s["sep_mps"] else 0.0) + \
+                    (C_CPA*(1 - t_c/s["look"])*g(d_c) if t_c <= s["look"] else 0.0)
+            else:                                            # transit: m2's penalty
+                out[q] = (C_CPA*(1 - t_c/LOOK_S)*(1 - d_c/self.d_soft) if (t_c <= LOOK_S and d_c < self.d_soft) else 0.0) \
+                    + (C_DIST*(1 - d[-1]/self.d_soft) if (d[-1] < self.d_soft and rdot < 0.0) else 0.0)
+        return out, v, (int(i), int(j), float(d[-1]), float(d.min()), rdot, float(t_c), float(d_c), float(dh), bool(self.searching[i]),
+                        bool(self.searching[j]))
+
+    def _update_search(self):
+        """m3: a UAV in transit starts searching (for good) once at least SEARCH_FRAC of the belief left lies inside its SEARCH_SIDE map
+        (heading up, the UAV in the centre); a pair that comes under the search rules gets the limit min(500 m, its distance now), and a
+        limit below 500 m rises with the pair's separation."""
+        s = self.search_rules
+        was = self.searching.copy()
+        todo = [int(i) for i in np.flatnonzero(self.active) if not self.searching[i]]
+        tot = float(self.W.sum())
+        if todo and tot > 0:
+            b = self.uavs[0].env.belief
+            live = (self.W > 0) & b.active(self.T)
+            P, w = b.positions(self.T)[live], self.W[live]
+            half = SEARCH_SIDE/2
+            for i in todo:
+                x, y, yaw = self.uavs[i].env.plant.pose
+                dx, dy = P[:, 0] - x, P[:, 1] - y
+                c, sn = np.cos(yaw), np.sin(yaw)
+                inside = (np.abs(dx*c + dy*sn) <= half) & (np.abs(dx*sn - dy*c) <= half)
+                if float(w[inside].sum())/tot >= SEARCH_FRAC:
+                    self.searching[i] = True
+                    self.search_t[i] = self.T
+        on = np.flatnonzero(self.launched & ~self.ended)
+        for x, i in enumerate(on):
+            for j in on[x + 1:]:
+                if not (self.searching[i] or self.searching[j]):
+                    continue
+                dnow = float(np.hypot(*(self.uavs[i].env.plant.pose[:2] - self.uavs[j].env.plant.pose[:2])))
+                if not (was[i] or was[j]) or not np.isfinite(self.lim[i, j]):
+                    self.lim[i, j] = min(s["d_hard"], dnow)
+                elif self.lim[i, j] < s["d_hard"]:
+                    self.lim[i, j] = min(s["d_hard"], max(self.lim[i, j], dnow))
 
     # ------------------------------------------------------------------ sequential decisions (user 2026-11-23, see the module doc)
     def begin_step(self) -> list:
@@ -433,15 +595,15 @@ class MultiRealEnv:
         mates = [int(j) for j in np.flatnonzero(self.active) if j != i]
         if not self.safety or not mates:
             return prop
-        others = [self._mate_path(j) for j in mates]
-        own = predict_paths(self.uavs[i].env.plant, [self._chi(i, prop)], LOOK_S)[0]
-        if min(np.hypot(*(own - p).T).min() for p in others) >= self.d_hard:
+        others = [(self._mate_path(j), *self._pair_rule(i, j)) for j in mates]
+        own = predict_paths(self.uavs[i].env.plant, [self._chi(i, prop)], self.look_max)[0]
+        if self._margins(own[None], others)[0] >= 0.0:
             return prop
         P = self._cand_paths(i)
-        sep = np.min([np.hypot(*(P - p[None]).transpose(2, 0, 1)).min(1) for p in others], axis=0)
-        ok = np.flatnonzero(sep >= self.d_hard)
+        marg = self._margins(P, others)
+        ok = np.flatnonzero(marg >= 0.0)
         cand = np.linspace(-1.0, 1.0, N_CAND)
-        return float(cand[ok[np.argmin(np.abs(cand[ok] - prop))]] if len(ok) else cand[int(np.argmax(sep))])
+        return float(cand[ok[np.argmin(np.abs(cand[ok] - prop))]] if len(ok) else cand[int(np.argmax(marg))])
 
     def turn_act(self, m: int, action) -> None:
         """The m-th UAV of the order flies its 5 s with ``action`` (after the filter); its detections lower the shared belief at once."""
@@ -587,10 +749,11 @@ class MultiRealEnv:
     def mate_channels(self, i: int) -> dict:
         """m2: the teammate channels of UAV i per map name: small maps [③ claim, danger], large maps [plan B] (``rl_search.mate_maps``);
         teammates = the other active UAVs (one not yet joined is not shown)."""
-        from rl_search.mate_maps import claim_map, danger_map, time_adv_map
+        from rl_search.mate_maps import claim_map, danger_map, danger_map_graded, time_adv_map
         x, y, yaw = self.uavs[i].env.plant.pose
         px = self.uavs[i].cfg.map_px
-        mates = [j for j in np.flatnonzero(self.active) if j != i]
+        mates = [] if self.solo_view else [j for j in np.flatnonzero(self.active) if j != i]
+        graded = self.search_rules is not None and bool(self.searching[i])     # m3: searching, the danger channel draws danger_level
         mates_xy = [tuple(self.uavs[j].env.plant.pose[:2]) for j in mates]
         speed = float(self.uavs[i].env.v)
         out = {}
@@ -600,7 +763,13 @@ class MultiRealEnv:
                 if fans is None:
                     allf = self._fans()
                     fans = [allf[j] for j in mates if j in allf]
-                out[name] = [claim_map(x, y, yaw, mates_xy, side, px), danger_map(x, y, yaw, fans, side, float(lead), self.d_soft, px)]
+                if graded:
+                    s = self.search_rules
+                    dz = danger_map_graded(x, y, yaw, fans, side, float(lead), lambda dd: danger_level(dd, self.danger_shape, s["d_hard"], s["d_soft"]),
+                                           s["d_soft"], px)
+                else:
+                    dz = danger_map(x, y, yaw, fans, side, float(lead), self.d_soft, px)
+                out[name] = [claim_map(x, y, yaw, mates_xy, side, px), dz]
             else:
                 out[name] = [time_adv_map(x, y, yaw, mates_xy, side, float(lead), speed, px)]
         return out
@@ -628,7 +797,7 @@ class MultiRealEnv:
             for name, _, _ in self.maps:
                 obs[name] = np.concatenate([obs[name], np.stack(ch[name]).astype(np.float32)], 0)
             if self.vec_k:                                      # 1 / team size, pending UAVs included (user 11-23)
-                obs["vec"] = np.concatenate([obs["vec"], np.array([1.0/self.k], np.float32)])
+                obs["vec"] = np.concatenate([obs["vec"], np.array([1.0 if self.solo_view else 1.0/self.k], np.float32)])
             if self.sequential:                                 # its turn in the step (0 first .. 1 last; user 11-23 "순차 결정")
                 obs["vec"] = np.concatenate([obs["vec"], self._turn[i:i + 1]])
             self._clock("obs_mates", t0)
