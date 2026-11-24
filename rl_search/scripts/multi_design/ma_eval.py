@@ -60,24 +60,29 @@ def _surv8(W, W0) -> np.ndarray:
 
 
 def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=None, web: bool = False, design: str = "m1",
-        sequential: bool = False, solo: bool = False) -> dict:
+        sequential: bool = False, solo: bool = False, built: tuple | None = None, gaps=None, seed: int | None = None, progress=None) -> dict:
     """One team flight on case ``case_k``: with ``model`` (planner particles, filter on) or replaying ``actions`` (hold-out particles, filter
     off, the commands as applied). ``web``: also keep what a web run needs (camera samples, team survival per step) under ``out["web"]``.
     ``sequential``: the model decides one UAV after another within each step (rl_multi sequential=True, user 11-23); a replay flies the
-    applied commands together (the filter is off, so each path is the same; the belief after a step does not depend on the order)."""
+    applied commands together (the filter is off, so each path is the same; the belief after a step does not depend on the order).
+    ``built`` (case, scenario, simulation result, hold-out scenario[, VehicleConfig]): fly that scenario instead of v2j case ``case_k``
+    (the web viewer's team flights, scripts/real_map/web_rl.py, user 11-24), on the case's own map; ``gaps``: the launch gaps (s) between
+    consecutive UAVs (default: the case's fixed ones, _gaps); ``seed``: the env seed (default ``case_k``); ``progress(minutes)`` once a
+    simulated minute."""
     from rl_search.rl_multi import MultiRealEnv
     from rl_search.rl_real import RealRLConfig
     from rl_search.rl_real_eval import _case
-    case, scen, vres, hold = _case("v2j", 3, case_k)
+    case, scen, vres, hold = built[:4] if built is not None else _case("v2j", 3, case_k)
     replay = actions is not None
     seq = bool(sequential) and not replay
-    env = MultiRealEnv(k, RealRLConfig(region="jirisan120", settings=s), seed=case_k, safety=not replay, design=design, sequential=seq)
+    env = MultiRealEnv(k, RealRLConfig(region=case.region, settings=s), seed=case_k if seed is None else int(seed), safety=not replay,
+                       design=design, sequential=seq)
     env.return_obs = not replay
     env.solo_view = bool(solo)                          # (11-24) a one-UAV model of the multi env (R16) in a team: no-teammate inputs
     if web:
         for u in env.uavs:
             u.env.sample_log = []                         # every real 1 s sample with the camera axes (footprints, A)
-    env.reset(options=case.options(hold if replay else scen), gaps=_gaps(case_k, k, design))
+    env.reset(options=case.options(hold if replay else scen), gaps=_gaps(case_k, k, design) if gaps is None else [float(g) for g in gaps][:k - 1])
     W_init = env.W.copy()
     rec_t, rec_w = [env.T], [np.full(env.N, 255, np.uint8)]
     applied, n, act_hist = [], 0, []
@@ -103,6 +108,8 @@ def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=
         if web:
             rec_t.append(env.T)
             rec_w.append(_surv8(env.W, W_init))
+        if progress is not None and n % 12 == 0:
+            progress(n/12.0)
     lg = env.log
     d = np.array(lg["dist"], float)
     fin = d[np.isfinite(d)]
@@ -125,7 +132,8 @@ def fly(k: int, case_k: int, s: dict, model=None, single: bool = False, actions=
                cuts=int((np.array(lg["cut"]) > 0).sum()), viol=float(np.array(lg["viol"]).sum()/2), share=share.tolist(),
                hist=[np.array(h)[::5].tolist() for h in env.hist] if not replay else None, launch_t=env.launch_t.tolist())
     if web:
-        out["web"] = dict(env=env, case=case, scen=scen, vres=vres, rec_t=rec_t, rec_w=rec_w, t0=float(rec_t[0]))
+        out["web"] = dict(env=env, case=case, scen=scen, vres=vres, rec_t=rec_t, rec_w=rec_w, t0=float(rec_t[0]),
+                          vc=built[4] if built is not None and len(built) > 4 else None)
     return out
 
 
@@ -133,9 +141,26 @@ def save_web(label: str, k: int, case_k: int, s: dict, r: dict, holdout_pos: flo
     """Save a team flight as a web run (the viewer replays every UAV's path and camera footprints over the particles, team survival as
     the particle weights), listed with the case's validation runs ("v2j 3단계", case k): ``eval-v2j-s3-k<case>-ma<k>-<label>``."""
     from dataclasses import asdict
-    from rl_search.area_score import score_frames
-    from rl_search.rl_eval_set import case_dict, case_vc
+    from rl_search.rl_eval_set import case_dict
     from rl_search.scripts.real_map import vehicle_web as vw
+    case = r["web"]["case"]
+    opt, res, vc, holdout = web_payload(s, r, holdout_pos, sec)
+    env_launch = r["launch_t"]
+    name = f"RL {label}{' (각자 비행)' if single else ''} · {k}대"
+    view = dict(region=case.region, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
+    rid = f"eval-v2j-s3-k{case_k}-ma{k}-{label.replace('.', 'p')}"
+    meta = vw.run_meta(opt, rid, f"{case.label} · {name}", time.strftime("%m-%d %H:%M"), view, asdict(vc), group="eval", split="v2j", stage=3,
+                       case=case_k, method=name, holdout=holdout, case_info=case_dict(case), team=k, launch_t=env_launch,
+                       close1km=r["close1km"], cuts=r["cuts"], viol=r["viol"])
+    vw.save_run(rid, dict(opt=opt, res=res), meta)
+    return rid
+
+
+def web_payload(s: dict, r: dict, holdout_pos: float, sec: float) -> tuple:
+    """(opt, res, VehicleConfig, hold-out score) of a team flight ``r`` (``fly(..., web=True)``, its ``web`` entry is used up): the web
+    viewer's replay payload (every UAV's path and camera footprints, team survival as the particle weights) and the particles."""
+    from rl_search.area_score import score_frames
+    from rl_search.rl_eval_set import case_vc
     from rl_search.scripts.real_map.web_optimize import b64, footprints, particles_payload
     from rl_search.scripts.rl_eval.sarops_ref import ref_key_of
     wd = r.pop("web")
@@ -172,17 +197,10 @@ def save_web(label: str, k: int, case_k: int, s: dict, r: dict, holdout_pos: flo
     opt = dict(T=T, N=int(n), dt_s=float(dt), weight=b64(W), uavs=uavs, start=[float(v) for v in start[:2]], lkp=[float(v) for v in scen.lkp],
                pos_t=np.round(pos_t, 1).tolist(), pos=np.round(pos, 4).tolist(), final=final, escaped=float(u0.env.belief.escaped), no_clear=0,
                area=area, sec=round(sec, 1), settings=s)
-    vc = case_vc(case)
-    name = f"RL {label}{' (각자 비행)' if single else ''} · {k}대"
+    vc = wd["vc"] if wd.get("vc") is not None else case_vc(case)
     holdout = dict(pos=float(holdout_pos), A=None, total=float(w*holdout_pos), A_window=None, area_def=s.get("area_def", "window"),
                    ref_key=ref_key_of(s))
-    view = dict(region=case.region, seed=case.seed, lkp=case.lkp, heading=case.heading, start=case.start[:2])
-    rid = f"eval-v2j-s3-k{case_k}-ma{k}-{label.replace('.', 'p')}"
-    meta = vw.run_meta(opt, rid, f"{case.label} · {name}", time.strftime("%m-%d %H:%M"), view, asdict(vc), group="eval", split="v2j", stage=3,
-                       case=case_k, method=name, holdout=holdout, case_info=case_dict(case), team=k, launch_t=env.launch_t.tolist(),
-                       close1km=r["close1km"], cuts=r["cuts"], viol=r["viol"])
-    vw.save_run(rid, dict(opt=opt, res=particles_payload(vres, vc, case.heading, start, 0.0)), meta)
-    return rid
+    return opt, particles_payload(vres, vc, case.heading, start, 0.0), vc, holdout
 
 
 def run(model_path: str, label: str, single: bool, web: bool = True, design: str | None = None, teams=TEAMS, holdout: bool = True,

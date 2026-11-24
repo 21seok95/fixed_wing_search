@@ -373,13 +373,22 @@ class App:
             launch = float(d.get("launch_min", 0) or 0)
             if not 0 <= launch <= 60:
                 raise ValueError("이륙 시각은 보고 후 0~60분입니다")
+            # team flights (user 2026-11-24): 1-4 UAVs from the start point, launch gaps from the page (s) or 5-10 s drawn from the seed
+            n_uav = int(d.get("n_uav", 1) or 1)
+            if not 1 <= n_uav <= 4:
+                raise ValueError("기체 수는 1~4대입니다")
+            gaps = [float(g) for g in (d.get("gaps") or [])]
+            if any(not 0 < g <= 120 for g in gaps):
+                raise ValueError("이륙 간격은 0초보다 크고 120초 이하입니다")
             name += f" · RL {web_rl.model_label(Path(d['model']))} · 이륙 {launch:g}분"
+            if n_uav > 1:
+                name += f" · {n_uav}대" + (f" · 간격 {'/'.join(f'{g:g}' for g in gaps)}초" if gaps else "")
         items = []
         for i in range(n):
             v = {**view, "seed": view["seed"] + i, "start": start}
             params = dict(config=asdict(cfg), view=v, opt=d.get("opt", {}))
             if rl:
-                params |= dict(kind="rl", model=d["model"], launch_min=launch)
+                params |= dict(kind="rl", model=d["model"], launch_min=launch, n_uav=n_uav, gaps=gaps)
             items.append(dict(label=f"{name} · seed {v['seed']}", params=params))
         return self.jobs.submit(items)
 

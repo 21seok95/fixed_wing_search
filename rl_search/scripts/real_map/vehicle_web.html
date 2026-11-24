@@ -246,6 +246,11 @@
           <select id="rlmodel" aria-label="RL 모델" style="flex:1; min-width:0"></select>
           <label class="row" style="gap:4px" title="보고 후 몇 분 뒤에 이륙할지 (학습 범위 0~40분). SAROPS 실행은 항상 0분에 이륙합니다.">이륙 <input type="number" id="rllaunch" min="0" max="60" step="1" value="0" style="width:52px">분</label>
         </div>
+        <div class="row" style="gap:6px; margin-top:6px; flex-wrap:wrap">
+          <label class="row" style="gap:4px" title="같은 출발점에서 차례로 이륙하는 기체 수. 모델을 고르면 그 모델이 학습한 대수를 추천합니다.">기체 <select id="rlnuav"><option>1</option><option>2</option><option>3</option><option>4</option></select>대</label>
+          <label class="row" style="gap:4px" title="앞 기체와의 이륙 간격(초). 하나만 쓰면 모두 같은 간격, 여러 개는 쉼표로(예: 6,9). 비우면 학습 때처럼 5~10초 무작위(seed로 고정).">간격 <input type="text" id="rlgaps" placeholder="5~10 무작위" style="width:92px">초</label>
+          <span class="hint" id="rlteamhint" style="margin:0"></span>
+        </div>
         <div class="row" style="margin-top:6px"><button class="primary" id="rlsubmit">RL 비행 실행</button></div>
       </div>
     </div>
@@ -411,6 +416,7 @@ const V_UAV = 33, EXIT_STATE = 4;
 const TASK_COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#7A5195", "#B8860B", "#2F9FD8", "#A23B2A"];
 const taskColor = i => TASK_COLORS[i % TASK_COLORS.length];
 let META = null, RES = null, VALUES = {}, LKP = [0, 0], START = null, busy = false, pending = false, RL_REGION = "amboy";
+let RL_MODELS = [];                                     // /api/rl_models: path, run, kind (single / solo / team), teams trained with, recommend
 let frame = 0, simT = 0, playing = false, lastTs = 0, acc = 0, tab = "search", mode = "view", subtab = "";   // simT: shown time (s); frame: saved particle frame at or before it
 let OPT = null, viewing = null, JOBS = [], autoOpen = null, pollTimer = null, MAX_JOBS = 0;
 let REGION = "chungju", rectTouched = false;
@@ -1269,18 +1275,45 @@ async function loadRlModels() {
   try {
     const d = await (await fetch("/api/rl_models")).json();
     RL_REGION = d.region;
+    RL_MODELS = d.models || [];
     const runs = [...new Set(d.models.map(m => m.run))];        // one group per training run, newest run first
     sel.innerHTML = d.models.length ? runs.map(r => `<optgroup label="${esc(r)}">` + d.models.filter(m => m.run === r)
                                         .map(m => `<option value="${esc(m.path)}">${esc(m.label)}</option>`).join("") + `</optgroup>`).join("")
                                     : `<option value="">학습된 RL 모델이 없습니다</option>`;
   } catch (e) { sel.innerHTML = `<option value="">RL 모델 목록을 읽지 못했습니다</option>`; }
   $("rlsubmit").disabled = !sel.value;
+  rlModelChanged();
+}
+// team flights (user 2026-11-24): the selected model's trained team size is recommended; another size is allowed and marked
+function rlModelChanged() {
+  const m = RL_MODELS.find(x => x.path === $("rlmodel").value);
+  $("rlnuav").value = String(m && m.recommend ? m.recommend : 1);
+  updateTeamHint();
+}
+function updateTeamHint() {
+  const m = RL_MODELS.find(x => x.path === $("rlmodel").value), n = Number($("rlnuav").value);
+  $("rlgaps").disabled = n < 2;
+  if (!m) { $("rlteamhint").textContent = ""; return; }
+  const trained = m.teams || [1];
+  let t = m.kind === "team" ? `학습: ${trained.join("·")}대 팀 (추천 ${m.recommend}대)` : "1대 모델: 여러 대면 기체마다 따로 비행";
+  if (m.kind === "team" && !trained.includes(n)) t += " · 학습 대수와 다름";
+  $("rlteamhint").textContent = t;
+  $("rlteamhint").style.color = m.kind === "team" && !trained.includes(n) ? "#b3261e" : "";
+}
+function rlGaps() {                                     // "" -> [] (5-10 s drawn from the seed); "7" or "6, 9" -> seconds
+  const s = $("rlgaps").value.trim();
+  if (!s || Number($("rlnuav").value) < 2) return [];
+  const g = s.split(/[,\s/]+/).filter(x => x).map(Number);
+  if (g.some(x => !(x > 0 && x <= 120))) throw new Error("이륙 간격은 0초보다 크고 120초 이하인 숫자로 적어 주세요");
+  return g;
 }
 async function submitRL() {
   if (!RES || !$("rlmodel").value) return;
   const n = Number($("nseeds").value);
+  let gaps;
+  try { gaps = rlGaps(); } catch (e) { status(e.message, true); return; }
   const body = { ...payload(), start: START, kind: "rl", model: $("rlmodel").value, launch_min: Number($("rllaunch").value) || 0,
-                 n_seeds: n, label: $("runname").value };
+                 n_seeds: n, label: $("runname").value, n_uav: Number($("rlnuav").value) || 1, gaps };
   try {
     const r = await fetch("/api/jobs", { method: "POST", body: JSON.stringify(body) });
     const d = await r.json();
@@ -1583,6 +1616,11 @@ function fillSummary(meta) {
     $("s_total_l").textContent = (aw === 0 ? `총점 ${w} × POS (A 끔)` : "총점 A + POS") + " · 계획에 쓰지 않은 별도 particle로 채점"
       + (j.launch_min != null ? ` · 보고 후 ${j.launch_min}분 이륙` : "");
     $("s_pos").textContent = f3(j.holdout.pos); $("s_A").textContent = f3(j.holdout.A);
+    if (j.team > 1)                                     // team flights: the team and its spacing
+      $("s_total_l").textContent += ` · ${j.team}대 팀` + (j.gaps && j.gaps.length ? ` (이륙 간격 ${j.gaps.map(g => +Number(g).toFixed(1)).join("/")}초)` : "")
+        + (j.close1km != null ? ` · 1 km 안 ${Math.round(j.close1km*100)}%` : "") + (j.dmin != null ? ` · 최소 거리 ${Math.round(j.dmin)} m` : "")
+        + (j.shares ? ` · 기체별 몫 ${j.shares.map(x => Math.round(x*100)).join("/")}%` : "") + (j.viol ? ` · 위반 ${j.viol}` : "")
+        + (j.team_off ? " · 학습 대수와 다름" : "");
   } else {
     $("s_total").textContent = (A ? A.total : OPT.final).toFixed(3);
     $("s_total_l").textContent = A ? `총점 A + ${w} × POS` : "POS";
@@ -1878,6 +1916,7 @@ function makeMuted() {
   $("run").onclick = run; $("save").onclick = save;
   $("submit").onclick = submit; $("replayclose").onclick = backToLive; $("share").onclick = share;
   $("rlsubmit").onclick = submitRL; loadRlModels();
+  $("rlmodel").onchange = rlModelChanged; $("rlnuav").onchange = updateTeamHint;
   ["runfilter", "runmethod", "runcond", "runsort"].forEach(id => $(id).onchange = renderJobs);
   $("runsearch").oninput = renderJobs;
   $("sameall").onclick = () => { caseRuns(overCase).forEach(j => { if (j.id !== viewing) OVER_ON.add(j.id); }); loadOverlays(); };
