@@ -19,6 +19,8 @@ cd "$(dirname "$0")/../../.."
 OS=$(uname)
 if [ "$OS" = "Darwin" ]; then TAG=${TAG:-r16_chungju}; DEV=mps; KEEP="caffeinate -i"; else TAG=${TAG:-r16u_chungju}; DEV=cuda
   KEEP="systemd-inhibit --what=idle:sleep --who=$TAG --why=training"; fi
+# (Ubuntu PC 2026-11-24: polkit refuses systemd-inhibit there, "Access denied", and auto-suspend is off on AC: then run without it)
+if [ "$OS" != "Darwin" ] && ! $KEEP true 2>/dev/null; then KEEP=""; fi
 SYMF="--sym-policy"
 if [ "$SYM" = "0" ]; then SYMF=""; TAG=${TAG}_nosym; fi
 LOG=rl_search/data/rl_real/${TAG}_train.log
