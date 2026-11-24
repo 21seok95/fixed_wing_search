@@ -109538,3 +109538,2901 @@ Early stopping at step 4 due to reaching max kl: 0.04
 |    std                  | 0.101      |
 |    value_loss           | 11.9       |
 ----------------------------------------
+Early stopping at step 4 due to reaching max kl: 0.08
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.492      |
+|    launch_km            | 24.9       |
+|    look                 | 1.12       |
+|    mask_cut             | 0          |
+|    total                | 0.492      |
+| episode_start/          |            |
+|    launch               | 0.492      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.492      |
+| multi/                  |            |
+|    act_absmean          | 0.153      |
+|    act_mean             | 0.0306     |
+|    act_plus             | 0.507      |
+|    act_sat              | 0.00584    |
+|    explained_var_k1     | 0.983      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 713        |
+|    ep_rew_mean          | 171        |
+| team_k1/                |            |
+|    POS                  | 0.492      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0595     |
+|    own_min              | 0.95       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1899       |
+|    time_elapsed         | 27633      |
+|    total_timesteps      | 5848920    |
+| train/                  |            |
+|    approx_kl            | 0.02312784 |
+|    clip_fraction        | 0.143      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.871      |
+|    explained_variance   | 0.991      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 0.731      |
+|    n_updates            | 5473       |
+|    policy_gradient_loss | -0.00502   |
+|    std                  | 0.101      |
+|    value_loss           | 8.85       |
+----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.05
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.498      |
+|    launch_km            | 24.8       |
+|    look                 | 1.13       |
+|    mask_cut             | 0          |
+|    total                | 0.498      |
+| episode_start/          |            |
+|    launch               | 0.498      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.498      |
+| multi/                  |            |
+|    act_absmean          | 0.147      |
+|    act_mean             | -0.0205    |
+|    act_plus             | 0.406      |
+|    act_sat              | 0.000974   |
+|    explained_var_k1     | 0.973      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 713        |
+|    ep_rew_mean          | 175        |
+| team_k1/                |            |
+|    POS                  | 0.498      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0599     |
+|    own_min              | 0.95       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1900       |
+|    time_elapsed         | 27647      |
+|    total_timesteps      | 5852000    |
+| train/                  |            |
+|    approx_kl            | 0.02430835 |
+|    clip_fraction        | 0.135      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.872      |
+|    explained_variance   | 0.983      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 0.694      |
+|    n_updates            | 5476       |
+|    policy_gradient_loss | -0.00305   |
+|    std                  | 0.101      |
+|    value_loss           | 5.3        |
+----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.499       |
+|    launch_km            | 24.9        |
+|    look                 | 1.11        |
+|    mask_cut             | 0           |
+|    total                | 0.499       |
+| episode_start/          |             |
+|    launch               | 0.499       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.499       |
+| multi/                  |             |
+|    act_absmean          | 0.104       |
+|    act_mean             | -0.0266     |
+|    act_plus             | 0.44        |
+|    act_sat              | 0.000974    |
+|    explained_var_k1     | 0.993       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 170         |
+| team_k1/                |             |
+|    POS                  | 0.499       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0621      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1901        |
+|    time_elapsed         | 27659       |
+|    total_timesteps      | 5855080     |
+| train/                  |             |
+|    approx_kl            | 0.014692114 |
+|    clip_fraction        | 0.19        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.873       |
+|    explained_variance   | 0.973       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.775       |
+|    n_updates            | 5477        |
+|    policy_gradient_loss | 0.00616     |
+|    std                  | 0.101       |
+|    value_loss           | 2.76        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.499       |
+|    launch_km            | 24.7        |
+|    look                 | 1.11        |
+|    mask_cut             | 0           |
+|    total                | 0.499       |
+| episode_start/          |             |
+|    launch               | 0.499       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.499       |
+| multi/                  |             |
+|    act_absmean          | 0.148       |
+|    act_mean             | 0.0425      |
+|    act_plus             | 0.507       |
+|    act_sat              | 0.0162      |
+|    explained_var_k1     | 0.986       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 170         |
+| team_k1/                |             |
+|    POS                  | 0.499       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0622      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1902        |
+|    time_elapsed         | 27673       |
+|    total_timesteps      | 5858160     |
+| train/                  |             |
+|    approx_kl            | 0.030556925 |
+|    clip_fraction        | 0.121       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.874       |
+|    explained_variance   | 0.993       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.36        |
+|    n_updates            | 5480        |
+|    policy_gradient_loss | -0.00235    |
+|    std                  | 0.101       |
+|    value_loss           | 8.11        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.499       |
+|    launch_km            | 24.7        |
+|    look                 | 1.11        |
+|    mask_cut             | 0           |
+|    total                | 0.499       |
+| episode_start/          |             |
+|    launch               | 0.499       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.499       |
+| multi/                  |             |
+|    act_absmean          | 0.152       |
+|    act_mean             | 0.0395      |
+|    act_plus             | 0.484       |
+|    act_sat              | 0.011       |
+|    explained_var_k1     | 0.991       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 170         |
+| team_k1/                |             |
+|    POS                  | 0.499       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0622      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1903        |
+|    time_elapsed         | 27686       |
+|    total_timesteps      | 5861240     |
+| train/                  |             |
+|    approx_kl            | 0.014859937 |
+|    clip_fraction        | 0.172       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.873       |
+|    explained_variance   | 0.986       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 4.92        |
+|    n_updates            | 5481        |
+|    policy_gradient_loss | 0.0035      |
+|    std                  | 0.101       |
+|    value_loss           | 37.4        |
+-----------------------------------------
+Early stopping at step 3 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.499       |
+|    launch_km            | 24.7        |
+|    look                 | 1.11        |
+|    mask_cut             | 0           |
+|    total                | 0.499       |
+| episode_start/          |             |
+|    launch               | 0.499       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.499       |
+| multi/                  |             |
+|    act_absmean          | 0.144       |
+|    act_mean             | 0.00511     |
+|    act_plus             | 0.426       |
+|    act_sat              | 0.00487     |
+|    explained_var_k1     | 0.987       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 170         |
+| team_k1/                |             |
+|    POS                  | 0.499       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0622      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1904        |
+|    time_elapsed         | 27701       |
+|    total_timesteps      | 5864320     |
+| train/                  |             |
+|    approx_kl            | 0.016131826 |
+|    clip_fraction        | 0.0916      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.873       |
+|    explained_variance   | 0.991       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.788       |
+|    n_updates            | 5485        |
+|    policy_gradient_loss | -9.46e-05   |
+|    std                  | 0.101       |
+|    value_loss           | 5.6         |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.497       |
+|    launch_km            | 25.3        |
+|    look                 | 1.12        |
+|    mask_cut             | 0           |
+|    total                | 0.497       |
+| episode_start/          |             |
+|    launch               | 0.497       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.497       |
+| multi/                  |             |
+|    act_absmean          | 0.141       |
+|    act_mean             | -0.0603     |
+|    act_plus             | 0.344       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.998       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 171         |
+| team_k1/                |             |
+|    POS                  | 0.497       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0628      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1905        |
+|    time_elapsed         | 27714       |
+|    total_timesteps      | 5867400     |
+| train/                  |             |
+|    approx_kl            | 0.015072194 |
+|    clip_fraction        | 0.194       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.873       |
+|    explained_variance   | 0.987       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.74        |
+|    n_updates            | 5486        |
+|    policy_gradient_loss | 0.00397     |
+|    std                  | 0.101       |
+|    value_loss           | 2.74        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.06
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.501      |
+|    launch_km            | 25.5       |
+|    look                 | 1.12       |
+|    mask_cut             | 0          |
+|    total                | 0.501      |
+| episode_start/          |            |
+|    launch               | 0.501      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.501      |
+| multi/                  |            |
+|    act_absmean          | 0.102      |
+|    act_mean             | 0.00842    |
+|    act_plus             | 0.46       |
+|    act_sat              | 0.00909    |
+|    explained_var_k1     | 0.989      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 713        |
+|    ep_rew_mean          | 172        |
+| team_k1/                |            |
+|    POS                  | 0.501      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0632     |
+|    own_min              | 0.96       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1906       |
+|    time_elapsed         | 27728      |
+|    total_timesteps      | 5870480    |
+| train/                  |            |
+|    approx_kl            | 0.01722645 |
+|    clip_fraction        | 0.182      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.873      |
+|    explained_variance   | 0.998      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 0.386      |
+|    n_updates            | 5487       |
+|    policy_gradient_loss | 0.00447    |
+|    std                  | 0.101      |
+|    value_loss           | 1.86       |
+----------------------------------------
+Early stopping at step 3 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.501       |
+|    launch_km            | 25.5        |
+|    look                 | 1.12        |
+|    mask_cut             | 0           |
+|    total                | 0.501       |
+| episode_start/          |             |
+|    launch               | 0.501       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.501       |
+| multi/                  |             |
+|    act_absmean          | 0.169       |
+|    act_mean             | 0.0598      |
+|    act_plus             | 0.515       |
+|    act_sat              | 0.0231      |
+|    explained_var_k1     | 0.983       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 172         |
+| team_k1/                |             |
+|    POS                  | 0.501       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0632      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1907        |
+|    time_elapsed         | 27743       |
+|    total_timesteps      | 5873560     |
+| train/                  |             |
+|    approx_kl            | 0.018889004 |
+|    clip_fraction        | 0.0915      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.873       |
+|    explained_variance   | 0.989       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 8.06        |
+|    n_updates            | 5491        |
+|    policy_gradient_loss | 3.64e-06    |
+|    std                  | 0.101       |
+|    value_loss           | 42.6        |
+-----------------------------------------
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.501      |
+|    launch_km            | 25.5       |
+|    look                 | 1.12       |
+|    mask_cut             | 0          |
+|    total                | 0.501      |
+| episode_start/          |            |
+|    launch               | 0.501      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.501      |
+| multi/                  |            |
+|    act_absmean          | 0.139      |
+|    act_mean             | 0.0258     |
+|    act_plus             | 0.502      |
+|    act_sat              | 0.00292    |
+|    explained_var_k1     | 0.99       |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 713        |
+|    ep_rew_mean          | 172        |
+| team_k1/                |            |
+|    POS                  | 0.501      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0632     |
+|    own_min              | 0.96       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1908       |
+|    time_elapsed         | 27759      |
+|    total_timesteps      | 5876640    |
+| train/                  |            |
+|    approx_kl            | 0.01119421 |
+|    clip_fraction        | 0.0933     |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.872      |
+|    explained_variance   | 0.983      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 1.64       |
+|    n_updates            | 5496       |
+|    policy_gradient_loss | -0.00531   |
+|    std                  | 0.101      |
+|    value_loss           | 36.8       |
+----------------------------------------
+Early stopping at step 3 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.501       |
+|    launch_km            | 25.5        |
+|    look                 | 1.12        |
+|    mask_cut             | 0           |
+|    total                | 0.501       |
+| episode_start/          |             |
+|    launch               | 0.501       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.501       |
+| multi/                  |             |
+|    act_absmean          | 0.124       |
+|    act_mean             | -0.0337     |
+|    act_plus             | 0.36        |
+|    act_sat              | 0.000649    |
+|    explained_var_k1     | 0.99        |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 713         |
+|    ep_rew_mean          | 172         |
+| team_k1/                |             |
+|    POS                  | 0.501       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0632      |
+|    own_min              | 0.96        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1909        |
+|    time_elapsed         | 27773       |
+|    total_timesteps      | 5879720     |
+| train/                  |             |
+|    approx_kl            | 0.012874927 |
+|    clip_fraction        | 0.0744      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.873       |
+|    explained_variance   | 0.99        |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.587       |
+|    n_updates            | 5500        |
+|    policy_gradient_loss | -0.00633    |
+|    std                  | 0.101       |
+|    value_loss           | 5.55        |
+-----------------------------------------
+Early stopping at step 3 due to reaching max kl: 0.05
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.516      |
+|    launch_km            | 25.7       |
+|    look                 | 1.17       |
+|    mask_cut             | 0          |
+|    total                | 0.516      |
+| episode_start/          |            |
+|    launch               | 0.516      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.516      |
+| multi/                  |            |
+|    act_absmean          | 0.125      |
+|    act_mean             | -0.0805    |
+|    act_plus             | 0.284      |
+|    act_sat              | 0          |
+|    explained_var_k1     | 0.993      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 714        |
+|    ep_rew_mean          | 181        |
+| team_k1/                |            |
+|    POS                  | 0.516      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0653     |
+|    own_min              | 0.98       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1910       |
+|    time_elapsed         | 27787      |
+|    total_timesteps      | 5882800    |
+| train/                  |            |
+|    approx_kl            | 0.04885166 |
+|    clip_fraction        | 0.114      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.875      |
+|    explained_variance   | 0.99       |
+|    learning_rate        | 0.0001     |
+|    loss                 | 0.175      |
+|    n_updates            | 5504       |
+|    policy_gradient_loss | -0.00598   |
+|    std                  | 0.101      |
+|    value_loss           | 1.24       |
+----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.06
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.53        |
+|    launch_km            | 25.5        |
+|    look                 | 1.24        |
+|    mask_cut             | 0           |
+|    total                | 0.53        |
+| episode_start/          |             |
+|    launch               | 0.53        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.53        |
+| multi/                  |             |
+|    act_absmean          | 0.114       |
+|    act_mean             | 0.0199      |
+|    act_plus             | 0.493       |
+|    act_sat              | 0.0127      |
+|    explained_var_k1     | 0.984       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 190         |
+| team_k1/                |             |
+|    POS                  | 0.53        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0655      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1911        |
+|    time_elapsed         | 27800       |
+|    total_timesteps      | 5885880     |
+| train/                  |             |
+|    approx_kl            | 0.027248904 |
+|    clip_fraction        | 0.254       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.878       |
+|    explained_variance   | 0.993       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 2.53        |
+|    n_updates            | 5505        |
+|    policy_gradient_loss | -0.00061    |
+|    std                  | 0.101       |
+|    value_loss           | 9.64        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.53        |
+|    launch_km            | 25.5        |
+|    look                 | 1.24        |
+|    mask_cut             | 0           |
+|    total                | 0.53        |
+| episode_start/          |             |
+|    launch               | 0.53        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.53        |
+| multi/                  |             |
+|    act_absmean          | 0.142       |
+|    act_mean             | 0.0237      |
+|    act_plus             | 0.469       |
+|    act_sat              | 0.00455     |
+|    explained_var_k1     | 0.993       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 190         |
+| team_k1/                |             |
+|    POS                  | 0.53        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0655      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1912        |
+|    time_elapsed         | 27814       |
+|    total_timesteps      | 5888960     |
+| train/                  |             |
+|    approx_kl            | 0.015625942 |
+|    clip_fraction        | 0.183       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.878       |
+|    explained_variance   | 0.984       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 11.8        |
+|    n_updates            | 5506        |
+|    policy_gradient_loss | 0.0121      |
+|    std                  | 0.101       |
+|    value_loss           | 48.3        |
+-----------------------------------------
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.53        |
+|    launch_km            | 25.5        |
+|    look                 | 1.24        |
+|    mask_cut             | 0           |
+|    total                | 0.53        |
+| episode_start/          |             |
+|    launch               | 0.53        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.53        |
+| multi/                  |             |
+|    act_absmean          | 0.152       |
+|    act_mean             | -0.0288     |
+|    act_plus             | 0.402       |
+|    act_sat              | 0.000974    |
+|    explained_var_k1     | 0.988       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 190         |
+| team_k1/                |             |
+|    POS                  | 0.53        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0655      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1913        |
+|    time_elapsed         | 27829       |
+|    total_timesteps      | 5892040     |
+| train/                  |             |
+|    approx_kl            | 0.010138021 |
+|    clip_fraction        | 0.126       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.878       |
+|    explained_variance   | 0.993       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.56        |
+|    n_updates            | 5511        |
+|    policy_gradient_loss | -0.00327    |
+|    std                  | 0.1         |
+|    value_loss           | 9.22        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.07
+---------------------------------------
+| curriculum/             |           |
+|    stage                | 3         |
+| episode/                |           |
+|    POS                  | 0.532     |
+|    launch_km            | 25.8      |
+|    look                 | 1.25      |
+|    mask_cut             | 0         |
+|    total                | 0.532     |
+| episode_start/          |           |
+|    launch               | 0.532     |
+| episode_start_n/        |           |
+|    launch               | 100       |
+| episode_type/           |           |
+|    road                 | 0.532     |
+| multi/                  |           |
+|    act_absmean          | 0.169     |
+|    act_mean             | -0.0979   |
+|    act_plus             | 0.285     |
+|    act_sat              | 0         |
+|    explained_var_k1     | 0.981     |
+|    masked_share         | 0         |
+| ring/                   |           |
+|    hi_km                | 40        |
+|    lo_km                | 10        |
+|    stage                | 2         |
+| rollout/                |           |
+|    ep_len_mean          | 714       |
+|    ep_rew_mean          | 193       |
+| team_k1/                |           |
+|    POS                  | 0.532     |
+|    close1km             | 0         |
+|    cut_share            | 0         |
+|    cuts                 | 0         |
+|    follow               | 0         |
+|    look_share           | 0.0652    |
+|    own_min              | 0.98      |
+|    pen_share            | 0         |
+|    viol                 | 0         |
+| time/                   |           |
+|    fps                  | 211       |
+|    iterations           | 1914      |
+|    time_elapsed         | 27843     |
+|    total_timesteps      | 5895120   |
+| train/                  |           |
+|    approx_kl            | 0.0729865 |
+|    clip_fraction        | 0.128     |
+|    clip_range           | 0.2       |
+|    entropy_loss         | 0.879     |
+|    explained_variance   | 0.988     |
+|    learning_rate        | 0.0001    |
+|    loss                 | 0.827     |
+|    n_updates            | 5514      |
+|    policy_gradient_loss | -0.00591  |
+|    std                  | 0.101     |
+|    value_loss           | 5.46      |
+---------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.06
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.548       |
+|    launch_km            | 26.3        |
+|    look                 | 1.29        |
+|    mask_cut             | 0           |
+|    total                | 0.548       |
+| episode_start/          |             |
+|    launch               | 0.548       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.548       |
+| multi/                  |             |
+|    act_absmean          | 0.111       |
+|    act_mean             | -0.0153     |
+|    act_plus             | 0.439       |
+|    act_sat              | 0.00844     |
+|    explained_var_k1     | 0.991       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 200         |
+| team_k1/                |             |
+|    POS                  | 0.548       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0656      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1915        |
+|    time_elapsed         | 27856       |
+|    total_timesteps      | 5898200     |
+| train/                  |             |
+|    approx_kl            | 0.022518285 |
+|    clip_fraction        | 0.225       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.981       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.949       |
+|    n_updates            | 5515        |
+|    policy_gradient_loss | 0.0047      |
+|    std                  | 0.101       |
+|    value_loss           | 3.39        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.55        |
+|    launch_km            | 26.2        |
+|    look                 | 1.29        |
+|    mask_cut             | 0           |
+|    total                | 0.55        |
+| episode_start/          |             |
+|    launch               | 0.55        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.55        |
+| multi/                  |             |
+|    act_absmean          | 0.162       |
+|    act_mean             | 0.0585      |
+|    act_plus             | 0.518       |
+|    act_sat              | 0.025       |
+|    explained_var_k1     | 0.985       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 201         |
+| team_k1/                |             |
+|    POS                  | 0.55        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0652      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1916        |
+|    time_elapsed         | 27869       |
+|    total_timesteps      | 5901280     |
+| train/                  |             |
+|    approx_kl            | 0.020171607 |
+|    clip_fraction        | 0.223       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.991       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 7.33        |
+|    n_updates            | 5516        |
+|    policy_gradient_loss | 0.00359     |
+|    std                  | 0.101       |
+|    value_loss           | 28.3        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.55        |
+|    launch_km            | 26.2        |
+|    look                 | 1.29        |
+|    mask_cut             | 0           |
+|    total                | 0.55        |
+| episode_start/          |             |
+|    launch               | 0.55        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.55        |
+| multi/                  |             |
+|    act_absmean          | 0.164       |
+|    act_mean             | 0.0343      |
+|    act_plus             | 0.489       |
+|    act_sat              | 0.00714     |
+|    explained_var_k1     | 0.991       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 201         |
+| team_k1/                |             |
+|    POS                  | 0.55        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0652      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1917        |
+|    time_elapsed         | 27882       |
+|    total_timesteps      | 5904360     |
+| train/                  |             |
+|    approx_kl            | 0.012003974 |
+|    clip_fraction        | 0.156       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.985       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 19.2        |
+|    n_updates            | 5517        |
+|    policy_gradient_loss | 0.0074      |
+|    std                  | 0.101       |
+|    value_loss           | 57.4        |
+-----------------------------------------
+Early stopping at step 4 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.55        |
+|    launch_km            | 26.2        |
+|    look                 | 1.29        |
+|    mask_cut             | 0           |
+|    total                | 0.55        |
+| episode_start/          |             |
+|    launch               | 0.55        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.55        |
+| multi/                  |             |
+|    act_absmean          | 0.153       |
+|    act_mean             | -0.0288     |
+|    act_plus             | 0.388       |
+|    act_sat              | 0.0013      |
+|    explained_var_k1     | 0.971       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 201         |
+| team_k1/                |             |
+|    POS                  | 0.55        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0652      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1918        |
+|    time_elapsed         | 27898       |
+|    total_timesteps      | 5907440     |
+| train/                  |             |
+|    approx_kl            | 0.022222398 |
+|    clip_fraction        | 0.123       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.991       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.861       |
+|    n_updates            | 5522        |
+|    policy_gradient_loss | -0.00907    |
+|    std                  | 0.101       |
+|    value_loss           | 4.4         |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.07
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.545       |
+|    launch_km            | 26.3        |
+|    look                 | 1.31        |
+|    mask_cut             | 0           |
+|    total                | 0.545       |
+| episode_start/          |             |
+|    launch               | 0.545       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.545       |
+| multi/                  |             |
+|    act_absmean          | 0.125       |
+|    act_mean             | -0.0626     |
+|    act_plus             | 0.322       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.996       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 205         |
+| team_k1/                |             |
+|    POS                  | 0.545       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0653      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1919        |
+|    time_elapsed         | 27910       |
+|    total_timesteps      | 5910520     |
+| train/                  |             |
+|    approx_kl            | 0.014489005 |
+|    clip_fraction        | 0.131       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.971       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.921       |
+|    n_updates            | 5523        |
+|    policy_gradient_loss | 0.00262     |
+|    std                  | 0.1         |
+|    value_loss           | 3.28        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.549       |
+|    launch_km            | 26.4        |
+|    look                 | 1.33        |
+|    mask_cut             | 0           |
+|    total                | 0.549       |
+| episode_start/          |             |
+|    launch               | 0.549       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.549       |
+| multi/                  |             |
+|    act_absmean          | 0.134       |
+|    act_mean             | 0.0402      |
+|    act_plus             | 0.491       |
+|    act_sat              | 0.0218      |
+|    explained_var_k1     | 0.987       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 207         |
+| team_k1/                |             |
+|    POS                  | 0.549       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0658      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1920        |
+|    time_elapsed         | 27923       |
+|    total_timesteps      | 5913600     |
+| train/                  |             |
+|    approx_kl            | 0.019751804 |
+|    clip_fraction        | 0.221       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.996       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.01        |
+|    n_updates            | 5524        |
+|    policy_gradient_loss | 0.00351     |
+|    std                  | 0.1         |
+|    value_loss           | 4.32        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.549       |
+|    launch_km            | 26.4        |
+|    look                 | 1.33        |
+|    mask_cut             | 0           |
+|    total                | 0.549       |
+| episode_start/          |             |
+|    launch               | 0.549       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.549       |
+| multi/                  |             |
+|    act_absmean          | 0.171       |
+|    act_mean             | 0.0658      |
+|    act_plus             | 0.537       |
+|    act_sat              | 0.0214      |
+|    explained_var_k1     | 0.993       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 207         |
+| team_k1/                |             |
+|    POS                  | 0.549       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0658      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1921        |
+|    time_elapsed         | 27936       |
+|    total_timesteps      | 5916680     |
+| train/                  |             |
+|    approx_kl            | 0.016354188 |
+|    clip_fraction        | 0.18        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.879       |
+|    explained_variance   | 0.987       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 10.7        |
+|    n_updates            | 5525        |
+|    policy_gradient_loss | 0.011       |
+|    std                  | 0.1         |
+|    value_loss           | 60.9        |
+-----------------------------------------
+Early stopping at step 3 due to reaching max kl: 0.03
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.549      |
+|    launch_km            | 26.4       |
+|    look                 | 1.33       |
+|    mask_cut             | 0          |
+|    total                | 0.549      |
+| episode_start/          |            |
+|    launch               | 0.549      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.549      |
+| multi/                  |            |
+|    act_absmean          | 0.141      |
+|    act_mean             | 0.0385     |
+|    act_plus             | 0.515      |
+|    act_sat              | 0.00812    |
+|    explained_var_k1     | 0.989      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 714        |
+|    ep_rew_mean          | 207        |
+| team_k1/                |            |
+|    POS                  | 0.549      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0658     |
+|    own_min              | 0.98       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1922       |
+|    time_elapsed         | 27951      |
+|    total_timesteps      | 5919760    |
+| train/                  |            |
+|    approx_kl            | 0.01932275 |
+|    clip_fraction        | 0.124      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.879      |
+|    explained_variance   | 0.993      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 1.65       |
+|    n_updates            | 5529       |
+|    policy_gradient_loss | -0.000258  |
+|    std                  | 0.1        |
+|    value_loss           | 11.5       |
+----------------------------------------
+Early stopping at step 3 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.55        |
+|    launch_km            | 26.2        |
+|    look                 | 1.34        |
+|    mask_cut             | 0           |
+|    total                | 0.55        |
+| episode_start/          |             |
+|    launch               | 0.55        |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.55        |
+| multi/                  |             |
+|    act_absmean          | 0.127       |
+|    act_mean             | 0.0278      |
+|    act_plus             | 0.51        |
+|    act_sat              | 0.000649    |
+|    explained_var_k1     | 0.959       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 207         |
+| team_k1/                |             |
+|    POS                  | 0.55        |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0659      |
+|    own_min              | 0.98        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1923        |
+|    time_elapsed         | 27966       |
+|    total_timesteps      | 5922840     |
+| train/                  |             |
+|    approx_kl            | 0.035858802 |
+|    clip_fraction        | 0.146       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.88        |
+|    explained_variance   | 0.989       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.452       |
+|    n_updates            | 5533        |
+|    policy_gradient_loss | -0.00515    |
+|    std                  | 0.1         |
+|    value_loss           | 4.47        |
+-----------------------------------------
+Early stopping at step 1 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.566       |
+|    launch_km            | 25.6        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.566       |
+| episode_start/          |             |
+|    launch               | 0.566       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.566       |
+| multi/                  |             |
+|    act_absmean          | 0.0947      |
+|    act_mean             | 0.00445     |
+|    act_plus             | 0.479       |
+|    act_sat              | 0.00292     |
+|    explained_var_k1     | 0.993       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 217         |
+| team_k1/                |             |
+|    POS                  | 0.566       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0672      |
+|    own_min              | 0.99        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1924        |
+|    time_elapsed         | 27979       |
+|    total_timesteps      | 5925920     |
+| train/                  |             |
+|    approx_kl            | 0.015438305 |
+|    clip_fraction        | 0.105       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.881       |
+|    explained_variance   | 0.959       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.542       |
+|    n_updates            | 5535        |
+|    policy_gradient_loss | -0.00242    |
+|    std                  | 0.1         |
+|    value_loss           | 4.14        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 25.8        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.131       |
+|    act_mean             | 0.0491      |
+|    act_plus             | 0.522       |
+|    act_sat              | 0.0211      |
+|    explained_var_k1     | 0.977       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 216         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0674      |
+|    own_min              | 0.99        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1925        |
+|    time_elapsed         | 27993       |
+|    total_timesteps      | 5929000     |
+| train/                  |             |
+|    approx_kl            | 0.022018634 |
+|    clip_fraction        | 0.246       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.881       |
+|    explained_variance   | 0.993       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 4.4         |
+|    n_updates            | 5536        |
+|    policy_gradient_loss | 0.0163      |
+|    std                  | 0.1         |
+|    value_loss           | 20.2        |
+-----------------------------------------
+Early stopping at step 1 due to reaching max kl: 0.03
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.565      |
+|    launch_km            | 25.8       |
+|    look                 | 1.4        |
+|    mask_cut             | 0          |
+|    total                | 0.565      |
+| episode_start/          |            |
+|    launch               | 0.565      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.565      |
+| multi/                  |            |
+|    act_absmean          | 0.151      |
+|    act_mean             | 0.041      |
+|    act_plus             | 0.52       |
+|    act_sat              | 0.0117     |
+|    explained_var_k1     | 0.989      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 714        |
+|    ep_rew_mean          | 216        |
+| team_k1/                |            |
+|    POS                  | 0.565      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0674     |
+|    own_min              | 0.99       |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1926       |
+|    time_elapsed         | 28007      |
+|    total_timesteps      | 5932080    |
+| train/                  |            |
+|    approx_kl            | 0.01933272 |
+|    clip_fraction        | 0.182      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.882      |
+|    explained_variance   | 0.977      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 35.8       |
+|    n_updates            | 5538       |
+|    policy_gradient_loss | 0.0168     |
+|    std                  | 0.1        |
+|    value_loss           | 103        |
+----------------------------------------
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 25.8        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.144       |
+|    act_mean             | 0.0359      |
+|    act_plus             | 0.524       |
+|    act_sat              | 0.0026      |
+|    explained_var_k1     | 0.986       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 216         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0674      |
+|    own_min              | 0.99        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1927        |
+|    time_elapsed         | 28022       |
+|    total_timesteps      | 5935160     |
+| train/                  |             |
+|    approx_kl            | 0.010963777 |
+|    clip_fraction        | 0.071       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.882       |
+|    explained_variance   | 0.989       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.62        |
+|    n_updates            | 5543        |
+|    policy_gradient_loss | -0.00403    |
+|    std                  | 0.1         |
+|    value_loss           | 11.6        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 25.4        |
+|    look                 | 1.39        |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.114       |
+|    act_mean             | -0.0112     |
+|    act_plus             | 0.423       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.982       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 215         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.067       |
+|    own_min              | 0.99        |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1928        |
+|    time_elapsed         | 28036       |
+|    total_timesteps      | 5938240     |
+| train/                  |             |
+|    approx_kl            | 0.017946016 |
+|    clip_fraction        | 0.0904      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.882       |
+|    explained_variance   | 0.986       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.737       |
+|    n_updates            | 5546        |
+|    policy_gradient_loss | 5.17e-05    |
+|    std                  | 0.1         |
+|    value_loss           | 6.52        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.584       |
+|    launch_km            | 25.5        |
+|    look                 | 1.5         |
+|    mask_cut             | 0           |
+|    total                | 0.584       |
+| episode_start/          |             |
+|    launch               | 0.584       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.584       |
+| multi/                  |             |
+|    act_absmean          | 0.102       |
+|    act_mean             | 0.0249      |
+|    act_plus             | 0.502       |
+|    act_sat              | 0.0127      |
+|    explained_var_k1     | 0.99        |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 233         |
+| team_k1/                |             |
+|    POS                  | 0.584       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0673      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1929        |
+|    time_elapsed         | 28049       |
+|    total_timesteps      | 5941320     |
+| train/                  |             |
+|    approx_kl            | 0.015586665 |
+|    clip_fraction        | 0.215       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.883       |
+|    explained_variance   | 0.982       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.914       |
+|    n_updates            | 5547        |
+|    policy_gradient_loss | 0.0027      |
+|    std                  | 0.1         |
+|    value_loss           | 3.77        |
+-----------------------------------------
+Early stopping at step 1 due to reaching max kl: 0.03
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.584      |
+|    launch_km            | 25.5       |
+|    look                 | 1.5        |
+|    mask_cut             | 0          |
+|    total                | 0.584      |
+| episode_start/          |            |
+|    launch               | 0.584      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.584      |
+| multi/                  |            |
+|    act_absmean          | 0.157      |
+|    act_mean             | 0.0554     |
+|    act_plus             | 0.516      |
+|    act_sat              | 0.0247     |
+|    explained_var_k1     | 0.982      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 714        |
+|    ep_rew_mean          | 233        |
+| team_k1/                |            |
+|    POS                  | 0.584      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0673     |
+|    own_min              | 1          |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1930       |
+|    time_elapsed         | 28063      |
+|    total_timesteps      | 5944400    |
+| train/                  |            |
+|    approx_kl            | 0.01102846 |
+|    clip_fraction        | 0.136      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.883      |
+|    explained_variance   | 0.99       |
+|    learning_rate        | 0.0001     |
+|    loss                 | 3.68       |
+|    n_updates            | 5549       |
+|    policy_gradient_loss | -0.00286   |
+|    std                  | 0.1        |
+|    value_loss           | 41.6       |
+----------------------------------------
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.584       |
+|    launch_km            | 25.5        |
+|    look                 | 1.5         |
+|    mask_cut             | 0           |
+|    total                | 0.584       |
+| episode_start/          |             |
+|    launch               | 0.584       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.584       |
+| multi/                  |             |
+|    act_absmean          | 0.14        |
+|    act_mean             | 0.044       |
+|    act_plus             | 0.559       |
+|    act_sat              | 0.00519     |
+|    explained_var_k1     | 0.993       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 233         |
+| team_k1/                |             |
+|    POS                  | 0.584       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0673      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1931        |
+|    time_elapsed         | 28079       |
+|    total_timesteps      | 5947480     |
+| train/                  |             |
+|    approx_kl            | 0.014460455 |
+|    clip_fraction        | 0.119       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.883       |
+|    explained_variance   | 0.982       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.8         |
+|    n_updates            | 5554        |
+|    policy_gradient_loss | -0.00388    |
+|    std                  | 0.1         |
+|    value_loss           | 62.3        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.584       |
+|    launch_km            | 25.5        |
+|    look                 | 1.5         |
+|    mask_cut             | 0           |
+|    total                | 0.584       |
+| episode_start/          |             |
+|    launch               | 0.584       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.584       |
+| multi/                  |             |
+|    act_absmean          | 0.129       |
+|    act_mean             | 0.0282      |
+|    act_plus             | 0.526       |
+|    act_sat              | 0.00162     |
+|    explained_var_k1     | 0.994       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 233         |
+| team_k1/                |             |
+|    POS                  | 0.584       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0673      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1932        |
+|    time_elapsed         | 28093       |
+|    total_timesteps      | 5950560     |
+| train/                  |             |
+|    approx_kl            | 0.018161513 |
+|    clip_fraction        | 0.0971      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.883       |
+|    explained_variance   | 0.993       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.03        |
+|    n_updates            | 5557        |
+|    policy_gradient_loss | -0.00389    |
+|    std                  | 0.1         |
+|    value_loss           | 8.37        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.06
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.591       |
+|    launch_km            | 25.3        |
+|    look                 | 1.51        |
+|    mask_cut             | 0           |
+|    total                | 0.591       |
+| episode_start/          |             |
+|    launch               | 0.591       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.591       |
+| multi/                  |             |
+|    act_absmean          | 0.101       |
+|    act_mean             | -0.00678    |
+|    act_plus             | 0.45        |
+|    act_sat              | 0.000325    |
+|    explained_var_k1     | 0.992       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 234         |
+| team_k1/                |             |
+|    POS                  | 0.591       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0666      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1933        |
+|    time_elapsed         | 28107       |
+|    total_timesteps      | 5953640     |
+| train/                  |             |
+|    approx_kl            | 0.010095919 |
+|    clip_fraction        | 0.0829      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.884       |
+|    explained_variance   | 0.994       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.39        |
+|    n_updates            | 5558        |
+|    policy_gradient_loss | 0.0173      |
+|    std                  | 0.1         |
+|    value_loss           | 4.92        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.589       |
+|    launch_km            | 25.4        |
+|    look                 | 1.5         |
+|    mask_cut             | 0           |
+|    total                | 0.589       |
+| episode_start/          |             |
+|    launch               | 0.589       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.589       |
+| multi/                  |             |
+|    act_absmean          | 0.125       |
+|    act_mean             | 0.0471      |
+|    act_plus             | 0.523       |
+|    act_sat              | 0.0185      |
+|    explained_var_k1     | 0.983       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 237         |
+| team_k1/                |             |
+|    POS                  | 0.589       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0659      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1934        |
+|    time_elapsed         | 28121       |
+|    total_timesteps      | 5956720     |
+| train/                  |             |
+|    approx_kl            | 0.010901514 |
+|    clip_fraction        | 0.11        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.884       |
+|    explained_variance   | 0.992       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.23        |
+|    n_updates            | 5561        |
+|    policy_gradient_loss | 0.0035      |
+|    std                  | 0.0999      |
+|    value_loss           | 5.63        |
+-----------------------------------------
+----------------------------------------
+| curriculum/             |            |
+|    stage                | 3          |
+| episode/                |            |
+|    POS                  | 0.589      |
+|    launch_km            | 25.4       |
+|    look                 | 1.5        |
+|    mask_cut             | 0          |
+|    total                | 0.589      |
+| episode_start/          |            |
+|    launch               | 0.589      |
+| episode_start_n/        |            |
+|    launch               | 100        |
+| episode_type/           |            |
+|    road                 | 0.589      |
+| multi/                  |            |
+|    act_absmean          | 0.138      |
+|    act_mean             | 0.0471     |
+|    act_plus             | 0.538      |
+|    act_sat              | 0.00747    |
+|    explained_var_k1     | 0.974      |
+|    masked_share         | 0          |
+| ring/                   |            |
+|    hi_km                | 40         |
+|    lo_km                | 10         |
+|    stage                | 2          |
+| rollout/                |            |
+|    ep_len_mean          | 714        |
+|    ep_rew_mean          | 237        |
+| team_k1/                |            |
+|    POS                  | 0.589      |
+|    close1km             | 0          |
+|    cut_share            | 0          |
+|    cuts                 | 0          |
+|    follow               | 0          |
+|    look_share           | 0.0659     |
+|    own_min              | 1          |
+|    pen_share            | 0          |
+|    viol                 | 0          |
+| time/                   |            |
+|    fps                  | 211        |
+|    iterations           | 1935       |
+|    time_elapsed         | 28137      |
+|    total_timesteps      | 5959800    |
+| train/                  |            |
+|    approx_kl            | 0.01171607 |
+|    clip_fraction        | 0.105      |
+|    clip_range           | 0.2        |
+|    entropy_loss         | 0.885      |
+|    explained_variance   | 0.983      |
+|    learning_rate        | 0.0001     |
+|    loss                 | 2.56       |
+|    n_updates            | 5566       |
+|    policy_gradient_loss | 0.00294    |
+|    std                  | 0.0998     |
+|    value_loss           | 27.3       |
+----------------------------------------
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.589       |
+|    launch_km            | 25.4        |
+|    look                 | 1.5         |
+|    mask_cut             | 0           |
+|    total                | 0.589       |
+| episode_start/          |             |
+|    launch               | 0.589       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.589       |
+| multi/                  |             |
+|    act_absmean          | 0.108       |
+|    act_mean             | 0.0153      |
+|    act_plus             | 0.489       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.977       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 237         |
+| team_k1/                |             |
+|    POS                  | 0.589       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0659      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1936        |
+|    time_elapsed         | 28152       |
+|    total_timesteps      | 5962880     |
+| train/                  |             |
+|    approx_kl            | 0.012475042 |
+|    clip_fraction        | 0.0844      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.886       |
+|    explained_variance   | 0.974       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.513       |
+|    n_updates            | 5571        |
+|    policy_gradient_loss | -0.00644    |
+|    std                  | 0.0997      |
+|    value_loss           | 7.48        |
+-----------------------------------------
+Early stopping at step 1 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.588       |
+|    launch_km            | 25.2        |
+|    look                 | 1.51        |
+|    mask_cut             | 0           |
+|    total                | 0.588       |
+| episode_start/          |             |
+|    launch               | 0.588       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.588       |
+| multi/                  |             |
+|    act_absmean          | 0.103       |
+|    act_mean             | 0.0167      |
+|    act_plus             | 0.501       |
+|    act_sat              | 0.000649    |
+|    explained_var_k1     | 0.987       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 237         |
+| team_k1/                |             |
+|    POS                  | 0.588       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0661      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1937        |
+|    time_elapsed         | 28165       |
+|    total_timesteps      | 5965960     |
+| train/                  |             |
+|    approx_kl            | 0.025348647 |
+|    clip_fraction        | 0.11        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.886       |
+|    explained_variance   | 0.977       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.634       |
+|    n_updates            | 5573        |
+|    policy_gradient_loss | 0.00488     |
+|    std                  | 0.0997      |
+|    value_loss           | 2.88        |
+-----------------------------------------
+Early stopping at step 1 due to reaching max kl: 0.08
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.589       |
+|    launch_km            | 24.4        |
+|    look                 | 1.51        |
+|    mask_cut             | 0           |
+|    total                | 0.589       |
+| episode_start/          |             |
+|    launch               | 0.589       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.589       |
+| multi/                  |             |
+|    act_absmean          | 0.0872      |
+|    act_mean             | 0.00909     |
+|    act_plus             | 0.501       |
+|    act_sat              | 0.0013      |
+|    explained_var_k1     | 0.989       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 235         |
+| team_k1/                |             |
+|    POS                  | 0.589       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0674      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1938        |
+|    time_elapsed         | 28178       |
+|    total_timesteps      | 5969040     |
+| train/                  |             |
+|    approx_kl            | 0.025927842 |
+|    clip_fraction        | 0.141       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.887       |
+|    explained_variance   | 0.987       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.303       |
+|    n_updates            | 5575        |
+|    policy_gradient_loss | 0.00275     |
+|    std                  | 0.0996      |
+|    value_loss           | 1.52        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.577       |
+|    launch_km            | 24.5        |
+|    look                 | 1.48        |
+|    mask_cut             | 0           |
+|    total                | 0.577       |
+| episode_start/          |             |
+|    launch               | 0.577       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.577       |
+| multi/                  |             |
+|    act_absmean          | 0.114       |
+|    act_mean             | 0.0414      |
+|    act_plus             | 0.519       |
+|    act_sat              | 0.00942     |
+|    explained_var_k1     | 0.973       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 230         |
+| team_k1/                |             |
+|    POS                  | 0.577       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0674      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1939        |
+|    time_elapsed         | 28191       |
+|    total_timesteps      | 5972120     |
+| train/                  |             |
+|    approx_kl            | 0.020566413 |
+|    clip_fraction        | 0.24        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.888       |
+|    explained_variance   | 0.989       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 2.82        |
+|    n_updates            | 5576        |
+|    policy_gradient_loss | 0.00377     |
+|    std                  | 0.0996      |
+|    value_loss           | 11.1        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.577       |
+|    launch_km            | 24.5        |
+|    look                 | 1.48        |
+|    mask_cut             | 0           |
+|    total                | 0.577       |
+| episode_start/          |             |
+|    launch               | 0.577       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.577       |
+| multi/                  |             |
+|    act_absmean          | 0.121       |
+|    act_mean             | 0.0237      |
+|    act_plus             | 0.503       |
+|    act_sat              | 0.00195     |
+|    explained_var_k1     | 0.983       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 230         |
+| team_k1/                |             |
+|    POS                  | 0.577       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0674      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1940        |
+|    time_elapsed         | 28204       |
+|    total_timesteps      | 5975200     |
+| train/                  |             |
+|    approx_kl            | 0.013459412 |
+|    clip_fraction        | 0.175       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.888       |
+|    explained_variance   | 0.973       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 6.71        |
+|    n_updates            | 5577        |
+|    policy_gradient_loss | 0.0178      |
+|    std                  | 0.0996      |
+|    value_loss           | 30.2        |
+-----------------------------------------
+Early stopping at step 4 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.577       |
+|    launch_km            | 24.5        |
+|    look                 | 1.48        |
+|    mask_cut             | 0           |
+|    total                | 0.577       |
+| episode_start/          |             |
+|    launch               | 0.577       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.577       |
+| multi/                  |             |
+|    act_absmean          | 0.101       |
+|    act_mean             | 0.00688     |
+|    act_plus             | 0.498       |
+|    act_sat              | 0.000325    |
+|    explained_var_k1     | 0.975       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 230         |
+| team_k1/                |             |
+|    POS                  | 0.577       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0674      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1941        |
+|    time_elapsed         | 28219       |
+|    total_timesteps      | 5978280     |
+| train/                  |             |
+|    approx_kl            | 0.043395944 |
+|    clip_fraction        | 0.103       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.889       |
+|    explained_variance   | 0.983       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.587       |
+|    n_updates            | 5582        |
+|    policy_gradient_loss | 0.00122     |
+|    std                  | 0.0995      |
+|    value_loss           | 5.15        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.574       |
+|    launch_km            | 24.7        |
+|    look                 | 1.46        |
+|    mask_cut             | 0           |
+|    total                | 0.574       |
+| episode_start/          |             |
+|    launch               | 0.574       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.574       |
+| multi/                  |             |
+|    act_absmean          | 0.107       |
+|    act_mean             | 0.00582     |
+|    act_plus             | 0.465       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.99        |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 714         |
+|    ep_rew_mean          | 226         |
+| team_k1/                |             |
+|    POS                  | 0.574       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0678      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1942        |
+|    time_elapsed         | 28233       |
+|    total_timesteps      | 5981360     |
+| train/                  |             |
+|    approx_kl            | 0.023627402 |
+|    clip_fraction        | 0.13        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.89        |
+|    explained_variance   | 0.975       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.414       |
+|    n_updates            | 5585        |
+|    policy_gradient_loss | 0.00108     |
+|    std                  | 0.0993      |
+|    value_loss           | 2.03        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 24.6        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.0941      |
+|    act_mean             | 0.0129      |
+|    act_plus             | 0.481       |
+|    act_sat              | 0.00714     |
+|    explained_var_k1     | 0.987       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 715         |
+|    ep_rew_mean          | 217         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0672      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1943        |
+|    time_elapsed         | 28247       |
+|    total_timesteps      | 5984440     |
+| train/                  |             |
+|    approx_kl            | 0.029652007 |
+|    clip_fraction        | 0.122       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.891       |
+|    explained_variance   | 0.99        |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.397       |
+|    n_updates            | 5588        |
+|    policy_gradient_loss | 0.00454     |
+|    std                  | 0.0991      |
+|    value_loss           | 1.93        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 24.6        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.126       |
+|    act_mean             | 0.0356      |
+|    act_plus             | 0.526       |
+|    act_sat              | 0.00455     |
+|    explained_var_k1     | 0.977       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 715         |
+|    ep_rew_mean          | 217         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0672      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1944        |
+|    time_elapsed         | 28261       |
+|    total_timesteps      | 5987520     |
+| train/                  |             |
+|    approx_kl            | 0.017703533 |
+|    clip_fraction        | 0.229       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.893       |
+|    explained_variance   | 0.987       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 7.44        |
+|    n_updates            | 5589        |
+|    policy_gradient_loss | 0.00524     |
+|    std                  | 0.0991      |
+|    value_loss           | 39.2        |
+-----------------------------------------
+Early stopping at step 4 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 24.6        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.12        |
+|    act_mean             | 0.0295      |
+|    act_plus             | 0.533       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.974       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 715         |
+|    ep_rew_mean          | 217         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0672      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1945        |
+|    time_elapsed         | 28276       |
+|    total_timesteps      | 5990600     |
+| train/                  |             |
+|    approx_kl            | 0.017028855 |
+|    clip_fraction        | 0.131       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.893       |
+|    explained_variance   | 0.977       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.898       |
+|    n_updates            | 5594        |
+|    policy_gradient_loss | -0.000805   |
+|    std                  | 0.0991      |
+|    value_loss           | 9.15        |
+-----------------------------------------
+Early stopping at step 1 due to reaching max kl: 0.03
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.565       |
+|    launch_km            | 24.6        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.565       |
+| episode_start/          |             |
+|    launch               | 0.565       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.565       |
+| multi/                  |             |
+|    act_absmean          | 0.102       |
+|    act_mean             | -0.014      |
+|    act_plus             | 0.411       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.986       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 715         |
+|    ep_rew_mean          | 217         |
+| team_k1/                |             |
+|    POS                  | 0.565       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0672      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1946        |
+|    time_elapsed         | 28289       |
+|    total_timesteps      | 5993680     |
+| train/                  |             |
+|    approx_kl            | 0.031370975 |
+|    clip_fraction        | 0.0862      |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.893       |
+|    explained_variance   | 0.974       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.983       |
+|    n_updates            | 5596        |
+|    policy_gradient_loss | -0.000258   |
+|    std                  | 0.0991      |
+|    value_loss           | 6.77        |
+-----------------------------------------
+Early stopping at step 2 due to reaching max kl: 0.04
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.575       |
+|    launch_km            | 24.5        |
+|    look                 | 1.4         |
+|    mask_cut             | 0           |
+|    total                | 0.575       |
+| episode_start/          |             |
+|    launch               | 0.575       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.575       |
+| multi/                  |             |
+|    act_absmean          | 0.0918      |
+|    act_mean             | -0.0286     |
+|    act_plus             | 0.382       |
+|    act_sat              | 0           |
+|    explained_var_k1     | 0.991       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 715         |
+|    ep_rew_mean          | 215         |
+| team_k1/                |             |
+|    POS                  | 0.575       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0662      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1947        |
+|    time_elapsed         | 28303       |
+|    total_timesteps      | 5996760     |
+| train/                  |             |
+|    approx_kl            | 0.044025194 |
+|    clip_fraction        | 0.12        |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.893       |
+|    explained_variance   | 0.986       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 0.234       |
+|    n_updates            | 5599        |
+|    policy_gradient_loss | -0.000662   |
+|    std                  | 0.0991      |
+|    value_loss           | 1.34        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.05
+-----------------------------------------
+| curriculum/             |             |
+|    stage                | 3           |
+| episode/                |             |
+|    POS                  | 0.562       |
+|    launch_km            | 24.9        |
+|    look                 | 1.34        |
+|    mask_cut             | 0           |
+|    total                | 0.562       |
+| episode_start/          |             |
+|    launch               | 0.562       |
+| episode_start_n/        |             |
+|    launch               | 100         |
+| episode_type/           |             |
+|    road                 | 0.562       |
+| multi/                  |             |
+|    act_absmean          | 0.0907      |
+|    act_mean             | 0.0203      |
+|    act_plus             | 0.511       |
+|    act_sat              | 0.00455     |
+|    explained_var_k1     | 0.973       |
+|    masked_share         | 0           |
+| ring/                   |             |
+|    hi_km                | 40          |
+|    lo_km                | 10          |
+|    stage                | 2           |
+| rollout/                |             |
+|    ep_len_mean          | 715         |
+|    ep_rew_mean          | 208         |
+| team_k1/                |             |
+|    POS                  | 0.562       |
+|    close1km             | 0           |
+|    cut_share            | 0           |
+|    cuts                 | 0           |
+|    follow               | 0           |
+|    look_share           | 0.0656      |
+|    own_min              | 1           |
+|    pen_share            | 0           |
+|    viol                 | 0           |
+| time/                   |             |
+|    fps                  | 211         |
+|    iterations           | 1948        |
+|    time_elapsed         | 28315       |
+|    total_timesteps      | 5999840     |
+| train/                  |             |
+|    approx_kl            | 0.020570489 |
+|    clip_fraction        | 0.217       |
+|    clip_range           | 0.2         |
+|    entropy_loss         | 0.893       |
+|    explained_variance   | 0.991       |
+|    learning_rate        | 0.0001      |
+|    loss                 | 1.31        |
+|    n_updates            | 5600        |
+|    policy_gradient_loss | 0.00193     |
+|    std                  | 0.0991      |
+|    value_loss           | 5.63        |
+-----------------------------------------
+Early stopping at step 0 due to reaching max kl: 0.03
+eval stage 3 at 6,000,000: RL 0.508 vs SAROPS 0.303 (ratio 1.678, last-3 mean 1.124), per case [0.504, 0.644, 0.375], 80 s
+stopped at 6,000,000 steps after 7.91 h, stage 3, saved rl_search/data/rl_real/r16u_chungju_nosym/ckpt/model_6000000.zip
+11-25 06:54 r16u_chungju_nosym training ended (exit 0)
